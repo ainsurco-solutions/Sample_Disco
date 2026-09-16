@@ -1,0 +1,7 @@
+# The reconciliation store holds real estate database names and exposure
+# metadata from actual runs. It belongs on the machine that ran it, not in
+# version control.
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
