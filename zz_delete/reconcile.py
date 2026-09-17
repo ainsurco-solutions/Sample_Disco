@@ -270,8 +270,21 @@ def load_vault_from_api(
                 "-- the entitlement may not cover it."
             )
         if response.status_code >= 400:
+            detail = " ".join(response.text.split())[:400]
+            if api_key and api_key in detail:
+                detail = detail.replace(api_key, "<key>")
+            hint = ""
+            if response.status_code == 400:
+                hint = (
+                    f" The request sorted by '{name_field}'; if that is not a "
+                    "sortable field on this endpoint, that is the likely "
+                    "cause -- set RECONCILE_VAULT_NAME_FIELD to a documented "
+                    "one such as archiveName."
+                )
             raise QueryError(
                 f"The archive API returned {response.status_code}."
+                + (f" It said: {detail}" if detail else "")
+                + hint
             )
 
         try:
