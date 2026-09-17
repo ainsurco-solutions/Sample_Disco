@@ -1026,15 +1026,13 @@ tabs = st.tabs(
     [
         "Results",
         *(f"{title} file" for _, title in loaded_sides),
-        *(["Vault duplicates"] if "vault_rows" in st.session_state.raw_text else []),
+        *(["Vault duplicates"] if st.session_state.vault_rows else []),
         "Report",
     ]
 )
 results_tab = tabs[0]
 report_tab = tabs[-1]
-vault_dupes_tab = (
-    tabs[-2] if "vault_rows" in st.session_state.raw_text else None
-)
+vault_dupes_tab = tabs[-2] if st.session_state.vault_rows else None
 
 if vault_dupes_tab is not None:
     with vault_dupes_tab:
