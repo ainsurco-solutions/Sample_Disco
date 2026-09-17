@@ -288,8 +288,10 @@ OUTCOME_HELP: dict[Outcome, str] = {
         "Work not started."
     ),
     Outcome.NOT_ARCHIVED: (
-        "In Data Bridge but not archived in Data Vault. In transit — "
-        "archiving is a separate step, not automatic on import."
+        "Still on Data Bridge, not yet in Data Vault. Archiving moves a "
+        "database rather than copying it, so the bridge is transient and "
+        "should be empty when the migration is done — this count is the "
+        "backlog still to archive."
     ),
     Outcome.NOT_IN_INVENTORY: (
         "On the Scope list but absent from Source (On Prem). Either it was "
@@ -1046,8 +1048,20 @@ render_headline_cards(
         (
             "In Transit",
             counts[Outcome.NOT_ARCHIVED],
-            "in Data Bridge, not yet archived",
-            "warn" if counts[Outcome.NOT_ARCHIVED] else "",
+            (
+                "still on the bridge — should reach zero"
+                if counts[Outcome.NOT_ARCHIVED]
+                else "bridge clear — nothing awaiting archive"
+                if result.vault_checked
+                else "no Data Vault list — nothing checked"
+            ),
+            (
+                "warn"
+                if counts[Outcome.NOT_ARCHIVED]
+                else "good"
+                if result.vault_checked
+                else ""
+            ),
             _card_volume(transit_size),
         ),
     ]
