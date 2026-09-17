@@ -1,23 +1,11 @@
-#!/usr/bin/env python3
-"""
-store.py
-========
+# Generated copy -- do not edit.
+# Source: dev-tools/Reconcile/store.py in the AML-MigHub repo.
+# Comments and docstrings are stripped; the reasoning is in master.
+# Re-run dev-tools/Reconcile/push_to_demo.py to update.
 
-SQLite persistence for reconciliation runs. No Streamlit import, so it is
-testable on its own.
-
-Why a database at all, for what looks like a two-file diff: a reconciliation is
-a statement about the platform *at a moment*. Keeping each load as a snapshot,
-and each comparison as a run against two named snapshots, is what lets somebody
-answer "was this database missing last week too, or is this new?" -- which is a
-different and more useful question than "is it missing now". A throwaway view
-answers only the second.
-
-Snapshots are immutable once written. Re-running a comparison creates a new run;
-it never edits an old one.
-"""
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Sequence
@@ -26,20 +14,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from reconcile import Outcome, Reconciliation, ResultRow, Row
+from reconcile import Outcome, Reconciliation, ResultRow, Row, fingerprint
 
-#: Default location: beside the tool, not in the repo root. Gitignored -- a
-#: reconciliation contains estate database names and belongs on the machine that
-#: ran it, not in version control.
 DEFAULT_DB_PATH = Path(__file__).with_name("reconcile.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshot (
     id          INTEGER PRIMARY KEY,
-    side        TEXT    NOT NULL CHECK (side IN ('master', 'platform', 'vault')),
+    side        TEXT    NOT NULL
+                CHECK (side IN ('master', 'scope', 'platform', 'vault')),
     label       TEXT    NOT NULL,
     source      TEXT    NOT NULL,
     key_column  TEXT    NOT NULL DEFAULT '',
+    fingerprint TEXT    NOT NULL DEFAULT '',
     loaded_at   TEXT    NOT NULL,
     row_count   INTEGER NOT NULL
 );
@@ -58,6 +45,7 @@ CREATE TABLE IF NOT EXISTS run (
     master_snapshot_id INTEGER NOT NULL REFERENCES snapshot(id),
     target_snapshot_id INTEGER NOT NULL REFERENCES snapshot(id),
     vault_snapshot_id  INTEGER          REFERENCES snapshot(id),
+    scope_snapshot_id  INTEGER          REFERENCES snapshot(id),
     ran_at             TEXT    NOT NULL,
     note               TEXT    NOT NULL DEFAULT ''
 );
@@ -75,18 +63,20 @@ CREATE TABLE IF NOT EXISTS run_result (
 CREATE INDEX IF NOT EXISTS idx_run_result_run ON run_result(run_id);
 """
 
+def _placeholders(count: int) -> str:
+    return ",".join("?" * count)
+
+def _combine(*fingerprints: str) -> str:
+    digest = hashlib.blake2b(digest_size=6)
+    for value in fingerprints:
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\x00")
+    return digest.hexdigest()
 
 def _now() -> str:
-    """UTC, ISO-8601. Runs get compared across machines and timezones; a naive
-    local timestamp would make that comparison quietly wrong."""
     return datetime.now(UTC).isoformat(timespec="seconds")
 
-
-#: The three lists a reconciliation compares. "platform" is what landed via
-#: Data Bridge; "vault" is what is actually archived in Data Vault. They are
-#: different claims -- see GLOSSARY.md and open question 13.
-SIDES = ("master", "platform", "vault")
-
+SIDES = ("master", "scope", "platform", "vault")
 
 @dataclass(frozen=True)
 class SnapshotInfo:
@@ -97,7 +87,28 @@ class SnapshotInfo:
     loaded_at: str
     row_count: int
     key_column: str = ""
+    fingerprint: str = ""
 
+@dataclass(frozen=True)
+class PurgeReport:
+
+    runs_deleted: int
+    snapshots_deleted: int
+    result_rows_deleted: int
+    snapshot_rows_deleted: int
+    runs_kept: tuple[int, ...] = ()
+
+    @property
+    def nothing_to_do(self) -> bool:
+        return self.runs_deleted == 0
+
+    def summary(self) -> str:
+        if self.nothing_to_do:
+            return "Nothing to purge."
+        return (
+            f"{self.runs_deleted} run(s), {self.snapshots_deleted} snapshot(s), "
+            f"{self.result_rows_deleted + self.snapshot_rows_deleted} stored rows"
+        )
 
 @dataclass(frozen=True)
 class RunInfo:
@@ -107,15 +118,23 @@ class RunInfo:
     ran_at: str
     note: str
     vault_snapshot_id: int | None = None
+    scope_snapshot_id: int | None = None
     master_label: str = ""
     target_label: str = ""
+    master_count: int = 0
+    target_count: int = 0
+    vault_count: int | None = None
+    fingerprint: str = ""
 
+    @property
+    def inputs(self) -> str:
+        vault = "no vault" if self.vault_count is None else f"{self.vault_count} vault"
+        return (
+            f"{self.master_count} master / {self.target_count} platform / "
+            f"{vault} · {self.fingerprint}"
+        )
 
 class Store:
-    """A reconciliation database.
-
-    Pass `":memory:"` for a throwaway one, which is what the tests use.
-    """
 
     def __init__(self, path: Path | str = DEFAULT_DB_PATH) -> None:
         self.path = str(path)
@@ -125,6 +144,57 @@ class Store:
         with closing(self._conn.cursor()) as cur:
             cur.executescript(SCHEMA)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        with closing(self._conn.cursor()) as cur:
+            cur.execute("SELECT sql FROM sqlite_master WHERE name = 'snapshot'")
+            row = cur.fetchone()
+            needs_rebuild = bool(row) and "'scope'" not in (row["sql"] or "")
+
+            cur.execute("PRAGMA table_info(run)")
+            run_columns = {r["name"] for r in cur.fetchall()}
+
+        if "scope_snapshot_id" not in run_columns:
+            with closing(self._conn.cursor()) as cur:
+                cur.execute(
+                    "ALTER TABLE run ADD COLUMN scope_snapshot_id INTEGER "
+                    "REFERENCES snapshot(id)"
+                )
+            self._conn.commit()
+
+        if needs_rebuild:
+            self._conn.execute("PRAGMA foreign_keys = OFF")
+            self._conn.execute("PRAGMA legacy_alter_table = ON")
+            with closing(self._conn.cursor()) as cur:
+                cur.execute("PRAGMA table_info(snapshot)")
+                existing = {r["name"] for r in cur.fetchall()}
+                key_col = "key_column" if "key_column" in existing else "''"
+                fp_col = "fingerprint" if "fingerprint" in existing else "''"
+
+                cur.execute("ALTER TABLE snapshot RENAME TO snapshot_old")
+                cur.execute(
+                    "CREATE TABLE snapshot ("
+                    " id INTEGER PRIMARY KEY,"
+                    " side TEXT NOT NULL CHECK (side IN"
+                    "  ('master', 'scope', 'platform', 'vault')),"
+                    " label TEXT NOT NULL,"
+                    " source TEXT NOT NULL,"
+                    " key_column TEXT NOT NULL DEFAULT '',"
+                    " fingerprint TEXT NOT NULL DEFAULT '',"
+                    " loaded_at TEXT NOT NULL,"
+                    " row_count INTEGER NOT NULL)"
+                )
+                cur.execute(
+                    "INSERT INTO snapshot (id, side, label, source, key_column,"
+                    " fingerprint, loaded_at, row_count) "
+                    f"SELECT id, side, label, source, {key_col}, {fp_col},"
+                    " loaded_at, row_count FROM snapshot_old"
+                )
+                cur.execute("DROP TABLE snapshot_old")
+            self._conn.commit()
+            self._conn.execute("PRAGMA legacy_alter_table = OFF")
+            self._conn.execute("PRAGMA foreign_keys = ON")
 
     def close(self) -> None:
         self._conn.close()
@@ -135,10 +205,6 @@ class Store:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    # ------------------------------------------------------------------
-    # Snapshots
-    # ------------------------------------------------------------------
-
     def save_snapshot(
         self,
         side: str,
@@ -147,16 +213,6 @@ class Store:
         rows: Sequence[Row],
         key_column: str = "",
     ) -> int:
-        """Store one loaded file. Returns the snapshot id.
-
-        `source` records where the rows came from -- a filename today, an API
-        endpoint once TASK-0054 lands. It is free text on purpose: the point is
-        that a reader can tell, not that this tool can parse it.
-
-        `key_column` records which column was matched on. A run compared on
-        exposureSetName and one compared on databaseName are not comparable,
-        and without this nothing would say which was used.
-        """
         if side not in SIDES:
             raise ValueError(f"side must be one of {SIDES}, not {side!r}")
         if not key_column and rows:
@@ -164,9 +220,17 @@ class Store:
         with closing(self._conn.cursor()) as cur:
             cur.execute(
                 "INSERT INTO snapshot "
-                "(side, label, source, key_column, loaded_at, row_count) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (side, label, source, key_column, _now(), len(rows)),
+                "(side, label, source, key_column, fingerprint, loaded_at, row_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    side,
+                    label,
+                    source,
+                    key_column,
+                    fingerprint(rows),
+                    _now(),
+                    len(rows),
+                ),
             )
             snapshot_id = int(cur.lastrowid or 0)
             cur.executemany(
@@ -185,7 +249,6 @@ class Store:
             return [Row(name=r["name"], data=json.loads(r["data"])) for r in cur.fetchall()]
 
     def snapshots(self, side: str | None = None) -> list[SnapshotInfo]:
-        """Newest first -- the one somebody wants is almost always the last one."""
         sql = "SELECT * FROM snapshot"
         params: tuple[object, ...] = ()
         if side is not None:
@@ -203,13 +266,10 @@ class Store:
                     loaded_at=r["loaded_at"],
                     row_count=r["row_count"],
                     key_column=r["key_column"],
+                    fingerprint=r["fingerprint"],
                 )
                 for r in cur.fetchall()
             ]
-
-    # ------------------------------------------------------------------
-    # Runs
-    # ------------------------------------------------------------------
 
     def save_run(
         self,
@@ -218,18 +278,18 @@ class Store:
         reconciliation: Reconciliation,
         note: str = "",
         vault_snapshot_id: int | None = None,
+        scope_snapshot_id: int | None = None,
     ) -> int:
-        """Store a comparison. `vault_snapshot_id` is None for a run made with
-        no Data Vault list -- a legitimate state, not missing data."""
         with closing(self._conn.cursor()) as cur:
             cur.execute(
                 "INSERT INTO run "
                 "(master_snapshot_id, target_snapshot_id, vault_snapshot_id, "
-                "ran_at, note) VALUES (?, ?, ?, ?, ?)",
+                "scope_snapshot_id, ran_at, note) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     master_snapshot_id,
                     target_snapshot_id,
                     vault_snapshot_id,
+                    scope_snapshot_id,
                     _now(),
                     note,
                 ),
@@ -290,13 +350,18 @@ class Store:
         )
 
     def runs(self) -> list[RunInfo]:
-        """Newest first, with the labels of both sides joined in."""
         with closing(self._conn.cursor()) as cur:
             cur.execute(
-                "SELECT run.*, s1.label AS master_label, s2.label AS target_label "
+                "SELECT run.*, "
+                "s1.label AS master_label, s2.label AS target_label, "
+                "s1.row_count AS master_count, s2.row_count AS target_count, "
+                "s3.row_count AS vault_count, "
+                "s1.fingerprint AS mfp, s2.fingerprint AS tfp, "
+                "COALESCE(s3.fingerprint, '') AS vfp "
                 "FROM run "
                 "JOIN snapshot s1 ON s1.id = run.master_snapshot_id "
                 "JOIN snapshot s2 ON s2.id = run.target_snapshot_id "
+                "LEFT JOIN snapshot s3 ON s3.id = run.vault_snapshot_id "
                 "ORDER BY run.id DESC"
             )
             return [
@@ -305,23 +370,20 @@ class Store:
                     master_snapshot_id=r["master_snapshot_id"],
                     target_snapshot_id=r["target_snapshot_id"],
                     vault_snapshot_id=r["vault_snapshot_id"],
+                    scope_snapshot_id=r["scope_snapshot_id"],
                     ran_at=r["ran_at"],
                     note=r["note"],
                     master_label=r["master_label"],
                     target_label=r["target_label"],
+                    master_count=r["master_count"],
+                    target_count=r["target_count"],
+                    vault_count=r["vault_count"],
+                    fingerprint=_combine(r["mfp"], r["tfp"], r["vfp"]),
                 )
                 for r in cur.fetchall()
             ]
 
     def compare_runs(self, earlier_run_id: int, later_run_id: int) -> dict[str, list[str]]:
-        """What changed between two runs, by outcome.
-
-        Returns names that became a finding, names that stopped being one, and
-        names whose outcome changed at all. This is the question the snapshot
-        history exists to answer -- "is this new, or has it been missing all
-        along" -- and answering it by eye across two CSV exports is exactly the
-        manual step worth removing.
-        """
         earlier = {row.name: row.outcome for row in self.load_run(earlier_run_id).rows}
         later = {row.name: row.outcome for row in self.load_run(later_run_id).rows}
 
@@ -333,3 +395,79 @@ class Store:
             if name in earlier and earlier[name] is not later[name]
         )
         return {"appeared": appeared, "disappeared": disappeared, "changed": changed}
+
+    def purge_preview(self, keep: int) -> PurgeReport:
+        return self._purge(keep, dry_run=True)
+
+    def purge(self, keep: int) -> PurgeReport:
+        return self._purge(keep, dry_run=False)
+
+    def _purge(self, keep: int, *, dry_run: bool) -> PurgeReport:
+        if keep < 0:
+            raise ValueError(f"keep must be 0 or more, not {keep}")
+
+        with closing(self._conn.cursor()) as cur:
+            cur.execute("SELECT id FROM run ORDER BY id DESC")
+            all_runs = [r["id"] for r in cur.fetchall()]
+            doomed = all_runs[keep:]
+
+            if not doomed:
+                return PurgeReport(0, 0, 0, 0, tuple(all_runs))
+
+            placeholders = _placeholders(len(doomed))
+
+            cur.execute(
+                f"SELECT COUNT(*) n FROM run_result WHERE run_id IN ({placeholders})",
+                doomed,
+            )
+            results_deleted = cur.fetchone()["n"]
+
+            cur.execute(
+                "SELECT id FROM snapshot WHERE id NOT IN ("
+                "  SELECT master_snapshot_id FROM run WHERE id NOT IN "
+                f"({placeholders})"
+                "  UNION SELECT target_snapshot_id FROM run WHERE id NOT IN "
+                f"({placeholders})"
+                "  UNION SELECT vault_snapshot_id FROM run WHERE id NOT IN "
+                f"({placeholders})"
+                "    AND vault_snapshot_id IS NOT NULL"
+                "  UNION SELECT scope_snapshot_id FROM run WHERE id NOT IN "
+                f"({placeholders})"
+                "    AND scope_snapshot_id IS NOT NULL"
+                ")",
+                doomed * 4,
+            )
+            orphan_snapshots = [r["id"] for r in cur.fetchall()]
+
+            snapshot_rows_deleted = 0
+            if orphan_snapshots:
+                snap_placeholders = _placeholders(len(orphan_snapshots))
+                cur.execute(
+                    "SELECT COUNT(*) n FROM snapshot_row "
+                    f"WHERE snapshot_id IN ({snap_placeholders})",
+                    orphan_snapshots,
+                )
+                snapshot_rows_deleted = cur.fetchone()["n"]
+
+            if not dry_run:
+                cur.execute(
+                    f"DELETE FROM run WHERE id IN ({placeholders})", doomed
+                )
+                if orphan_snapshots:
+                    snap_placeholders = _placeholders(len(orphan_snapshots))
+                    cur.execute(
+                        f"DELETE FROM snapshot WHERE id IN ({snap_placeholders})",
+                        orphan_snapshots,
+                    )
+
+        if not dry_run:
+            self._conn.commit()
+            self._conn.execute("VACUUM")
+
+        return PurgeReport(
+            runs_deleted=len(doomed),
+            snapshots_deleted=len(orphan_snapshots),
+            result_rows_deleted=results_deleted,
+            snapshot_rows_deleted=snapshot_rows_deleted,
+            runs_kept=tuple(all_runs[:keep]),
+        )

@@ -5,3 +5,8 @@
 *.sqlite
 *.sqlite3
 __pycache__/
+
+# Secrets. .env.example is committed; a real .env never is.
+.env
+.env.*
+!.env.example

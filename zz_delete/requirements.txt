@@ -1,2 +1,58 @@
+# Reconcile — everything needed to run the tool on its own.
+#
+#     pip install -r requirements.txt
+#     python -m streamlit run app.py
+#
+# Needs Python 3.11 or newer: store.py uses datetime.UTC, added in 3.11.
+# Verified on 3.14, which is what the client runs.
+#
+# Four third-party packages. Everything else the tool uses — csv, sqlite3,
+# hashlib, dataclasses, pathlib — is standard library, which is what keeps
+# this copyable to a locked-down machine as a handful of files.
+#
+# Verified in a clean venv on Python 3.14 with streamlit 1.64 / pandas 3.0 —
+# the newest these bounds allow — as well as the 1.53 / 2.3 combination used
+# during development.
+
+# The web UI. Lower bound is where st.dataframe's use_container_width and the
+# tab API settled; newer is fine.
 streamlit>=1.32
+
+# Tables in the results and file-inspection views. Streamlit pulls pandas in
+# anyway, but the tool imports it directly, so it is named rather than relied
+# on as a transitive dependency.
 pandas>=2.0
+
+# SQL Server access for the "Query server" button on step 1. OPTIONAL: the
+# import is inside the function, so without pyodbc every other part of the
+# tool still works and only that one button fails, with a message saying to
+# upload a CSV instead. Uploading is the path that always works.
+#
+# It also needs an ODBC driver installed on the machine, which pip cannot
+# supply — "ODBC Driver 18 for SQL Server" by default, overridable with
+# RECONCILE_SQL_DRIVER. On a machine with no driver, leave this out.
+pyodbc>=5.0
+
+# HTTP, for fetching the target lists from the Moody's API. Streamlit already
+# depends on it, but the tool imports it directly, so it is named rather than
+# relied on as a transitive dependency — a streamlit release that dropped it
+# would otherwise break this tool silently.
+requests>=2.31
+
+# WINDOWS, BEHIND A TLS-INSPECTING PROXY. requests verifies against certifi's
+# bundle, which contains public roots only — so on a corporate network where
+# the proxy re-signs traffic with an internal CA, every call fails with
+# CERTIFICATE_VERIFY_FAILED. This makes certifi.where() return a bundle merged
+# from the Windows certificate store instead, where that internal root already
+# is. It hooks in via a .pth file, so nothing in this tool imports it.
+#
+# Verified working on Python 3.14 despite the wheel dating from 2022.
+#
+# Do NOT reach for verify=False instead: that disables certificate checking
+# altogether, which trades a proxy problem for sending an API key over a
+# connection nobody is authenticating.
+#
+# `truststore` is the actively-maintained alternative and also works here, but
+# needs an explicit truststore.inject_into_ssl() call at startup rather than
+# installing transparently. Swap if this one ever breaks.
+python-certifi-win32>=1.6 ; sys_platform == "win32"
