@@ -32,13 +32,24 @@ def main() -> int:
         print("No MOODYS_API_KEY in .env -- nothing to probe with.")
         return 1
 
+    sample = SAMPLE
+    if len(sys.argv) > 1:
+        try:
+            sample = max(1, int(sys.argv[1]))
+        except ValueError:
+            print(f"Not a number: {sys.argv[1]!r}")
+            return 1
+    if sample > 1000:
+        print(f"Asking for {sample}; the endpoint caps a page at 1000.\n")
+        sample = 1000
+
     url = (api.host or "") + (api.vault_path or "")
     headers = {"accept": "application/json", "Authorization": api.api_key}
 
     print(f"GET {url}\n")
     try:
         response = requests.get(
-            url, headers=headers, params={"limit": SAMPLE}, timeout=60
+            url, headers=headers, params={"limit": sample}, timeout=60
         )
     except Exception as exc:
         print(f"Could not connect: {exc}")
@@ -80,7 +91,42 @@ def main() -> int:
         "one to set as RECONCILE_VAULT_NAME_FIELD. Nested fields work either\n"
         "bare or dotted."
     )
+
+    _report_name_collisions(rows)
     return 0
+
+def _report_name_collisions(rows: list[dict]) -> None:
+    from collections import Counter, defaultdict
+
+    subtypes: dict[str, set[str]] = defaultdict(set)
+    counts: Counter[str] = Counter()
+    for row in rows:
+        name = str(row.get("archiveName") or "").strip().casefold()
+        if not name:
+            continue
+        counts[name] += 1
+        subtypes[name].add(str(row.get("archiveSubType") or "?"))
+
+    repeated = {n: c for n, c in counts.items() if c > 1}
+    print("\n--- name collisions " + "-" * 48)
+    if not repeated:
+        print(f"  None in this sample: {len(counts)} archives, all names unique.")
+    else:
+        print(f"  {len(repeated)} name(s) appear more than once:")
+        for name, count in sorted(repeated.items()):
+            kinds = ", ".join(sorted(subtypes[name]))
+            print(f"    {name!r}  x{count}  subTypes: {kinds}")
+        print(
+            "\n  These match by name alone, so each would be reported\n"
+            "  Duplicate rather than matched. If the pairs are an EDM and an\n"
+            "  RDM of the same database, the key needs the subtype in it."
+        )
+
+    print(
+        "\n  Sample only -- run against the full estate to be sure, since a\n"
+        "  collision may not appear in the first "
+        f"{len(rows)} rows."
+    )
 
 def _flatten(item: object, prefix: str = "") -> dict[str, object]:
     flat: dict[str, object] = {}
