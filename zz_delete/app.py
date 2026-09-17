@@ -296,6 +296,7 @@ def _init_state() -> None:
     st.session_state.setdefault("scope_rows", None)
     st.session_state.setdefault("raw_text", {})
     st.session_state.setdefault("step_errors", {})
+    st.session_state.setdefault("step_source", {})
     st.session_state.setdefault("outcome_filter", None)
     st.session_state.setdefault("master_label", "")
     st.session_state.setdefault("target_label", "")
@@ -597,6 +598,7 @@ def render_step(step: Step) -> None:
                         st.session_state[step.state_label] = (
                             f"{picked} server" if picked != "Both" else "Direct + RI"
                         )
+                        st.session_state.step_source[step.state_rows] = "sql"
                         st.session_state.step_errors.pop(step.state_rows, None)
                         st.session_state.raw_text.pop(step.state_rows, None)
                         st.rerun()
@@ -626,6 +628,7 @@ def render_step(step: Step) -> None:
                     else:
                         st.session_state[step.state_rows] = rows
                         st.session_state[step.state_label] = "Data Vault API"
+                        st.session_state.step_source[step.state_rows] = "api"
                         st.session_state.step_errors.pop(step.state_rows, None)
                         st.session_state.raw_text.pop(step.state_rows, None)
                         st.rerun()
@@ -663,9 +666,11 @@ def render_step(step: Step) -> None:
 
     with card:
         if uploaded is None:
-            st.session_state[step.state_rows] = None
-            st.session_state.step_errors.pop(step.state_rows, None)
-            st.session_state.raw_text.pop(step.state_rows, None)
+            if st.session_state.step_source.get(step.state_rows) == "upload":
+                st.session_state[step.state_rows] = None
+                st.session_state.step_source.pop(step.state_rows, None)
+                st.session_state.step_errors.pop(step.state_rows, None)
+                st.session_state.raw_text.pop(step.state_rows, None)
             return
 
         text = uploaded.getvalue().decode("utf-8-sig")
@@ -689,6 +694,7 @@ def render_step(step: Step) -> None:
                 rows = load_source_list(text, step.kind)
             st.session_state[step.state_rows] = rows
             st.session_state[step.state_label] = uploaded.name
+            st.session_state.step_source[step.state_rows] = "upload"
             st.session_state.step_errors.pop(step.state_rows, None)
         except LoadError as exc:
             st.session_state[step.state_rows] = None
