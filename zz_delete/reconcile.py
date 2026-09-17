@@ -228,7 +228,8 @@ def load_vault_from_api(
     url: str,
     api_key: str,
     *,
-    name_field: str = "exposureName",
+    name_field: str = "archiveName",
+    sort_field: str = "archiveId",
     page_size: int = 1000,
     max_pages: int = 100,
 ) -> list[Row]:
@@ -250,7 +251,7 @@ def load_vault_from_api(
                 url,
                 headers={"accept": "application/json", "Authorization": api_key},
                 params={
-                    "sort": f"{name_field} ASC",
+                    "sort": f"{sort_field} ASC",
                     "limit": page_size,
                     "offset": offset,
                 },

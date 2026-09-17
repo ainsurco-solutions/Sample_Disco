@@ -13,9 +13,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 from settings import load_settings
+
+SAMPLE = 25
 
 def main() -> int:
     try:
@@ -32,44 +35,64 @@ def main() -> int:
     url = (api.host or "") + (api.vault_path or "")
     headers = {"accept": "application/json", "Authorization": api.api_key}
 
-    probes: list[tuple[str, dict[str, object]]] = [
-        ("no parameters", {}),
-        ("limit only", {"limit": 5}),
-        ("sort=archiveName", {"limit": 5, "sort": "archiveName ASC"}),
-        ("sort=exposureName", {"limit": 5, "sort": "exposureName ASC"}),
-    ]
-
     print(f"GET {url}\n")
-    for label, params in probes:
-        try:
-            r = requests.get(url, headers=headers, params=params, timeout=60)
-        except Exception as exc:
-            print(f"  {label:<22} could not connect: {exc}")
-            continue
+    try:
+        response = requests.get(
+            url, headers=headers, params={"limit": SAMPLE}, timeout=60
+        )
+    except Exception as exc:
+        print(f"Could not connect: {exc}")
+        return 1
 
-        note = ""
-        if r.status_code >= 400:
-            body = " ".join(r.text.split())[:200]
-            if api.api_key and api.api_key in body:
-                body = body.replace(api.api_key, "<key>")
-            note = f"  {body}"
-        elif isinstance(payload := _json(r), list):
-            note = f"  {len(payload)} rows"
-            if payload and isinstance(payload[0], dict):
-                note += f"  fields: {', '.join(sorted(payload[0])[:12])}"
-        print(f"  {label:<22} {r.status_code}{note}")
+    if response.status_code >= 400:
+        body = " ".join(response.text.split())[:300]
+        if api.api_key and api.api_key in body:
+            body = body.replace(api.api_key, "<key>")
+        print(f"{response.status_code}: {body}")
+        return 1
+
+    rows = response.json()
+    if not isinstance(rows, list) or not rows:
+        print("No archives returned -- nothing to inspect.")
+        return 0
+
+    print(f"{len(rows)} rows.\n")
+
+    print("--- first row, in full " + "-" * 45)
+    print(json.dumps(rows[0], indent=2, default=str)[:2000])
+
+    print("\n--- candidate name fields " + "-" * 42)
+    columns: dict[str, list[str]] = {}
+    for row in rows:
+        for key, value in _flatten(row).items():
+            if isinstance(value, str) and value.strip():
+                columns.setdefault(key, []).append(value.strip())
+
+    for key in sorted(columns):
+        values = columns[key]
+        distinct = sorted(set(values))
+        marker = "  <-- distinct per row" if len(distinct) == len(rows) else ""
+        shown = ", ".join(repr(v[:40]) for v in distinct[:3])
+        print(f"  {key:<34} {len(distinct):>3} distinct  {shown}{marker}")
 
     print(
-        "\nFirst 200 wins. If 3 passes and 4 fails, exposureName is not a "
-        "sortable field:\nset RECONCILE_VAULT_NAME_FIELD=archiveName in .env."
+        "\nThe field whose values look like your on-prem database names is the\n"
+        "one to set as RECONCILE_VAULT_NAME_FIELD. Nested fields work either\n"
+        "bare or dotted."
     )
     return 0
 
-def _json(response: object) -> object:
-    try:
-        return response.json()
-    except Exception:
-        return None
+def _flatten(item: object, prefix: str = "") -> dict[str, object]:
+    flat: dict[str, object] = {}
+    if not isinstance(item, dict):
+        return flat
+    for key, value in item.items():
+        name = f"{prefix}{key}"
+        if isinstance(value, dict):
+            flat.update(_flatten(value, f"{name}."))
+        else:
+            flat[name] = value
+    return flat
 
 if __name__ == "__main__":
     sys.exit(main())

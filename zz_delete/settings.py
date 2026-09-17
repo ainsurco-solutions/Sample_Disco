@@ -15,7 +15,7 @@ DEFAULT_EXPOSURES_PATH = "/platform/riskdata/v1/exposures"
 
 DEFAULT_VAULT_PATH = "/platform/admindata/v1/archives"
 
-DEFAULT_VAULT_NAME_FIELD = "exposureName"
+DEFAULT_VAULT_NAME_FIELD = "archiveName"
 
 def _load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
     values: dict[str, str] = {}
