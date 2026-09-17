@@ -18,6 +18,8 @@ from reconcile import (
     Outcome,
     QueryError,
     Reconciliation,
+    distinguishing_values,
+    duplicate_groups,
     funnel,
     funnel_to_csv,
     guess_key_column,
@@ -1020,10 +1022,96 @@ loaded_sides = [
 ]
 
 tabs = st.tabs(
-    ["Results", *(f"{title} file" for _, title in loaded_sides), "Report"]
+    [
+        "Results",
+        *(f"{title} file" for _, title in loaded_sides),
+        *(["Vault duplicates"] if "vault_rows" in st.session_state.raw_text else []),
+        "Report",
+    ]
 )
 results_tab = tabs[0]
 report_tab = tabs[-1]
+vault_dupes_tab = (
+    tabs[-2] if "vault_rows" in st.session_state.raw_text else None
+)
+
+if vault_dupes_tab is not None:
+    with vault_dupes_tab:
+        vault_rows_loaded = st.session_state.vault_rows or []
+        groups = duplicate_groups(vault_rows_loaded)
+
+        st.caption(
+            "Names appearing more than once in the Data Vault list. The vault "
+            "accepts repeated archives of one database, so these are usually "
+            "the same database archived more than once — not an error. They "
+            "are listed because matching is by name, so a repeated name "
+            "cannot be matched to a single archive."
+        )
+
+        if not groups:
+            st.success(
+                f"No repeated names in {len(vault_rows_loaded)} vault rows. "
+                "Every archive name identifies one archive."
+            )
+        else:
+            affected = sum(len(group) for _, group in groups)
+            st.warning(
+                f"**{len(groups)}** names cover **{affected}** archives. "
+                "Each is reported *Duplicate* on the Results tab, and none of "
+                "them matches a source database."
+            )
+
+            IDENTITY_FIELDS = (
+                "archiveId",
+                "archivedAt",
+                "createdAt",
+                "sizeInMb",
+                "archiveSubType",
+                "archiveType",
+                "archivedBy",
+            )
+            table: list[dict[str, object]] = []
+            for key, group in groups:
+                entry: dict[str, object] = {
+                    "Name": group[0].name,
+                    "Archives": len(group),
+                }
+                for field_name in IDENTITY_FIELDS:
+                    values = distinguishing_values(group, field_name)
+                    if not values:
+                        continue
+                    entry[field_name] = (
+                        values[0] if len(values) == 1 else " | ".join(values)
+                    )
+                table.append(entry)
+
+            st.dataframe(
+                pd.DataFrame(table),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "A column showing one value is common to every archive in "
+                "that row; two values separated by `|` differ between them. "
+                "A group differing only by `archiveId` and a timestamp is the "
+                "same database archived twice."
+            )
+
+            csv_rows = [
+                {
+                    "archiveName": row.name,
+                    "key": key,
+                    **{k: v for k, v in row.data.items()},
+                }
+                for key, group in groups
+                for row in group
+            ]
+            st.download_button(
+                "Download vault duplicates (CSV)",
+                data=pd.DataFrame(csv_rows).to_csv(index=False),
+                file_name="vault-duplicates.csv",
+                mime="text/csv",
+            )
 
 with report_tab:
     st.caption(

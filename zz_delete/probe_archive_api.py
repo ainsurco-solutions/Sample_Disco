@@ -118,15 +118,62 @@ def _report_name_collisions(rows: list[dict]) -> None:
             print(f"    {name!r}  x{count}  subTypes: {kinds}")
         print(
             "\n  These match by name alone, so each would be reported\n"
-            "  Duplicate rather than matched. If the pairs are an EDM and an\n"
-            "  RDM of the same database, the key needs the subtype in it."
+            "  Duplicate rather than matched."
         )
+        _explain_one_collision(rows, sorted(repeated)[0])
 
     print(
         "\n  Sample only -- run against the full estate to be sure, since a\n"
         "  collision may not appear in the first "
         f"{len(rows)} rows."
     )
+
+def _explain_one_collision(rows: list[dict], name: str) -> None:
+    group = [
+        row
+        for row in rows
+        if str(row.get("archiveName") or "").strip().casefold() == name
+    ]
+    if len(group) < 2:
+        return
+
+    flat = [_flatten(row) for row in group]
+    keys = sorted({key for row in flat for key in row})
+    differing = [
+        key
+        for key in keys
+        if len({str(row.get(key)) for row in flat}) > 1
+    ]
+
+    print(f"\n  Taking {name!r} as an example -- the fields that differ:")
+    if not differing:
+        print("    None. The rows are identical on every field.")
+        return
+    for key in differing:
+        values = [str(row.get(key, "")) for row in flat]
+        shown = "  |  ".join(v[:44] for v in values)
+        print(f"    {key:<32} {shown}")
+
+    identity_only = set(differing) <= {
+        "archiveId",
+        "archivedAt",
+        "createdAt",
+        "archiveDetails.thumbprint",
+        "securableId",
+    }
+    print()
+    if identity_only:
+        print(
+            "    They differ only by identity and timestamp: this looks like\n"
+            "    the same database archived more than once, so the newest is\n"
+            "    probably the one that counts."
+        )
+    else:
+        print(
+            "    They differ by more than identity, so these may be different\n"
+            "    databases sharing a name -- which no key built from the name\n"
+            "    alone can separate."
+        )
 
 def _flatten(item: object, prefix: str = "") -> dict[str, object]:
     flat: dict[str, object] = {}

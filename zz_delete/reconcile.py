@@ -645,6 +645,26 @@ class SizeTotal:
     def missing_rows(self) -> int:
         return max(self.rows - self.rows_with_size, 0)
 
+def duplicate_groups(
+    rows: Sequence[Row], distinguish_by: Sequence[str] = ()
+) -> list[tuple[str, list[Row]]]:
+    grouped: dict[str, list[Row]] = {}
+    for row in rows:
+        grouped.setdefault(row.key, []).append(row)
+    return sorted(
+        ((key, group) for key, group in grouped.items() if len(group) > 1),
+        key=lambda pair: pair[0],
+    )
+
+def distinguishing_values(group: Sequence[Row], field_name: str) -> list[str]:
+    values: list[str] = []
+    for row in group:
+        raw = row.data.get(field_name)
+        text = "" if raw is None else str(raw).strip()
+        if text and text not in values:
+            values.append(text)
+    return sorted(values)
+
 def size_of(reconciliation: Reconciliation, outcome: Outcome) -> SizeTotal:
     total = 0.0
     rows = 0
