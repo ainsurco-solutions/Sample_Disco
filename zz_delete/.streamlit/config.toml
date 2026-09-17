@@ -1,0 +1,25 @@
+# Theme taken from MS Amlin's own site (www.msamlin.com), read from its
+# stylesheet rather than eyeballed:
+#
+#     --blue        #1B1464   primary
+#     --blue-light  #271D8F   hover / lighter primary
+#     --cyan        #00E6F0   accent
+#     --grey-50     #F8F8F8   page background
+#     --grey-light  #D8D9DB   borders
+#     --red         #FF1F27   their red -- deliberately NOT used here
+#
+# Streamlit's default primaryColor is red (#FF4B4B), which painted every
+# type="primary" button: Run reconciliation, Show all, and the selected
+# finding filter. Red on a control somebody is meant to press reads as a
+# warning rather than an invitation.
+#
+# The client's own red is left out on purpose. This tool already spends red on
+# a meaning -- Missing and Duplicate, the outcomes that need acting on -- and
+# a brand red on a button would put the same colour on a thing to press and a
+# thing that is wrong. The navy carries the brand; red keeps its job.
+
+[theme]
+primaryColor = "#1B1464"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8F8F8"
+textColor = "#1a1a1a"

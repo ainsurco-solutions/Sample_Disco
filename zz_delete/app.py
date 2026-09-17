@@ -122,6 +122,36 @@ st.markdown(
         padding:.08rem .35rem; border-radius:3px;
       }
       .sp-req { background:rgba(179,38,30,.13); color:#b3261e; }
+
+      button[data-testid="stBaseButton-primary"],
+      .stButton button[kind="primary"] {
+        background:transparent;
+        color:#1B1464;
+        border:1.5px solid #1B1464;
+        font-weight:600;
+      }
+      button[data-testid="stBaseButton-primary"]:hover,
+      .stButton button[kind="primary"]:hover {
+        background:rgba(27,20,100,.07);
+        color:#271D8F;
+        border-color:#271D8F;
+      }
+      button[data-testid="stBaseButton-primary"]:disabled,
+      .stButton button[kind="primary"]:disabled {
+        background:transparent; color:#9aa0a6; border-color:#d3d6da;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        button[data-testid="stBaseButton-primary"],
+        .stButton button[kind="primary"] {
+          color:#9b93e8; border-color:#9b93e8;
+        }
+        button[data-testid="stBaseButton-primary"]:hover,
+        .stButton button[kind="primary"]:hover {
+          background:rgba(155,147,232,.14);
+          color:#b5aef0; border-color:#b5aef0;
+        }
+      }
       .sp-opt { background:rgba(128,128,128,.18); color:#5f6368; }
       .sp-label { font-size:.82rem; font-weight:600; margin-top:.2rem; }
       .sp-purpose { font-size:.75rem; opacity:.62; line-height:1.3; }
