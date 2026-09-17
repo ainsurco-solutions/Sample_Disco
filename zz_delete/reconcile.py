@@ -1,8 +1,3 @@
-# Generated copy -- do not edit.
-# Source: dev-tools/Reconcile/reconcile.py in the AML-MigHub repo.
-# Comments and docstrings are stripped; the reasoning is in master.
-# Re-run dev-tools/Reconcile/push_to_demo.py to update.
-
 from __future__ import annotations
 
 import csv

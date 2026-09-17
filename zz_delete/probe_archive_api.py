@@ -1,8 +1,3 @@
-# Generated copy -- do not edit.
-# Source: dev-tools/Reconcile/probe_archive_api.py in the AML-MigHub repo.
-# Comments and docstrings are stripped; the reasoning is in master.
-# Re-run dev-tools/Reconcile/push_to_demo.py to update.
-#
 # Finds which parameter the archive API is refusing, by sending the
 # same request four times and removing one variable each time.
 #
