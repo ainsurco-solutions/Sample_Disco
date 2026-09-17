@@ -66,8 +66,6 @@ st.markdown(
         font-weight:400; text-transform:none; letter-spacing:0; opacity:.75;
       }
 
-      /* The findings row is real buttons so it can be clicked; the count
-         above each one carries the outcome colour. */
       .fb-count {
         color:var(--rc); font-size:1.8rem; font-weight:700; line-height:1.1;
         text-align:center;
@@ -79,31 +77,26 @@ st.markdown(
         text-transform:uppercase; letter-spacing:.04em; margin-bottom:.15rem;
       }
 
-      /* The three headline numbers. Larger than the outcome cards, and above
-         them: they answer "where are we", the outcomes answer "what is wrong". */
       .hl-row {
         display:flex; flex-wrap:wrap; gap:.9rem; margin:.2rem 0 .9rem;
       }
-      /* The breakdown sits close under the totals it explains. */
+
       .hl-row-primary { margin-bottom:.55rem; }
       .hl-card {
-        /* flex-basis is set per row from the card count, so a three-card row
-           stays three and a four-card row stays four. */
+
         flex-grow:1; flex-shrink:1; min-width:170px; padding:.85rem 1rem;
         border:1px solid rgba(128,128,128,.28); border-radius:8px;
         background:rgba(128,128,128,.06);
       }
       .hl-count { font-size:2rem; font-weight:700; line-height:1.05; }
-      /* The top row carries the three totals, so it gets the weight; the row
-         below breaks them down and stays deliberately quieter. */
+
       .hl-row-primary .hl-card {
         padding:1.1rem 1.25rem; background:rgba(128,128,128,.1);
         border-color:rgba(128,128,128,.38);
       }
       .hl-row-primary .hl-count { font-size:2.9rem; }
       .hl-row-primary .hl-name { font-size:1rem; letter-spacing:.01em; }
-      /* The same four meanings as OUTCOME_COLOUR. A card with no tone stays
-         the default text colour -- neutral, which is most of them. */
+
       .hl-good { color:#1e7b34; }
       .hl-warn { color:#b26a00; }
       .hl-bad  { color:#b3261e; }
@@ -112,17 +105,8 @@ st.markdown(
       }
       .hl-note { font-size:.78rem; opacity:.65; margin-top:.3rem; }
 
-      /* Sidebar stepper: one compact block per upload slot. */
-      /* The heading block. The border and background now belong to the
-         st.container that wraps the whole step -- widgets cannot live inside
-         injected HTML, so the container has to hold both the card markup and
-         the controls, and this div would otherwise draw a second border
-         inside the first. */
       .sp { padding:0; margin:0 0 .4rem; }
-      /* The card and its buttons were joined -- squared corners, no bottom
-         border -- but the two borders met and the button read as clipped
-         along its top edge. A small gap is clearer than a bad join, so the
-         card keeps its own closed shape and the buttons keep theirs. */
+
       .sp-head { display:flex; align-items:center; gap:.4rem; }
       .sp-num {
         display:inline-flex; align-items:center; justify-content:center;
@@ -147,17 +131,12 @@ st.markdown(
         display:block; font-weight:400; text-transform:none;
         letter-spacing:0; opacity:.7; font-size:.72rem;
       }
-      /* State colours the state line. The left-edge stripe moved onto the
-         container in the rules below, so the whole card carries the state
-         rather than a heading inside it. */
+
       .sp-ready .sp-state { color:#1e7b34; }
       .sp-error .sp-state { color:#b3261e; }
       .sp-todo .sp-state { color:#b26a00; }
       .sp-skip .sp-state { opacity:.55; }
 
-      /* One card per step: the container Streamlit renders for
-         st.container(border=True), keyed per step so the state stripe can be
-         set from the markdown class inside it. */
       section[data-testid="stSidebar"] [class*="st-key-step_"] {
         border:1px solid rgba(128,128,128,.25);
         border-left:3px solid #9aa0a6;
@@ -182,36 +161,20 @@ st.markdown(
       }
       .sp-gate-ok { background:rgba(30,123,52,.12); color:#1e7b34; }
 
-      /* Collapse the file uploader to just its Browse button.
-         Streamlit has no option for this: the dropzone, the cloud icon and
-         the "Limit 200MB per file" line are baked into the widget, and across
-         four steps they are most of the sidebar's height for a feature nobody
-         here uses. Targeted by data-testid, which is stable API surface --
-         unlike the generated class names, which are not.
-         If a Streamlit upgrade brings the dropzone back, this selector is
-         what to look at; the uploader keeps working either way. */
       [data-testid="stFileUploader"] { width:100%; margin:0; }
       [data-testid="stFileUploaderDropzone"] {
         padding:0; border:none; background:transparent; min-height:0;
         width:100%;
       }
       [data-testid="stFileUploaderDropzoneInstructions"] { display:none; }
-      /* The button is the only thing left in the dropzone, so it takes the
-         full width. Without the wrapper rules above it was sizing to a
-         container that still carried Streamlit's padding, which is what left
-         it narrower than the step card above it and flush to the left. */
+
       [data-testid="stFileUploaderDropzone"] button {
         width:100%; margin:0; justify-content:center;
       }
-      /* The uploaded-file chip: keep the name and the clear button, drop the
-         size, which is one more line per step and answers nothing. */
+
       [data-testid="stFileUploaderFile"] small { display:none; }
       [data-testid="stFileUploaderFile"] { padding:.1rem 0; }
 
-      /* Sidebar density. Streamlit's default vertical rhythm is built for a
-         page, not a four-step form in a 21rem column: without this the
-         stepper does not fit on a laptop screen and the gate button falls
-         below the fold, which is the one control that has to be visible. */
       section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
         gap:.35rem;
       }
@@ -219,23 +182,17 @@ st.markdown(
       section[data-testid="stSidebar"] .stButton button {
         padding:.25rem .5rem; min-height:0; width:100%;
       }
-      /* Browse and Call API sit in two columns; give them the same gap as the
-         step cards so the pair lines up with the block above rather than
-         drifting a few pixels wider. */
+
       section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
         gap:.4rem;
       }
-      /* The step block already carries the heading, so a widget label under
-         it is a second copy in a smaller font. Scoped to the sidebar: the
-         Report tab's "Earlier run" and "Later run" pickers need their labels
-         to be told apart, and a global rule would silently strip them. */
+
       section[data-testid="stSidebar"] .stSelectbox > label,
       section[data-testid="stSidebar"] .stFileUploader > label {
         display:none;
       }
       section[data-testid="stSidebar"] hr { margin:.5rem 0; }
 
-      /* Funnel: one row per stage, bar width proportional to the count. */
       .fn { margin:.6rem 0 1rem; }
       .fn-row {
         display:grid;
@@ -247,24 +204,19 @@ st.markdown(
         position:relative; background:rgba(128,128,128,.13);
         border-radius:4px; height:2rem; display:flex; align-items:center;
       }
-      /* Neutral by default: a funnel bar measures progress, it does not pass
-         judgement. Only the final stage, once archiving is confirmed, is
-         green. */
+
       .fn-bar {
         position:absolute; inset:0 auto 0 0; border-radius:4px;
         background:rgba(128,128,128,.42);
       }
       .fn-bar-done { background:#2f6f4f; }
-      /* On the track, not on the bar: the bar is neutral grey now, so
-         white-on-bar would not read, and a right-aligned number needs no
-         special case for a short bar. */
+
       .fn-value {
         position:relative; margin-left:auto; padding-right:.6rem;
         font-weight:700; font-size:.95rem;
       }
       .fn-drop { font-size:.85rem; font-weight:600; color:#b3261e; }
-      /* Percentages sit beside the figure they qualify, smaller and quieter:
-         the count is the fact, the share is the context. */
+
       .fn-share {
         font-weight:400; font-size:.78rem; opacity:.6; margin-left:.4rem;
       }
