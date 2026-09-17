@@ -102,6 +102,11 @@ st.markdown(
       }
       .hl-note { font-size:.78rem; opacity:.65; margin-top:.3rem; }
 
+      .hl-volume {
+        font-size:.86rem; font-weight:600; opacity:.78; margin-top:.25rem;
+        font-variant-numeric:tabular-nums;
+      }
+
       .sp { padding:0; margin:0 0 .4rem; }
 
       .sp-head { display:flex; align-items:center; gap:.4rem; }
@@ -304,17 +309,27 @@ _init_state()
 store = get_store()
 
 def render_headline_cards(
-    cards: list[tuple[str, int, str, str]], *, primary: bool = False
+    cards: list[tuple[str, int, str, str] | tuple[str, int, str, str, str]],
+    *,
+    primary: bool = False,
 ) -> None:
     basis = 100 / max(len(cards), 1)
     row_class = "hl-row hl-row-primary" if primary else "hl-row"
     html_cards = []
-    for title, count, note, tone in cards:
+    for card in cards:
+        title, count, note, tone = card[:4]
+        volume = card[4] if len(card) > 4 else ""
         tone_class = f" hl-{tone}" if tone else ""
+        volume_html = (
+            f"<div class='hl-volume'>{html.escape(volume)}</div>"
+            if volume
+            else ""
+        )
         html_cards.append(
             f"<div class='hl-card' style='flex-basis:calc({basis:.4f}% - .9rem)'>"
             f"<div class='hl-count{tone_class}'>{count}</div>"
             f"<div class='hl-name'>{html.escape(title)}</div>"
+            f"{volume_html}"
             f"<div class='hl-note'>{html.escape(note)}</div>"
             "</div>"
         )
@@ -895,11 +910,26 @@ counts = result.counts()
 st.subheader("Summary")
 
 headline_stages = {s.name: s for s in funnel(result)}
+
+archived_size = size_of(result, Outcome.ARCHIVED)
+transit_size = size_of(result, Outcome.NOT_ARCHIVED)
+unchecked_size = size_of(result, Outcome.IMPORTED)
+
+def _volume_phrase(total) -> str:
+    if total.complete:
+        return f"{total.gigabytes:,.1f} GB"
+    return f"at least {total.gigabytes:,.1f} GB"
+
 archived_note = (
     "reconciled in Data Vault"
     if result.vault_checked
     else "no vault list supplied — unconfirmed, not zero"
 )
+
+def _card_volume(total) -> str:
+    if total.units_look_wrong or not total.rows_with_size:
+        return ""
+    return _volume_phrase(total)
 render_headline_cards(
     [
         (
@@ -921,19 +951,11 @@ render_headline_cards(
             counts[Outcome.ARCHIVED],
             archived_note,
             "good" if result.vault_checked else "",
+            _card_volume(archived_size),
         ),
     ],
     primary=True,
 )
-
-archived_size = size_of(result, Outcome.ARCHIVED)
-transit_size = size_of(result, Outcome.NOT_ARCHIVED)
-unchecked_size = size_of(result, Outcome.IMPORTED)
-
-def _volume_phrase(total) -> str:
-    if total.complete:
-        return f"{total.gigabytes:,.1f} GB"
-    return f"at least {total.gigabytes:,.1f} GB"
 
 wrong_units = next(
     (
@@ -996,6 +1018,7 @@ render_headline_cards(
             counts[Outcome.NOT_ARCHIVED],
             "in Data Bridge, not yet archived",
             "warn" if counts[Outcome.NOT_ARCHIVED] else "",
+            _card_volume(transit_size),
         ),
     ]
 )
