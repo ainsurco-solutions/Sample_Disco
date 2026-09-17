@@ -385,20 +385,40 @@ def render_outcome_cards(outcomes: list[Outcome], counts: dict[Outcome, int]) ->
         f"<div class='rc-row'>{''.join(cards)}</div>", unsafe_allow_html=True
     )
 
-def render_file_tab(title: str, filename: str, text: str, key: str) -> None:
-    rows = pd.read_csv(io.StringIO(text), dtype=str).fillna("")
+def render_file_tab(
+    title: str,
+    filename: str,
+    text: str | None,
+    key: str,
+    fetched: list | None = None,
+) -> None:
+    if text is not None:
+        rows = pd.read_csv(io.StringIO(text), dtype=str).fillna("")
+    else:
+        rows = pd.DataFrame(
+            [
+                {k: v for k, v in row.data.items() if k != "_key_column"}
+                for row in (fetched or [])
+            ]
+        ).fillna("")
 
     left, mid, right = st.columns(3)
     left.metric("Rows", len(rows))
     mid.metric("Columns", len(rows.columns))
     matched_on = ""
-    if key != "master":
+    if key != "master_rows":
         stored = st.session_state.get(key) or []
         if stored:
             matched_on = stored[0].data.get("_key_column", "")
     right.metric("Matching on", matched_on or "—")
 
-    st.caption(f"`{filename}`")
+    if text is not None:
+        st.caption(f"`{filename}`")
+    else:
+        st.caption(
+            f"{filename} — fetched live, not from a file. Every column the "
+            "source returned."
+        )
 
     search = st.text_input(
         "Filter rows containing", "", key=f"filter_{key}", placeholder="any text"
@@ -427,18 +447,30 @@ def render_file_tab(title: str, filename: str, text: str, key: str) -> None:
             help="What the table is showing, with the filter applied.",
         )
     with right_dl:
-        st.download_button(
-            "Download the file as supplied",
-            data=text,
-            file_name=filename,
-            mime="text/csv",
-            key=f"dl_raw_{key}",
-            use_container_width=True,
-            help="The original upload, byte for byte.",
-        )
+        if text is not None:
+            st.download_button(
+                "Download the file as supplied",
+                data=text,
+                file_name=filename,
+                mime="text/csv",
+                key=f"dl_raw_{key}",
+                use_container_width=True,
+                help="The original upload, byte for byte.",
+            )
+        else:
+            st.download_button(
+                f"Download all {len(rows)} rows (CSV)",
+                data=rows.to_csv(index=False),
+                file_name=filename,
+                mime="text/csv",
+                key=f"dl_raw_{key}",
+                use_container_width=True,
+                help="Everything returned, whatever the filter shows.",
+            )
 
-    with st.expander("Raw text, exactly as uploaded"):
-        st.code(text, language="text")
+    if text is not None:
+        with st.expander("Raw text, exactly as uploaded"):
+            st.code(text, language="text")
 
 def results_frame(reconciliation: Reconciliation) -> pd.DataFrame:
     records = []
@@ -1013,13 +1045,15 @@ if not result.vault_checked:
 st.divider()
 
 SIDE_TABS = (
-    ("master", "Source"),
+    ("master_rows", "Source"),
     ("scope_rows", "Scope"),
     ("target_rows", "Data Bridge"),
     ("vault_rows", "Target"),
 )
 loaded_sides = [
-    (key, title) for key, title in SIDE_TABS if key in st.session_state.raw_text
+    (key, title)
+    for key, title in SIDE_TABS
+    if key in st.session_state.raw_text or st.session_state.get(key)
 ]
 
 tabs = st.tabs(
@@ -1323,7 +1357,18 @@ with results_tab:
             help="Every row, whatever the filter says.",
         )
 
-for tab, (key, title) in zip(tabs[1:-1], loaded_sides, strict=True):
+file_tabs = tabs[1 : 1 + len(loaded_sides)]
+for tab, (key, title) in zip(file_tabs, loaded_sides, strict=True):
     with tab:
-        filename, text = st.session_state.raw_text[key]
-        render_file_tab(title, filename, text, key)
+        if key in st.session_state.raw_text:
+            filename, text = st.session_state.raw_text[key]
+            render_file_tab(title, filename, text, key)
+        else:
+            label = st.session_state.get(f"{key.removesuffix('_rows')}_label")
+            render_file_tab(
+                title,
+                label or title,
+                None,
+                key,
+                fetched=st.session_state.get(key) or [],
+            )
