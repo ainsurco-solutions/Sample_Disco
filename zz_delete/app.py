@@ -1152,7 +1152,42 @@ with report_tab:
         "reached it, so the drop between two steps is the work outstanding "
         "there."
     )
-    stages = funnel(result)
+
+    report_result = result
+    if result.scope_checked:
+        basis = st.radio(
+            "Measure against",
+            ("The scope list", "Everything on prem"),
+            horizontal=True,
+            key="report_basis",
+            help=(
+                "The scope list answers whether we moved what we promised. "
+                "Everything on prem answers whether anything is unaccounted "
+                "for -- including databases nobody put on the scope list."
+            ),
+        )
+        if basis == "Everything on prem":
+            report_result = reconcile(
+                st.session_state.master_rows,
+                st.session_state.target_rows,
+                st.session_state.vault_rows,
+                None,
+            )
+            hidden = sum(
+                1
+                for row in result.rows
+                if row.outcome is Outcome.OUT_OF_SCOPE
+            )
+            if hidden:
+                st.info(
+                    f"Treating all **{result.master_count}** on-prem "
+                    f"databases as in scope. The **{hidden}** the scope list "
+                    "excluded are now judged like any other — a database on "
+                    "prem and absent from Data Bridge reads as **Missing**, "
+                    "not *Not in scope*."
+                )
+
+    stages = funnel(report_result)
     widest = max((s.count for s in stages), default=0) or 1
 
     scope_base = next(
@@ -1173,7 +1208,7 @@ with report_tab:
         )
         if stage.lost and stage.of_previous:
             lost += f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% kept</span>"
-        done = stage.name == "Data Vault" and result.vault_checked
+        done = stage.name == "Data Vault" and report_result.vault_checked
         bar_class = "fn-bar fn-bar-done" if done else "fn-bar"
         rows_html.append(
             "<div class='fn-row'>"
@@ -1206,7 +1241,7 @@ with report_tab:
     with st.expander("The same figures as a table"):
         st.dataframe(funnel_frame, hide_index=True, use_container_width=True)
 
-    if result.vault_checked:
+    if report_result.vault_checked:
         archived = stages[-1].count
         started = stages[2].count
         st.caption(
@@ -1221,11 +1256,21 @@ with report_tab:
             "complete the funnel."
         )
 
+    unscoped = report_result is not result
     st.download_button(
         "Download this report (CSV)",
-        data=funnel_to_csv(result),
-        file_name="reconciliation-report.csv",
+        data=funnel_to_csv(report_result),
+        file_name=(
+            "reconciliation-report-whole-estate.csv"
+            if unscoped
+            else "reconciliation-report.csv"
+        ),
         mime="text/csv",
+        help=(
+            "Measured against every on-prem database."
+            if unscoped
+            else "Measured against the scope list."
+        ),
     )
 
     st.divider()
