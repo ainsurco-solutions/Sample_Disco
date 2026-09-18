@@ -119,6 +119,15 @@ def _report_type_split(rows: list[dict]) -> None:
             "  something is filtering -- worth settling before relying on it."
         )
 
+NAME_FIELDS = ("archiveName", "databaseName", "exposureName", "name")
+
+def _name_of(row: dict) -> str:
+    for field_name in NAME_FIELDS:
+        value = str(row.get(field_name) or "").strip()
+        if value:
+            return value
+    return ""
+
 def _report_server_coverage(rows: list[dict]) -> None:
     from collections import Counter
 
@@ -154,7 +163,7 @@ def _report_name_collisions(rows: list[dict]) -> None:
     subtypes: dict[str, set[str]] = defaultdict(set)
     counts: Counter[str] = Counter()
     for row in rows:
-        name = str(row.get("archiveName") or "").strip().casefold()
+        name = str(_name_of(row) or "").strip().casefold()
         if not name:
             continue
         counts[name] += 1
@@ -185,7 +194,7 @@ def _explain_one_collision(rows: list[dict], name: str) -> None:
     group = [
         row
         for row in rows
-        if str(row.get("archiveName") or "").strip().casefold() == name
+        if str(_name_of(row) or "").strip().casefold() == name
     ]
     if len(group) < 2:
         return
