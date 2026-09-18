@@ -19,6 +19,7 @@ from reconcile import (
     funnel,
     funnel_to_csv,
     guess_key_column,
+    load_bridge_from_api,
     load_inventory_from_sql,
     load_source_list,
     load_target_from_csv,
@@ -747,22 +748,45 @@ def render_step(step: Step) -> None:
 
     if api_col is not None and step.state_rows == "target_rows":
         with api_col:
-            note = "awaiting function" if API.configured else "no .env config"
-            st.button(
-                f"Call API — {note}",
-                key=f"api_{step.state_rows}",
-                disabled=True,
-                use_container_width=True,
-                help=(
-                    "Not yet available — awaiting the list-exposures function "
-                    "(TASK-0054). Upload a CSV for now."
-                    + (
-                        ""
-                        if API.configured
-                        else f" Also unset: {', '.join(API.missing())}."
-                    )
-                ),
-            )
+            if API.configured:
+                if st.button(
+                    "Call API",
+                    key=f"api_{step.state_rows}",
+                    use_container_width=True,
+                    help=(
+                        f"GET {API.exposures_url()} — matching on "
+                        f"{API.bridge_name_field}"
+                    ),
+                ):
+                    try:
+                        rows = load_bridge_from_api(
+                            API.exposures_url(),
+                            API.api_key,
+                            name_field=API.bridge_name_field,
+                        )
+                    except QueryError as exc:
+                        st.session_state[step.state_rows] = None
+                        st.session_state.step_errors[step.state_rows] = str(exc)
+                        st.error(str(exc))
+                    else:
+                        st.session_state[step.state_rows] = rows
+                        st.session_state[step.state_label] = "Data Bridge API"
+                        st.session_state.step_source[step.state_rows] = "api"
+                        st.session_state.step_errors.pop(step.state_rows, None)
+                        st.session_state.raw_text.pop(step.state_rows, None)
+                        st.rerun()
+            else:
+                st.button(
+                    "Call API — no .env config",
+                    key=f"api_{step.state_rows}",
+                    disabled=True,
+                    use_container_width=True,
+                    help=(
+                        "Set RECONCILE_API_HOST and MOODYS_API_KEY in .env to "
+                        f"fetch the platform list directly. Unset: "
+                        f"{', '.join(API.missing())}."
+                    ),
+                )
 
     with card:
         if uploaded is None:

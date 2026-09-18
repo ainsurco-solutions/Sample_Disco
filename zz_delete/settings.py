@@ -7,7 +7,9 @@ from pathlib import Path
 
 ENV_FILE = Path(__file__).with_name(".env")
 
-DEFAULT_EXPOSURES_PATH = "/platform/riskdata/v1/exposures"
+DEFAULT_EXPOSURES_PATH = "/platform/admindata/v1/databases"
+
+DEFAULT_BRIDGE_NAME_FIELD = "databaseName"
 
 DEFAULT_VAULT_PATH = "/platform/admindata/v1/archives"
 
@@ -34,6 +36,7 @@ class ApiSettings:
     exposures_path: str = DEFAULT_EXPOSURES_PATH
     vault_path: str = DEFAULT_VAULT_PATH
     vault_name_field: str = DEFAULT_VAULT_NAME_FIELD
+    bridge_name_field: str = DEFAULT_BRIDGE_NAME_FIELD
     _api_key: str = field(default="", repr=False)
 
     def __str__(self) -> str:
@@ -171,6 +174,9 @@ def load_settings(path: Path = ENV_FILE) -> ApiSettings:
         vault_path=value("RECONCILE_VAULT_PATH", DEFAULT_VAULT_PATH),
         vault_name_field=value(
             "RECONCILE_VAULT_NAME_FIELD", DEFAULT_VAULT_NAME_FIELD
+        ),
+        bridge_name_field=value(
+            "RECONCILE_BRIDGE_NAME_FIELD", DEFAULT_BRIDGE_NAME_FIELD
         ),
         _api_key=value("MOODYS_API_KEY"),
     )

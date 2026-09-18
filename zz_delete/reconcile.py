@@ -238,6 +238,8 @@ def load_vault_from_api(
     *,
     name_field: str = "archiveName",
     sort_field: str = "archiveId",
+    id_field: str = "archiveId",
+    label: str = "archive API",
     page_size: int = 1000,
     max_pages: int = 100,
 ) -> list[Row]:
@@ -266,17 +268,17 @@ def load_vault_from_api(
                 timeout=60,
             )
         except Exception as exc:
-            raise QueryError(f"Could not reach the archive API: {exc}") from exc
+            raise QueryError(f"Could not reach the {label}: {exc}") from exc
 
         if response.status_code == 401:
             raise QueryError(
-                "The archive API rejected the key (401). Check MOODYS_API_KEY."
+                f"The {label} rejected the key (401). Check MOODYS_API_KEY."
             )
         if response.status_code == 403:
             raise QueryError(
-                "The archive API refused the request (403). This endpoint is "
-                "admindata/v1, a different family from the exposures endpoint "
-                "-- the entitlement may not cover it."
+                f"The {label} refused the request (403). This endpoint is "
+                "admindata/v1 and needs the Data Admin role -- a key that "
+                "reads one endpoint in this family may not read another."
             )
         if response.status_code >= 400:
             detail = " ".join(response.text.split())[:400]
@@ -291,7 +293,7 @@ def load_vault_from_api(
                     "one such as archiveName."
                 )
             raise QueryError(
-                f"The archive API returned {response.status_code}."
+                f"The {label} returned {response.status_code}."
                 + (f" It said: {detail}" if detail else "")
                 + hint
             )
@@ -299,7 +301,7 @@ def load_vault_from_api(
         try:
             page = response.json()
         except ValueError as exc:
-            raise QueryError("The archive API did not return JSON.") from exc
+            raise QueryError(f"The {label} did not return JSON.") from exc
 
         if isinstance(page, dict):
             for key in ("searchItems", "items", "data", "results", "archives"):
@@ -308,11 +310,11 @@ def load_vault_from_api(
                     break
             else:
                 raise QueryError(
-                    "The archive API returned an object, not the documented "
+                    f"The {label} returned an object, not the documented "
                     f"array. Keys: {', '.join(sorted(page))}"
                 )
         if not isinstance(page, list):
-            raise QueryError("The archive API returned an unexpected shape.")
+            raise QueryError(f"The {label} returned an unexpected shape.")
 
         for item in page:
             if not isinstance(item, dict):
@@ -321,7 +323,7 @@ def load_vault_from_api(
             name = str(flat.get(name_field) or "").strip()
             if not name:
                 continue
-            identity = str(flat.get("archiveId") or "").strip()
+            identity = str(flat.get(id_field) or "").strip()
             key = f"id:{identity}" if identity else f"name:{match_key(name)}"
             if key in seen_keys:
                 continue
@@ -334,11 +336,31 @@ def load_vault_from_api(
         offset += page_size
     else:
         raise QueryError(
-            f"The archive API returned more than {max_pages * page_size} rows "
+            f"The {label} returned more than {max_pages * page_size} rows "
             "without ending. Stopped rather than looping."
         )
 
     return rows
+
+def load_bridge_from_api(
+    url: str,
+    api_key: str,
+    *,
+    name_field: str = "databaseName",
+    sort_field: str = "databaseId",
+    page_size: int = 1000,
+    max_pages: int = 100,
+) -> list[Row]:
+    return load_vault_from_api(
+        url,
+        api_key,
+        name_field=name_field,
+        sort_field=sort_field,
+        id_field="databaseId",
+        label="Data Bridge API",
+        page_size=page_size,
+        max_pages=max_pages,
+    )
 
 def load_inventory_from_sql(
     connection_string: str, query: str, server_label: str = ""
