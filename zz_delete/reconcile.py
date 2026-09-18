@@ -683,6 +683,17 @@ class SizeTotal:
     def missing_rows(self) -> int:
         return max(self.rows - self.rows_with_size, 0)
 
+SERVER_FIELD = "server"
+
+def rows_per_server(rows: Sequence[Row]) -> list[tuple[str, int]]:
+    tally: dict[str, int] = {}
+    for row in rows:
+        label = str(row.data.get(SERVER_FIELD) or "").strip()
+        tally[label] = tally.get(label, 0) + 1
+    return sorted(
+        tally.items(), key=lambda pair: (pair[0] == "", -pair[1], pair[0])
+    )
+
 def duplicate_groups(
     rows: Sequence[Row], distinguish_by: Sequence[str] = ()
 ) -> list[tuple[str, list[Row]]]:

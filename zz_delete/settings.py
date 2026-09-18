@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 ENV_FILE = Path(__file__).with_name(".env")
@@ -78,6 +79,19 @@ INVENTORY_QUERY = (
     "WHERE database_id > 4 "
     "ORDER BY name"
 )
+
+DEFAULT_COMPLETION_DATE = "2026-10-30"
+
+def completion_date(path: Path = ENV_FILE) -> date:
+    raw = (
+        _load_env_file(path).get("RECONCILE_COMPLETION_DATE")
+        or os.environ.get("RECONCILE_COMPLETION_DATE")
+        or DEFAULT_COMPLETION_DATE
+    ).strip()
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return date.fromisoformat(DEFAULT_COMPLETION_DATE)
 
 @dataclass(frozen=True)
 class SqlServer:

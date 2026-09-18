@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import io
+from datetime import date
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,11 +24,17 @@ from reconcile import (
     load_target_from_csv,
     load_vault_from_api,
     reconcile,
+    rows_per_server,
     size_of,
     target_headers,
     to_csv,
 )
-from settings import INVENTORY_QUERY, load_settings, load_sql_settings
+from settings import (
+    INVENTORY_QUERY,
+    completion_date,
+    load_settings,
+    load_sql_settings,
+)
 from store import DEFAULT_DB_PATH, Store
 
 API = load_settings()
@@ -101,6 +108,16 @@ st.markdown(
         font-weight:600; font-size:.92rem; margin-top:.1rem; line-height:1.25;
       }
       .hl-note { font-size:.78rem; opacity:.65; margin-top:.3rem; }
+
+      .dl { text-align:right; padding-top:1.1rem; line-height:1.35; }
+      .dl-today { font-size:.95rem; font-weight:600; }
+      .dl-left {
+        font-size:1.35rem; font-weight:700; font-variant-numeric:tabular-nums;
+      }
+      .dl-target { font-size:.75rem; opacity:.6; }
+
+      .dl-warn { color:#b26a00; }
+      .dl-bad { color:#b3261e; }
 
       .hl-volume {
         font-size:.86rem; font-weight:600; opacity:.78; margin-top:.25rem;
@@ -900,7 +917,28 @@ with st.sidebar:
                 st.success(f"Deleted {report.summary()}.")
                 st.rerun()
 
-st.title("Source to Target reconciliation")
+_title_col, _deadline_col = st.columns([3, 1])
+with _title_col:
+    st.title("Source to Target reconciliation")
+with _deadline_col:
+    _today = date.today()
+    _target = completion_date()
+    _days = (_target - _today).days
+    if _days > 0:
+        _left = f"{_days:,} day{'s' if _days != 1 else ''} left"
+        _tone = "dl-warn" if _days <= 30 else ""
+    elif _days == 0:
+        _left, _tone = "due today", "dl-bad"
+    else:
+        _left, _tone = f"{abs(_days):,} days overdue", "dl-bad"
+    st.markdown(
+        f"<div class='dl'>"
+        f"<div class='dl-today'>{_today:%d %B %Y}</div>"
+        f"<div class='dl-left {_tone}'>{_left}</div>"
+        f"<div class='dl-target'>target {_target:%d %B %Y}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 result: Reconciliation | None = st.session_state.result
 
@@ -970,12 +1008,19 @@ def _card_volume(total) -> str:
     if total.units_look_wrong or not total.rows_with_size:
         return ""
     return _volume_phrase(total)
+def _source_breakdown() -> str:
+    rows = st.session_state.master_rows or []
+    parts = rows_per_server(rows)
+    if len(parts) < 2 or any(not label for label, _ in parts):
+        return ""
+    return " + ".join(f"{label} {count:,}" for label, count in parts)
+
 render_headline_cards(
     [
         (
             "SOURCE (On Prem)",
             result.master_count,
-            "databases on the on-prem SQL servers",
+            _source_breakdown() or "databases on the on-prem SQL servers",
             "",
         ),
         (
@@ -1014,16 +1059,6 @@ if wrong_units is not None:
     )
 else:
     parts = []
-    if archived_size.rows_with_size:
-        parts.append(
-            f"**Data Vault {_volume_phrase(archived_size)}** "
-            f"({archived_size.rows_with_size} of {archived_size.rows} archived)"
-        )
-    if transit_size.rows_with_size:
-        parts.append(
-            f"**in transit {_volume_phrase(transit_size)}** "
-            f"({transit_size.rows_with_size} of {transit_size.rows})"
-        )
     if unchecked_size.rows_with_size:
         parts.append(
             f"**Data Bridge {_volume_phrase(unchecked_size)}** "
