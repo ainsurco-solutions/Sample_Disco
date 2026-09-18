@@ -78,7 +78,7 @@ class ApiSettings:
         return self._api_key
 
 INVENTORY_QUERY = (
-    "SELECT name FROM sys.databases "
+    "SELECT name, create_date FROM sys.databases "
     "WHERE database_id > 4 "
     "ORDER BY name"
 )

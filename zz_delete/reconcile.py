@@ -389,17 +389,24 @@ def load_inventory_from_sql(
         with pyodbc.connect(connection_string, timeout=10) as connection:
             cursor = connection.cursor()
             cursor.execute(query)
-            names = [str(row[0]).strip() for row in cursor.fetchall()]
+            columns = [d[0] for d in cursor.description]
+            fetched = [
+                dict(zip(columns, row, strict=False)) for row in cursor.fetchall()
+            ]
     except Exception as exc:
         raise QueryError(
             f"Could not query {server_label or 'the server'}: {exc}"
         ) from exc
 
     rows: list[Row] = []
-    for name in names:
+    for record in fetched:
+        name = str(next(iter(record.values()), "") or "").strip()
         if not name:
             continue
         data = {"database name": name, "_key_column": "database name"}
+        for column, value in list(record.items())[1:]:
+            if value is not None:
+                data[column] = str(value).strip()
         if server_label:
             data["server"] = server_label
         rows.append(Row(name=name, data=data))
