@@ -128,8 +128,13 @@ class RunInfo:
     @property
     def inputs(self) -> str:
         vault = "no vault" if self.vault_count is None else f"{self.vault_count} vault"
+        platform = (
+            f"{self.target_count} platform"
+            if self.target_snapshot_id is not None
+            else "no platform"
+        )
         return (
-            f"{self.master_count} master / {self.target_count} platform / "
+            f"{self.master_count} master / {platform} / "
             f"{vault} · {self.fingerprint}"
         )
 
@@ -364,8 +369,10 @@ class Store:
                 for r in cur.fetchall()
             )
             cur.execute(
-                "SELECT s1.row_count AS master_count, s2.row_count AS target_count, "
-                "s3.row_count AS vault_count, run.vault_snapshot_id "
+                "SELECT s1.row_count AS master_count, "
+                "s2.row_count AS target_count, "
+                "s3.row_count AS vault_count, "
+                "run.vault_snapshot_id, run.target_snapshot_id "
                 "FROM run "
                 "JOIN snapshot s1 ON s1.id = run.master_snapshot_id "
                 "LEFT JOIN snapshot s2 ON s2.id = run.target_snapshot_id "
@@ -377,19 +384,25 @@ class Store:
         return Reconciliation(
             rows=rows,
             master_count=counts["master_count"] if counts else 0,
-            target_count=counts["target_count"] if counts else 0,
+            target_count=(counts["target_count"] or 0) if counts else 0,
             vault_count=(counts["vault_count"] or 0) if counts else 0,
             vault_checked=bool(counts and counts["vault_snapshot_id"] is not None),
+            platform_checked=bool(
+                counts and counts["target_snapshot_id"] is not None
+            ),
         )
 
     def runs(self) -> list[RunInfo]:
         with closing(self._conn.cursor()) as cur:
             cur.execute(
                 "SELECT run.*, "
-                "s1.label AS master_label, s2.label AS target_label, "
-                "s1.row_count AS master_count, s2.row_count AS target_count, "
+                "s1.label AS master_label, "
+                "COALESCE(s2.label, '') AS target_label, "
+                "s1.row_count AS master_count, "
+                "COALESCE(s2.row_count, 0) AS target_count, "
                 "s3.row_count AS vault_count, "
-                "s1.fingerprint AS mfp, s2.fingerprint AS tfp, "
+                "s1.fingerprint AS mfp, "
+                "COALESCE(s2.fingerprint, '') AS tfp, "
                 "COALESCE(s3.fingerprint, '') AS vfp "
                 "FROM run "
                 "JOIN snapshot s1 ON s1.id = run.master_snapshot_id "
