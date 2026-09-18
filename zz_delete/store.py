@@ -310,6 +310,9 @@ class Store:
         vault_snapshot_id: int | None = None,
         scope_snapshot_id: int | None = None,
     ) -> int:
+        if target_snapshot_id is None:
+            self._migrate()
+
         with closing(self._conn.cursor()) as cur:
             cur.execute(
                 "INSERT INTO run "
