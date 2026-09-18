@@ -38,7 +38,8 @@ def main() -> int:
         print(f"Asking for {sample}; the endpoint caps a page at 1000.\n")
         sample = 1000
 
-    url = (api.host or "") + (api.vault_path or "")
+    path = sys.argv[2] if len(sys.argv) > 2 else (api.vault_path or "")
+    url = (api.host or "") + path
     headers = {"accept": "application/json", "Authorization": api.api_key}
 
     print(f"GET {url}\n")
@@ -88,7 +89,64 @@ def main() -> int:
     )
 
     _report_name_collisions(rows)
+    _report_server_coverage(rows)
+    _report_type_split(rows)
     return 0
+
+def _report_type_split(rows: list[dict]) -> None:
+    from collections import Counter
+
+    tally: Counter[str] = Counter()
+    for row in rows:
+        for field_name in ("databaseType", "archiveSubType"):
+            value = str(row.get(field_name) or "").strip()
+            if value:
+                tally[f"{field_name}={value}"] += 1
+                break
+
+    if not tally:
+        return
+
+    print("\n--- EDM / RDM split " + "-" * 48)
+    for value, count in tally.most_common():
+        print(f"  {value:<28} {count:>5}")
+    lowered = " ".join(tally).lower()
+    if "edm" in lowered and "rdm" in lowered:
+        print("\n  Both types present -- one call serves EDM and RDM.")
+    else:
+        print(
+            "\n  Only one type present. Either the estate holds only one, or\n"
+            "  something is filtering -- worth settling before relying on it."
+        )
+
+def _report_server_coverage(rows: list[dict]) -> None:
+    from collections import Counter
+
+    tally: Counter[str] = Counter()
+    for row in rows:
+        value = str(row.get("serverName") or "").strip()
+        tally[value or "(empty)"] += 1
+
+    print("\n--- serverName coverage " + "-" * 44)
+    for value, count in tally.most_common():
+        share = 100 * count / max(len(rows), 1)
+        print(f"  {value:<24} {count:>5}  {share:5.1f}%")
+
+    usable = sum(
+        count
+        for value, count in tally.items()
+        if value.lower().startswith("databridge")
+    )
+    print(
+        f"\n  {usable} of {len(rows)} rows ({100 * usable / max(len(rows), 1):.1f}%) "
+        "carry a databridge-N server."
+    )
+    if usable < len(rows):
+        print(
+            "  The rest cannot be server-qualified. Qualifying the match key\n"
+            "  would turn those from matched into Missing -- a far larger\n"
+            "  problem than the duplicates it would fix."
+        )
 
 def _report_name_collisions(rows: list[dict]) -> None:
     from collections import Counter, defaultdict
