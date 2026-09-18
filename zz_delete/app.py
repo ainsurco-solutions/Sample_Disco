@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 from reconcile import (
     FINDINGS,
+    MASTER_NAME_COLUMNS,
     LoadError,
     Outcome,
     QueryError,
@@ -51,7 +52,7 @@ st.markdown(
     <style>
       .rc-row { display:flex; flex-wrap:wrap; gap:.6rem; margin:.15rem 0 .1rem; }
       .rc-card {
-        flex:1 1 140px; min-width:140px; padding:.6rem .8rem;
+        flex:1 1 130px; min-width:130px; padding:.35rem .6rem;
         border:1px solid color-mix(in srgb, var(--rc) 35%, transparent);
         border-left:4px solid var(--rc);
         border-radius:6px;
@@ -59,7 +60,8 @@ st.markdown(
       }
       .rc-card-empty { opacity:.45; }
       .rc-count {
-        color:var(--rc); font-size:1.9rem; font-weight:700; line-height:1.1;
+        color:var(--rc); font-size:1.4rem; font-weight:700; line-height:1.1;
+        font-variant-numeric:tabular-nums;
       }
       .rc-name {
         color:var(--rc); font-weight:600; font-size:.85rem;
@@ -69,7 +71,7 @@ st.markdown(
         font-size:.75rem; font-weight:600; letter-spacing:.06em;
         text-transform:uppercase; opacity:.6; margin-bottom:.15rem;
       }
-      .rc-label-spaced { margin-top:.9rem; }
+      .rc-label-spaced { margin-top:.5rem; }
       .rc-hint {
         font-weight:400; text-transform:none; letter-spacing:0; opacity:.75;
       }
@@ -86,32 +88,43 @@ st.markdown(
       }
 
       .hl-row {
-        display:flex; flex-wrap:wrap; gap:.9rem; margin:.2rem 0 .9rem;
+        display:flex; flex-wrap:wrap; gap:.6rem; margin:.15rem 0 .5rem;
       }
 
       .hl-row-primary { margin-bottom:.55rem; }
       .hl-card {
 
-        flex-grow:1; flex-shrink:1; min-width:170px; padding:.85rem 1rem;
+        flex-grow:1; flex-shrink:1; min-width:150px; padding:.5rem .7rem;
         border:1px solid rgba(128,128,128,.28); border-radius:8px;
         background:rgba(128,128,128,.06);
       }
-      .hl-count { font-size:2rem; font-weight:700; line-height:1.05; }
+      .hl-count {
+        font-size:1.5rem; font-weight:700; line-height:1.05;
+        font-variant-numeric:tabular-nums;
+      }
+
+      .hl-figure { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
+
+      .hl-split {
+        font-size:1rem; font-weight:600; opacity:.7;
+        font-variant-numeric:tabular-nums;
+      }
 
       .hl-row-primary .hl-card {
-        padding:1.1rem 1.25rem; background:rgba(128,128,128,.1);
+        padding:.65rem .85rem; background:rgba(128,128,128,.1);
         border-color:rgba(128,128,128,.38);
       }
-      .hl-row-primary .hl-count { font-size:2.9rem; }
-      .hl-row-primary .hl-name { font-size:1rem; letter-spacing:.01em; }
+      .hl-row-primary .hl-count { font-size:2.1rem; }
+      .hl-row-primary .hl-split { font-size:1.05rem; }
+      .hl-row-primary .hl-name { font-size:.95rem; letter-spacing:.01em; }
 
       .hl-good { color:#1e7b34; }
       .hl-warn { color:#b26a00; }
       .hl-bad  { color:#b3261e; }
       .hl-name {
-        font-weight:600; font-size:.92rem; margin-top:.1rem; line-height:1.25;
+        font-weight:600; font-size:.88rem; margin-top:.05rem; line-height:1.2;
       }
-      .hl-note { font-size:.78rem; opacity:.65; margin-top:.3rem; }
+      .hl-note { font-size:.74rem; opacity:.6; margin-top:.15rem; line-height:1.25; }
 
       .dl { text-align:right; padding-top:1.1rem; line-height:1.35; }
       .dl-today { font-size:.95rem; font-weight:600; }
@@ -384,9 +397,18 @@ def render_headline_cards(
             if volume
             else ""
         )
+        breakdown = card[5] if len(card) > 5 else ""
+        breakdown_html = (
+            f"<span class='hl-split'>{html.escape(breakdown)}</span>"
+            if breakdown
+            else ""
+        )
         html_cards.append(
             f"<div class='hl-card' style='flex-basis:calc({basis:.4f}% - .9rem)'>"
-            f"<div class='hl-count{tone_class}'>{count}</div>"
+            f"<div class='hl-figure'>"
+            f"<span class='hl-count{tone_class}'>{count}</span>"
+            f"{breakdown_html}"
+            f"</div>"
             f"<div class='hl-name'>{html.escape(title)}</div>"
             f"{volume_html}"
             f"<div class='hl-note'>{html.escape(note)}</div>"
@@ -494,31 +516,65 @@ def render_file_tab(
             "source returned."
         )
 
+    scope_view = "All"
+    if key == "scope_rows" and st.session_state.result is not None:
+        scope_view = st.radio(
+            "Show",
+            ("All", "Missing from prem", "Available on prem"),
+            horizontal=True,
+            key=f"scope_view_{key}",
+            help=(
+                "Missing from prem is the In Scope, Missing figure on the "
+                "summary: requested, but absent from the on-prem inventory."
+            ),
+        )
+
     search = st.text_input(
         "Filter rows containing", "", key=f"filter_{key}", placeholder="any text"
     )
     view = rows
+    if scope_view != "All":
+        wanted = {
+            row.name.strip().casefold()
+            for row in st.session_state.result.rows
+            if row.outcome is Outcome.NOT_IN_INVENTORY
+        }
+        name_column = next(
+            (c for c in rows.columns if c.strip().casefold() in MASTER_NAME_COLUMNS),
+            rows.columns[0] if len(rows.columns) else None,
+        )
+        if name_column is not None:
+            in_missing = rows[name_column].astype(str).str.strip().str.casefold().isin(
+                wanted
+            )
+            view = rows[in_missing if scope_view == "Missing from prem" else ~in_missing]
+
     if search:
         mask = rows.apply(
             lambda r: r.astype(str).str.contains(search, case=False, na=False).any(),
             axis=1,
         )
-        view = rows[mask]
+        view = view[mask.loc[view.index]]
 
     st.dataframe(view, hide_index=True, use_container_width=True, height=420)
     st.caption(f"Showing {len(view)} of {len(rows)} rows, every column as supplied.")
 
     left_dl, right_dl = st.columns(2)
     with left_dl:
+        slug = (
+            scope_view.lower().replace(" ", "-")
+            if scope_view != "All"
+            else "filtered"
+        )
         st.download_button(
             f"Download these {len(view)} rows (CSV)",
             data=view.to_csv(index=False),
-            file_name=f"{Path(filename).stem}-filtered.csv",
+            file_name=f"{Path(filename).stem}-{slug}.csv",
             mime="text/csv",
             key=f"dl_filtered_{key}",
             use_container_width=True,
             disabled=len(view) == len(rows),
-            help="What the table is showing, with the filter applied.",
+            help="What the table is showing, with every filter applied.",
         )
     with right_dl:
         if text is not None:
@@ -1049,13 +1105,30 @@ def _source_breakdown() -> str:
         return ""
     return " + ".join(f"{label} {count:,}" for label, count in parts)
 
+def _archived_share() -> str:
+    archived = counts[Outcome.ARCHIVED]
+    if not archived:
+        return ""
+    source_total = result.master_count
+    scope_total = (
+        result.scope_names if result.scope_checked else result.master_count
+    )
+    parts = []
+    if scope_total and result.scope_checked:
+        parts.append(f"{100 * archived / scope_total:.1f}% of scope")
+    if source_total:
+        parts.append(f"{100 * archived / source_total:.1f}% of source")
+    return " · ".join(parts)
+
 render_headline_cards(
     [
         (
             "SOURCE (On Prem)",
             result.master_count,
-            _source_breakdown() or "databases on the on-prem SQL servers",
+            "databases on the on-prem SQL servers",
             "",
+            "",
+            _source_breakdown(),
         ),
         (
             "THE SCOPE (Total)",
@@ -1071,6 +1144,7 @@ render_headline_cards(
             archived_note,
             "good" if result.vault_checked else "",
             _card_volume(archived_size),
+            _archived_share(),
         ),
     ],
     primary=True,
