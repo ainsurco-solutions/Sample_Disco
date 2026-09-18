@@ -280,6 +280,7 @@ OUTCOME_COLOUR: dict[Outcome, str] = {
     Outcome.ARCHIVED: GREEN,
     Outcome.OUT_OF_SCOPE: GREY,
     Outcome.IMPORTED: GREY,
+    Outcome.IMPORT_UNCHECKED: GREY,
 }
 
 OUTCOME_HELP: dict[Outcome, str] = {
@@ -314,6 +315,11 @@ OUTCOME_HELP: dict[Outcome, str] = {
     Outcome.IMPORTED: (
         "In Data Bridge, but no Data Vault list was supplied — so whether it "
         "is archived is unknown, not confirmed and not denied."
+    ),
+    Outcome.IMPORT_UNCHECKED: (
+        "Not in Data Vault, and no Data Bridge list was supplied — so whether "
+        "it ever imported is unknown. Not the same as Missing, which would "
+        "claim it never reached the platform. Load step 3 to find out."
     ),
 }
 
@@ -560,7 +566,7 @@ STEPS: tuple[Step, ...] = (
     Step(
         "3", "Data Bridge", "IRP platform list",
         "Databases imported into the platform.",
-        True, "target", "target_rows", "target_label",
+        False, "target", "target_rows", "target_label",
     ),
     Step(
         "4", "Data Vault", "Archive list",
@@ -817,12 +823,14 @@ with st.sidebar:
             st.session_state.master_label,
             master_rows,
         )
-        target_id = store.save_snapshot(
-            "platform",
-            st.session_state.target_label,
-            st.session_state.target_label,
-            target_rows,
-        )
+        target_id = None
+        if target_rows is not None:
+            target_id = store.save_snapshot(
+                "platform",
+                st.session_state.target_label,
+                st.session_state.target_label,
+                target_rows,
+            )
         vault_id = None
         if vault_rows is not None:
             vault_id = store.save_snapshot(
@@ -1068,7 +1076,12 @@ render_headline_cards(
 )
 
 findings = [o for o in Outcome if o in FINDINGS]
-SETTLED_ORDER = (Outcome.OUT_OF_SCOPE, Outcome.IMPORTED, Outcome.ARCHIVED)
+SETTLED_ORDER = (
+    Outcome.OUT_OF_SCOPE,
+    Outcome.IMPORT_UNCHECKED,
+    Outcome.IMPORTED,
+    Outcome.ARCHIVED,
+)
 settled = [o for o in SETTLED_ORDER if o not in FINDINGS] + [
     o for o in Outcome if o not in FINDINGS and o not in SETTLED_ORDER
 ]
@@ -1100,6 +1113,15 @@ if result.targets_are_identical:
         "Every imported database therefore reports as *Archived*, which is the "
         "most flattering possible answer and the least likely to be true — "
         "check the two uploads before reading anything below."
+    )
+
+elif not result.platform_checked:
+    st.info(
+        "**No Data Bridge list supplied**, so this is a Source-to-Data-Vault "
+        "reconciliation. Databases not in Data Vault show as *Import "
+        "unchecked* rather than *Missing* — the tool cannot say a database "
+        "never imported without a Data Bridge list to check. Archived rows "
+        "are still confirmed: being in the vault proves a database crossed."
     )
 
 elif result.bridge_wholly_inside_vault:

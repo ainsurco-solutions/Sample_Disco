@@ -15,6 +15,7 @@ class Outcome(str, Enum):
     ORPHANED = "Orphaned"
     DUPLICATE = "Duplicate"
     OUT_OF_SCOPE = "Not in scope"
+    IMPORT_UNCHECKED = "Import unchecked"
     ARCHIVED = "Archived"
     IMPORTED = "Archiving unchecked"
 
@@ -29,6 +30,10 @@ FINDINGS: frozenset[Outcome] = frozenset(
 )
 
 DONE: frozenset[Outcome] = frozenset({Outcome.ARCHIVED})
+
+UNCHECKED: frozenset[Outcome] = frozenset(
+    {Outcome.IMPORTED, Outcome.IMPORT_UNCHECKED}
+)
 
 MASTER_NAME_COLUMNS = ("database name", "database_name", "name", "db name", "db_name")
 
@@ -84,6 +89,7 @@ class Reconciliation:
     target_count: int
     vault_count: int = 0
     vault_checked: bool = False
+    platform_checked: bool = True
     target_fingerprint: str = ""
     vault_fingerprint: str = ""
     scope_count: int = 0
@@ -382,10 +388,12 @@ def _classify_against(
 
 def reconcile(
     inventory: Sequence[Row],
-    platform: Sequence[Row],
+    platform: Sequence[Row] | None = None,
     vault: Sequence[Row] | None = None,
     scope: Sequence[Row] | None = None,
 ) -> Reconciliation:
+    platform_checked = platform is not None
+    platform_rows: Sequence[Row] = platform or ()
     vault_checked = vault is not None
     vault_rows: Sequence[Row] = vault or ()
     scope_checked = scope is not None
@@ -395,12 +403,14 @@ def reconcile(
 
     inventory_dupes = _duplicates(inventory)
     scope_dupes = _duplicates(scope_rows)
-    platform_dupes = _duplicates(platform)
+    platform_dupes = _duplicates(platform_rows)
     vault_dupes = _duplicates(vault_rows)
 
     inventory_by_key = {r.key: r for r in inventory if r.key not in inventory_dupes}
     scope_keys = {r.key for r in scope_rows}
-    platform_by_key = {r.key: r for r in platform if r.key not in platform_dupes}
+    platform_by_key = {
+        r.key: r for r in platform_rows if r.key not in platform_dupes
+    }
     vault_by_key = {r.key: r for r in vault_rows if r.key not in vault_dupes}
 
     seen_platform: set[str] = set()
@@ -465,6 +475,31 @@ def reconcile(
         if v_hit is not None:
             seen_vault.add(row.key)
             merged.update(v_hit.data)
+
+        if not platform_checked:
+            if v_hit is not None:
+                results.append(
+                    ResultRow(
+                        Outcome.ARCHIVED,
+                        row.name,
+                        "inventory",
+                        "in Data Vault; no Data Bridge list supplied, but "
+                        "being archived proves it crossed",
+                        merged,
+                    )
+                )
+            else:
+                results.append(
+                    ResultRow(
+                        Outcome.IMPORT_UNCHECKED,
+                        row.name,
+                        "inventory",
+                        "not in Data Vault, and no Data Bridge list was "
+                        "supplied — whether it ever imported is unchecked",
+                        merged,
+                    )
+                )
+            continue
 
         if not vault_checked:
             if p_hit is not None:
@@ -555,7 +590,7 @@ def reconcile(
             )
 
     for rows_, dupes_, seen_, side in (
-        (platform, platform_dupes, seen_platform, "platform"),
+        (platform_rows, platform_dupes, seen_platform, "platform"),
         (vault_rows, vault_dupes, seen_vault, "vault"),
     ):
         for row in rows_:
@@ -589,10 +624,11 @@ def reconcile(
     return Reconciliation(
         rows=tuple(results),
         master_count=len(inventory),
-        target_count=len(platform),
+        target_count=len(platform_rows),
         vault_count=len(vault_rows),
         vault_checked=vault_checked,
-        target_fingerprint=fingerprint(platform),
+        platform_checked=platform_checked,
+        target_fingerprint=fingerprint(platform_rows),
         vault_fingerprint=fingerprint(vault_rows) if vault_checked else "",
         scope_count=len(scope_rows),
         scope_checked=scope_checked,
@@ -733,7 +769,9 @@ def funnel(reconciliation: Reconciliation) -> tuple[FunnelStage, ...]:
             "Data Bridge",
             bridge,
             in_scope,
-            "confirmed in Data Bridge",
+            "confirmed in Data Bridge"
+            if reconciliation.platform_checked
+            else "inferred from Data Vault — no Data Bridge list supplied",
         ),
     ]
 

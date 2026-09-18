@@ -38,7 +38,11 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_row_snapshot ON snapshot_row(snapshot_id
 CREATE TABLE IF NOT EXISTS run (
     id                 INTEGER PRIMARY KEY,
     master_snapshot_id INTEGER NOT NULL REFERENCES snapshot(id),
-    target_snapshot_id INTEGER NOT NULL REFERENCES snapshot(id),
+    -- Nullable, like vault and scope: step 3 is optional, because the Data
+    -- Bridge extract cannot be fetched from the API yet and a run against
+    -- Data Vault alone is a legitimate reconciliation. NOT NULL here would
+    -- have made the store refuse to record a run the tool can perform.
+    target_snapshot_id INTEGER          REFERENCES snapshot(id),
     vault_snapshot_id  INTEGER          REFERENCES snapshot(id),
     scope_snapshot_id  INTEGER          REFERENCES snapshot(id),
     ran_at             TEXT    NOT NULL,
@@ -109,7 +113,7 @@ class PurgeReport:
 class RunInfo:
     id: int
     master_snapshot_id: int
-    target_snapshot_id: int
+    target_snapshot_id: int | None
     ran_at: str
     note: str
     vault_snapshot_id: int | None = None
@@ -187,6 +191,37 @@ class Store:
                     " loaded_at, row_count FROM snapshot_old"
                 )
                 cur.execute("DROP TABLE snapshot_old")
+            self._conn.commit()
+            self._conn.execute("PRAGMA legacy_alter_table = OFF")
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
+        with closing(self._conn.cursor()) as cur:
+            cur.execute("SELECT sql FROM sqlite_master WHERE name = 'run'")
+            row = cur.fetchone()
+            sql = (row["sql"] or "") if row else ""
+        if "target_snapshot_id INTEGER NOT NULL" in sql:
+            self._conn.execute("PRAGMA foreign_keys = OFF")
+            self._conn.execute("PRAGMA legacy_alter_table = ON")
+            with closing(self._conn.cursor()) as cur:
+                cur.execute("ALTER TABLE run RENAME TO run_old")
+                cur.execute(
+                    "CREATE TABLE run ("
+                    " id INTEGER PRIMARY KEY,"
+                    " master_snapshot_id INTEGER NOT NULL REFERENCES snapshot(id),"
+                    " target_snapshot_id INTEGER REFERENCES snapshot(id),"
+                    " vault_snapshot_id INTEGER REFERENCES snapshot(id),"
+                    " scope_snapshot_id INTEGER REFERENCES snapshot(id),"
+                    " ran_at TEXT NOT NULL,"
+                    " note TEXT NOT NULL DEFAULT '')"
+                )
+                cur.execute(
+                    "INSERT INTO run (id, master_snapshot_id, target_snapshot_id,"
+                    " vault_snapshot_id, scope_snapshot_id, ran_at, note) "
+                    "SELECT id, master_snapshot_id, target_snapshot_id,"
+                    " vault_snapshot_id, scope_snapshot_id, ran_at, note "
+                    "FROM run_old"
+                )
+                cur.execute("DROP TABLE run_old")
             self._conn.commit()
             self._conn.execute("PRAGMA legacy_alter_table = OFF")
             self._conn.execute("PRAGMA foreign_keys = ON")
@@ -269,7 +304,7 @@ class Store:
     def save_run(
         self,
         master_snapshot_id: int,
-        target_snapshot_id: int,
+        target_snapshot_id: int | None,
         reconciliation: Reconciliation,
         note: str = "",
         vault_snapshot_id: int | None = None,
@@ -330,7 +365,7 @@ class Store:
                 "s3.row_count AS vault_count, run.vault_snapshot_id "
                 "FROM run "
                 "JOIN snapshot s1 ON s1.id = run.master_snapshot_id "
-                "JOIN snapshot s2 ON s2.id = run.target_snapshot_id "
+                "LEFT JOIN snapshot s2 ON s2.id = run.target_snapshot_id "
                 "LEFT JOIN snapshot s3 ON s3.id = run.vault_snapshot_id "
                 "WHERE run.id = ?",
                 (run_id,),
@@ -355,7 +390,7 @@ class Store:
                 "COALESCE(s3.fingerprint, '') AS vfp "
                 "FROM run "
                 "JOIN snapshot s1 ON s1.id = run.master_snapshot_id "
-                "JOIN snapshot s2 ON s2.id = run.target_snapshot_id "
+                "LEFT JOIN snapshot s2 ON s2.id = run.target_snapshot_id "
                 "LEFT JOIN snapshot s3 ON s3.id = run.vault_snapshot_id "
                 "ORDER BY run.id DESC"
             )
