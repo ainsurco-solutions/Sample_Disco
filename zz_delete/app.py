@@ -29,6 +29,7 @@ from reconcile import (
     compare_to_newest,
     newest_first,
     reconcile,
+    SERVER_FIELD,
     rows_per_server,
     size_of,
     target_headers,
@@ -1409,10 +1410,14 @@ if vault_dupes_tab is not None:
                     for field_name, new_value, old_value in changes
                     if field_name not in ARCHIVE_TIME_FIELDS
                 ]
+                servers = distinguishing_values(group, SERVER_FIELD) or (
+                    distinguishing_values(group, "serverName")
+                )
                 summary.append(
                     {
                         "Name": ordered[0].name,
-                        "Archives": len(group),
+                        "Rows": len(group),
+                        "Where": ", ".join(servers),
                         "Latest": _short_stamp(ordered[0]),
                         "Previous": _short_stamp(ordered[1])
                         if len(ordered) > 1
