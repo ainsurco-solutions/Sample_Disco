@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-ENV_FILE = Path(__file__).with_name(".env")
+def _find_env_file() -> Path:
+    override = os.environ.get("RECONCILE_ENV_FILE", "").strip()
+    if override:
+        return Path(override)
+
+    beside = Path(__file__).with_name(".env")
+    if beside.exists():
+        return beside
+
+    repo_root = Path(__file__).resolve().parents[2] / ".env"
+    if repo_root.exists():
+        return repo_root
+
+    return beside
+
+ENV_FILE = _find_env_file()
 
 DEFAULT_EXPOSURES_PATH = "/platform/admindata/v1/databases"
 
@@ -161,15 +177,82 @@ def load_sql_settings(path: Path = ENV_FILE) -> SqlSettings:
         ),
     )
 
+AMIGO_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+
+def _amigo_config(environment: str = "") -> dict[str, str]:
+    env = (
+        environment
+        or os.environ.get("MIGRATION_HUB_ENV", "")
+        or _load_env_file().get("MIGRATION_HUB_ENV", "")
+        or "dev"
+    ).strip()
+    for name in (f"{env}.json", f"{env}.example.json"):
+        candidate = AMIGO_CONFIG_DIR / name
+        if candidate.exists():
+            try:
+                loaded = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
+            return {k: str(v) for k, v in loaded.items() if isinstance(v, str)}
+    return {}
+
+@dataclass(frozen=True)
+class ConfigConflict:
+
+    fact: str
+    amigo_key: str
+    amigo_value: str
+    reconcile_key: str
+    reconcile_value: str
+
+    def __str__(self) -> str:
+        return (
+            f"{self.fact}: AMIGO's {self.amigo_key}={self.amigo_value!r} but "
+            f"{self.reconcile_key}={self.reconcile_value!r}"
+        )
+
+def config_conflicts(path: Path | None = None) -> list[ConfigConflict]:
+    amigo = _amigo_config()
+    if not amigo:
+        return []
+
+    from_file = _load_env_file(path or ENV_FILE)
+
+    def reconcile_value(name: str) -> str:
+        return (os.environ.get(name) or from_file.get(name) or "").strip()
+
+    pairs = (
+        ("Moody's host", "api_host", "RECONCILE_API_HOST"),
+        ("entitlement", "entitlement", "RECONCILE_ENTITLEMENT"),
+    )
+
+    conflicts = []
+    for fact, amigo_key, reconcile_key in pairs:
+        theirs = str(amigo.get(amigo_key, "")).strip()
+        ours = reconcile_value(reconcile_key)
+        if theirs and ours and theirs != ours:
+            conflicts.append(
+                ConfigConflict(fact, amigo_key, theirs, reconcile_key, ours)
+            )
+    return conflicts
+
 def load_settings(path: Path = ENV_FILE) -> ApiSettings:
     from_file = _load_env_file(path)
 
     def value(name: str, default: str = "") -> str:
         return os.environ.get(name) or from_file.get(name) or default
 
+    amigo = _amigo_config()
+
+    def shared(reconcile_key: str, amigo_key: str, default: str = "") -> str:
+        explicit = os.environ.get(reconcile_key) or from_file.get(reconcile_key)
+        if explicit:
+            return explicit
+        return str(amigo.get(amigo_key, "")).strip() or default
+
     return ApiSettings(
-        host=value("RECONCILE_API_HOST"),
-        entitlement=value("RECONCILE_ENTITLEMENT"),
+        host=shared("RECONCILE_API_HOST", "api_host"),
+        entitlement=shared("RECONCILE_ENTITLEMENT", "entitlement"),
         exposures_path=value("RECONCILE_EXPOSURES_PATH", DEFAULT_EXPOSURES_PATH),
         vault_path=value("RECONCILE_VAULT_PATH", DEFAULT_VAULT_PATH),
         vault_name_field=value(

@@ -37,6 +37,7 @@ from reconcile import (
 )
 from settings import (
     INVENTORY_QUERY,
+    config_conflicts,
     completion_date,
     load_settings,
     load_sql_settings,
@@ -1249,6 +1250,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 render_finding_buttons(findings, counts, len(result.findings), result.is_clean)
+
+for _conflict in config_conflicts():
+    st.error(
+        f"**Configuration conflict — {_conflict.fact}.** AMIGO's "
+        f"`{_conflict.amigo_key}` is `{_conflict.amigo_value}` but "
+        f"`{_conflict.reconcile_key}` is `{_conflict.reconcile_value}`. "
+        "This tool is using the second. If the two are pointed at different "
+        "tenants, the numbers below describe a different estate from the one "
+        "AMIGO migrated."
+    )
 
 if result.targets_are_identical:
     st.error(
