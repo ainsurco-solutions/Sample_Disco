@@ -261,7 +261,7 @@ def load_vault_from_api(
                 url,
                 headers={"accept": "application/json", "Authorization": api_key},
                 params={
-                    "sort": f"{sort_field} ASC",
+                    **({"sort": f"{sort_field} ASC"} if sort_field else {}),
                     "limit": page_size,
                     "offset": offset,
                 },
@@ -286,12 +286,24 @@ def load_vault_from_api(
                 detail = detail.replace(api_key, "<key>")
             hint = ""
             if response.status_code == 400:
-                hint = (
-                    f" The request sorted by '{name_field}'; if that is not a "
-                    "sortable field on this endpoint, that is the likely "
-                    "cause -- set RECONCILE_VAULT_NAME_FIELD to a documented "
-                    "one such as archiveName."
-                )
+                culprits = []
+                if sort_field and sort_field in detail:
+                    culprits.append(f"sorted by '{sort_field}'")
+                if name_field and name_field in detail:
+                    culprits.append(f"matched on '{name_field}'")
+                if culprits:
+                    hint = (
+                        f" The request {' and '.join(culprits)}. The server "
+                        "does not recognise that field, whatever the "
+                        "documentation lists -- pass sort_field='' to drop "
+                        "the sort, or set the match field to one the endpoint "
+                        "returns."
+                    )
+                else:
+                    hint = (
+                        f" The request sorted by '{sort_field}' and matched "
+                        f"on '{name_field}'."
+                    )
             raise QueryError(
                 f"The {label} returned {response.status_code}."
                 + (f" It said: {detail}" if detail else "")
@@ -347,7 +359,7 @@ def load_bridge_from_api(
     api_key: str,
     *,
     name_field: str = "databaseName",
-    sort_field: str = "databaseId",
+    sort_field: str = "",
     page_size: int = 1000,
     max_pages: int = 100,
 ) -> list[Row]:
