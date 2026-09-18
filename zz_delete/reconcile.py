@@ -99,6 +99,13 @@ class Reconciliation:
             and self.target_fingerprint == self.vault_fingerprint
         )
 
+    @property
+    def bridge_wholly_inside_vault(self) -> bool:
+        if not (self.vault_checked and self.target_count and self.vault_count):
+            return False
+        tally = self.counts()
+        return tally[Outcome.NOT_ARCHIVED] == 0
+
     def counts(self) -> dict[Outcome, int]:
         tally = dict.fromkeys(Outcome, 0)
         for row in self.rows:

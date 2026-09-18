@@ -1102,6 +1102,17 @@ if result.targets_are_identical:
         "check the two uploads before reading anything below."
     )
 
+elif result.bridge_wholly_inside_vault:
+    st.warning(
+        f"**Every one of the {result.target_count} Data Bridge rows is also "
+        "in Data Vault, so *In transit* is zero.** Archiving moves a database "
+        "off the bridge, so the two lists should barely overlap — a bridge "
+        "list wholly inside the vault usually means a Data Vault extract was "
+        "loaded into step 3 as well. It is also what a finished migration "
+        "looks like, so check which before reading the archiving numbers: "
+        "nothing below is measuring Data Bridge."
+    )
+
 if not result.vault_checked:
     st.warning(
         "**No Data Vault list supplied**, so nothing here confirms archiving. "
