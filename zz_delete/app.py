@@ -23,6 +23,9 @@ from reconcile import (
     load_source_list,
     load_target_from_csv,
     load_vault_from_api,
+    ARCHIVE_TIME_FIELDS,
+    compare_to_newest,
+    newest_first,
     reconcile,
     rows_per_server,
     size_of,
@@ -1008,6 +1011,13 @@ def _card_volume(total) -> str:
     if total.units_look_wrong or not total.rows_with_size:
         return ""
     return _volume_phrase(total)
+def _short_stamp(row) -> str:
+    for field_name in ARCHIVE_TIME_FIELDS:
+        value = str(row.data.get(field_name) or "").strip()
+        if value:
+            return value[:10]
+    return "—"
+
 def _source_breakdown() -> str:
     rows = st.session_state.master_rows or []
     parts = rows_per_server(rows)
@@ -1195,75 +1205,169 @@ tabs = st.tabs(
     [
         "Results",
         *(f"{title} file" for _, title in loaded_sides),
-        *(["Vault duplicates"] if st.session_state.vault_rows else []),
+        *(
+            ["Duplicate names"]
+            if (st.session_state.vault_rows or st.session_state.target_rows)
+            else []
+        ),
         "Report",
     ]
 )
 results_tab = tabs[0]
 report_tab = tabs[-1]
-vault_dupes_tab = tabs[-2] if st.session_state.vault_rows else None
+vault_dupes_tab = (
+    tabs[-2]
+    if (st.session_state.vault_rows or st.session_state.target_rows)
+    else None
+)
 
 if vault_dupes_tab is not None:
     with vault_dupes_tab:
-        vault_rows_loaded = st.session_state.vault_rows or []
-        groups = duplicate_groups(vault_rows_loaded)
+        side_rows = {
+            "Data Vault": st.session_state.vault_rows or [],
+            "Data Bridge": st.session_state.target_rows or [],
+        }
+        side_groups = {
+            side: duplicate_groups(rows) for side, rows in side_rows.items()
+        }
+        sides_with_dupes = [s for s, g in side_groups.items() if g]
 
         st.caption(
-            "Names appearing more than once in the Data Vault list. The vault "
+            "Names appearing more than once in a target list. The vault "
             "accepts repeated archives of one database, so these are usually "
             "the same database archived more than once — not an error. They "
             "are listed because matching is by name, so a repeated name "
             "cannot be matched to a single archive."
         )
 
-        if not groups:
+        if not sides_with_dupes:
+            keys = {
+                name: (rows[0].data.get("_key_column", "?") if rows else "—")
+                for name, rows in side_rows.items()
+            }
             st.success(
-                f"No repeated names in {len(vault_rows_loaded)} vault rows. "
-                "Every archive name identifies one archive."
+                f"No repeated names in {len(side_rows['Data Vault'])} vault "
+                f"rows or {len(side_rows['Data Bridge'])} Data Bridge rows."
             )
+            st.caption(
+                f"Compared on **{keys['Data Vault']}** (Data Vault) and "
+                f"**{keys['Data Bridge']}** (Data Bridge). A column that is "
+                "unique by definition, such as `archiveId`, can never show a "
+                "duplicate — if you expected some, check the match column on "
+                "the file tab."
+            )
+            groups = []
         else:
+            if len(sides_with_dupes) > 1:
+                side = st.radio(
+                    "Which list",
+                    sides_with_dupes,
+                    horizontal=True,
+                    key="vault_dupe_side",
+                    help=(
+                        "Both target lists hold repeated names. They are "
+                        "separate problems: the vault repeats by design, the "
+                        "Data Bridge list should not."
+                    ),
+                )
+            else:
+                side = sides_with_dupes[0]
+            groups = side_groups[side]
+            vault_rows_loaded = side_rows[side]
+
+        if groups:
             affected = sum(len(group) for _, group in groups)
             st.warning(
-                f"**{len(groups)}** names cover **{affected}** archives. "
-                "Each is reported *Duplicate* on the Results tab, and none of "
-                "them matches a source database."
+                f"**{len(groups)}** names cover **{affected}** rows in the "
+                f"**{side}** list. Each is reported *Duplicate* on the "
+                "Results tab, and none of them matches a source database."
             )
 
-            IDENTITY_FIELDS = (
-                "archiveId",
-                "archivedAt",
-                "createdAt",
-                "sizeInMb",
-                "archiveSubType",
-                "archiveType",
-                "archivedBy",
-            )
-            table: list[dict[str, object]] = []
-            for key, group in groups:
-                entry: dict[str, object] = {
-                    "Name": group[0].name,
-                    "Archives": len(group),
-                }
-                for field_name in IDENTITY_FIELDS:
-                    values = distinguishing_values(group, field_name)
-                    if not values:
-                        continue
-                    entry[field_name] = (
-                        values[0] if len(values) == 1 else " | ".join(values)
-                    )
-                table.append(entry)
+            summary: list[dict[str, object]] = []
+            for _key, group in groups:
+                ordered = newest_first(group)
+                changes = compare_to_newest(group, ignore=("archiveId",))
+                interesting = [
+                    (field_name, new_value, old_value)
+                    for field_name, new_value, old_value in changes
+                    if field_name not in ARCHIVE_TIME_FIELDS
+                ]
+                summary.append(
+                    {
+                        "Name": ordered[0].name,
+                        "Archives": len(group),
+                        "Latest": _short_stamp(ordered[0]),
+                        "Previous": _short_stamp(ordered[1])
+                        if len(ordered) > 1
+                        else "",
+                        "What changed": (
+                            ", ".join(
+                                f"{field_name}: {old_value or '—'} → "
+                                f"{new_value or '—'}"
+                                for field_name, new_value, old_value in interesting
+                            )
+                            or "nothing but the date"
+                        ),
+                    }
+                )
 
             st.dataframe(
-                pd.DataFrame(table),
+                pd.DataFrame(summary),
                 use_container_width=True,
                 hide_index=True,
             )
             st.caption(
-                "A column showing one value is common to every archive in "
-                "that row; two values separated by `|` differ between them. "
-                "A group differing only by `archiveId` and a timestamp is the "
-                "same database archived twice."
+                "**What changed** compares the newest archive with the one "
+                "before it, shown as *old → new*. "
+                "*nothing but the date* means the two are identical apart "
+                "from when they were taken — the same database archived "
+                "twice, where the newest is the one that counts. Anything "
+                "else, especially a change in `sizeInMb`, means the two "
+                "archives hold different data under one name."
             )
+
+            if len(groups) > 1:
+                picked = st.selectbox(
+                    "Inspect one name",
+                    [group[0].name for _key, group in groups],
+                    key="vault_dupe_pick",
+                )
+            else:
+                picked = groups[0][1][0].name
+
+            chosen = next(
+                (group for _key, group in groups if group[0].name == picked),
+                None,
+            )
+            if chosen:
+                ordered = newest_first(chosen)
+                st.markdown(f"**{html.escape(picked)}** — {len(ordered)} archives")
+                detail = pd.DataFrame(
+                    [
+                        {
+                            "Field": field_name,
+                            "Previous": old_value or "—",
+                            "Latest": new_value or "—",
+                        }
+                        for field_name, new_value, old_value in compare_to_newest(
+                            chosen
+                        )
+                    ]
+                )
+                if detail.empty:
+                    st.info(
+                        "The two newest archives are identical on every "
+                        "field, including their timestamps."
+                    )
+                else:
+                    st.dataframe(
+                        detail, use_container_width=True, hide_index=True
+                    )
+                if len(ordered) > 2:
+                    st.caption(
+                        f"Comparing the two newest of {len(ordered)}. The CSV "
+                        "export carries every archive in every group."
+                    )
 
             csv_rows = [
                 {

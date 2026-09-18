@@ -714,6 +714,40 @@ def distinguishing_values(group: Sequence[Row], field_name: str) -> list[str]:
             values.append(text)
     return sorted(values)
 
+ARCHIVE_TIME_FIELDS = ("archivedAt", "createdAt")
+
+def newest_first(group: Sequence[Row]) -> list[Row]:
+
+    def stamp(row: Row) -> str:
+        for field_name in ARCHIVE_TIME_FIELDS:
+            value = str(row.data.get(field_name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    dated = [row for row in group if stamp(row)]
+    undated = [row for row in group if not stamp(row)]
+    return sorted(dated, key=stamp, reverse=True) + undated
+
+def compare_to_newest(
+    group: Sequence[Row], ignore: Sequence[str] = ()
+) -> list[tuple[str, str, str]]:
+    ordered = newest_first(group)
+    if len(ordered) < 2:
+        return []
+    newest, older = ordered[0], ordered[1]
+    skip = {name.casefold() for name in ignore}
+
+    differences: list[tuple[str, str, str]] = []
+    for field_name in sorted(set(newest.data) | set(older.data)):
+        if field_name.startswith("_") or field_name.casefold() in skip:
+            continue
+        new_value = str(newest.data.get(field_name) or "").strip()
+        old_value = str(older.data.get(field_name) or "").strip()
+        if new_value != old_value:
+            differences.append((field_name, new_value, old_value))
+    return differences
+
 def size_of(reconciliation: Reconciliation, outcome: Outcome) -> SizeTotal:
     total = 0.0
     rows = 0
