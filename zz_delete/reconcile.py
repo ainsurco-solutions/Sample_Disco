@@ -321,7 +321,8 @@ def load_vault_from_api(
             name = str(flat.get(name_field) or "").strip()
             if not name:
                 continue
-            key = match_key(name)
+            identity = str(flat.get("archiveId") or "").strip()
+            key = f"id:{identity}" if identity else f"name:{match_key(name)}"
             if key in seen_keys:
                 continue
             seen_keys.add(key)

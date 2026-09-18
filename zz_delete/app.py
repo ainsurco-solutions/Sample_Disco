@@ -1207,7 +1207,11 @@ tabs = st.tabs(
         *(f"{title} file" for _, title in loaded_sides),
         *(
             ["Duplicate names"]
-            if (st.session_state.vault_rows or st.session_state.target_rows)
+            if (
+                st.session_state.master_rows
+                or st.session_state.vault_rows
+                or st.session_state.target_rows
+            )
             else []
         ),
         "Report",
@@ -1217,13 +1221,18 @@ results_tab = tabs[0]
 report_tab = tabs[-1]
 vault_dupes_tab = (
     tabs[-2]
-    if (st.session_state.vault_rows or st.session_state.target_rows)
+    if (
+        st.session_state.master_rows
+        or st.session_state.vault_rows
+        or st.session_state.target_rows
+    )
     else None
 )
 
 if vault_dupes_tab is not None:
     with vault_dupes_tab:
         side_rows = {
+            "Source (On Prem)": st.session_state.master_rows or [],
             "Data Vault": st.session_state.vault_rows or [],
             "Data Bridge": st.session_state.target_rows or [],
         }
@@ -1233,11 +1242,13 @@ if vault_dupes_tab is not None:
         sides_with_dupes = [s for s, g in side_groups.items() if g]
 
         st.caption(
-            "Names appearing more than once in a target list. The vault "
-            "accepts repeated archives of one database, so these are usually "
-            "the same database archived more than once — not an error. They "
-            "are listed because matching is by name, so a repeated name "
-            "cannot be matched to a single archive."
+            "Names appearing more than once in any loaded list. Matching is "
+            "by name, so a repeated name cannot be tied to a single row — "
+            "every one of these is reported *Duplicate* and matches nothing. "
+            "What it means depends on the list: the vault accepts repeated "
+            "archives of one database by design, while the same name twice "
+            "in the on-prem inventory is two different databases on two "
+            "servers."
         )
 
         if not sides_with_dupes:
@@ -1245,16 +1256,24 @@ if vault_dupes_tab is not None:
                 name: (rows[0].data.get("_key_column", "?") if rows else "—")
                 for name, rows in side_rows.items()
             }
+            loaded = [
+                f"{len(rows)} {name}" for name, rows in side_rows.items() if rows
+            ]
             st.success(
-                f"No repeated names in {len(side_rows['Data Vault'])} vault "
-                f"rows or {len(side_rows['Data Bridge'])} Data Bridge rows."
+                "No repeated names in " + ", ".join(loaded) + " rows."
+                if loaded
+                else "No lists loaded."
             )
             st.caption(
-                f"Compared on **{keys['Data Vault']}** (Data Vault) and "
-                f"**{keys['Data Bridge']}** (Data Bridge). A column that is "
-                "unique by definition, such as `archiveId`, can never show a "
-                "duplicate — if you expected some, check the match column on "
-                "the file tab."
+                "Compared on "
+                + ", ".join(
+                    f"**{keys[name]}** ({name})"
+                    for name, rows in side_rows.items()
+                    if rows
+                )
+                + ". A column that is unique by definition, such as "
+                "`archiveId`, can never show a duplicate — if you expected "
+                "some, check the match column on the file tab."
             )
             groups = []
         else:
@@ -1265,7 +1284,7 @@ if vault_dupes_tab is not None:
                     horizontal=True,
                     key="vault_dupe_side",
                     help=(
-                        "Both target lists hold repeated names. They are "
+                        "More than one list holds repeated names. They are "
                         "separate problems: the vault repeats by design, the "
                         "Data Bridge list should not."
                     ),
@@ -1280,7 +1299,7 @@ if vault_dupes_tab is not None:
             st.warning(
                 f"**{len(groups)}** names cover **{affected}** rows in the "
                 f"**{side}** list. Each is reported *Duplicate* on the "
-                "Results tab, and none of them matches a source database."
+                "Results tab, and none of them matches."
             )
 
             summary: list[dict[str, object]] = []
@@ -1378,10 +1397,11 @@ if vault_dupes_tab is not None:
                 for key, group in groups
                 for row in group
             ]
+            slug = side.lower().split(" (")[0].replace(" ", "-")
             st.download_button(
-                "Download vault duplicates (CSV)",
+                f"Download {side} duplicates (CSV)",
                 data=pd.DataFrame(csv_rows).to_csv(index=False),
-                file_name="vault-duplicates.csv",
+                file_name=f"{slug}-duplicates.csv",
                 mime="text/csv",
             )
 
