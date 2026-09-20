@@ -138,6 +138,26 @@ $EmptyDirs = @(
     'logs'
 )
 
+# A -Root that still carries the parameter name, or an embedded drive letter, was
+# not parsed the way it was meant. `-Root/"C:\path"` is the one that catches
+# people: PowerShell takes the whole `-Root/C:\path` as a single positional value,
+# joins it onto the current directory, and the first New-Item then fails with
+# "filename, directory name, or volume label syntax is incorrect" -- 150 lines from
+# the real mistake, and only on the real run, because -WhatIf never touches the
+# disk and so reports a cheerful success. Fail here instead, naming the fix.
+if ($Root -match '(^|[\\/])-Root([\\/]|$)' -or $Root -match '.\w:[\\/]') {
+    Write-Host ""
+    Write-Host "  -Root was not parsed as you intended:" -ForegroundColor Red
+    Write-Host "      $Root" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Use a SPACE between the parameter and its value, not a slash:"
+    Write-Host '      .\New-AmigoScaffold.ps1 -Root "C:\path\to\folder"'
+    Write-Host ""
+    Write-Host "  Or omit -Root entirely to scaffold into the current directory."
+    Write-Host ""
+    exit 1
+}
+
 $rootPath = [System.IO.Path]::GetFullPath($Root)
 Write-Host "Scaffolding AMIGO into $rootPath" -ForegroundColor Cyan
 Write-Host ""
