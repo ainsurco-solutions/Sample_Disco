@@ -1,8 +1,8 @@
 AMIGO published runtime -- generated, do not edit here.
 
-source commit : 20a1dc0e37d2e4f5537869d6d77c3eaf7e465635
-               feat: verify a VM's copy against a published manifest (TASK-0067)
-files         : 68
+source commit : aca01b8505a9c0d199e34a9542d72be13188efd6
+               feat: trust the OS certificate store, so a TLS-inspecting proxy works (TASK-0074)
+files         : 69
 
 Master is the AML-MigHub repo. Fixes made in this copy are lost on the
 next publish -- and made blind, since the explanatory comments are

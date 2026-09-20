@@ -33,6 +33,23 @@ python-dotenv>=1.0,<2.0
 
 # --- Vendor integration -----------------------------------------------------
 httpx>=0.27,<1.0
+
+# WINDOWS, BEHIND A TLS-INSPECTING PROXY. MS Amlin re-signs outbound TLS with an
+# internal CA. httpx trusts certifi's bundle and boto3 trusts botocore's, and both
+# carry public roots only -- so every vendor call fails CERTIFICATE_VERIFY_FAILED,
+# which reads like an outage or a bad key rather than a proxy. truststore routes
+# verification through the Windows certificate store, where that internal root
+# already is.
+#
+# Chosen over python-certifi-win32 (what dev-tools/Reconcile uses) because it
+# patches the ssl layer rather than certifi alone, so it covers boto3 -- the
+# upload path, where the 952 GB files go. certifi-win32 is also unmaintained
+# since 2022.
+#
+# Optional by design: migration_hub/_tls.py injects best-effort and the
+# application runs without it. Do NOT reach for verify=False instead -- that
+# sends the API key over a connection nobody is authenticating.
+truststore>=0.9 ; sys_platform == "win32"
 # boto3 handles SigV4 signing, S3 multipart chunking and transfer retries. This
 # is the practical reason Option A was chosen over PowerShell -- see ADR-0002.
 boto3>=1.34,<2.0

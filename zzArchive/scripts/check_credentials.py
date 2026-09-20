@@ -149,6 +149,56 @@ def _step_upload(settings: Settings, api_key: str, target: UploadTarget, source:
         "upload fine and still fail to import -- see TASK-0020."
     )
 
+_TLS_MARKERS = (
+    "certificate_verify_failed",
+    "certificate verify failed",
+    "ssl: certificate",
+    "sslcertverificationerror",
+    "unable to get local issuer",
+    "self signed certificate",
+    "self-signed certificate",
+)
+
+def _explain_if_tls(exc: BaseException) -> None:
+    text = f"{type(exc).__name__} {exc}".lower()
+    chained = exc.__cause__ or exc.__context__
+    if chained is not None:
+        text += f" {type(chained).__name__} {chained}".lower()
+
+    if not any(marker in text for marker in _TLS_MARKERS):
+        return
+
+    print()
+    print(f"{_NO} This looks like TLS INSPECTION, not a Moody's problem.")
+    print("       A proxy re-signs traffic with an internal CA that Python does")
+    print("       not trust: httpx uses certifi's roots, boto3 uses botocore's,")
+    print("       and both carry public roots only.")
+    print()
+
+    try:
+        from migration_hub import _tls
+
+        if _tls.active:
+            print("       truststore IS active, so the OS store is already in use.")
+            print("       The proxy's root may genuinely be missing from the Windows")
+            print("       certificate store -- that is one for whoever manages the")
+            print("       build, not something this script can fix.")
+        else:
+            print(f"       truststore is NOT active ({_tls.unavailable_reason}).")
+            print("       That is the likely fix:")
+            print()
+            print("           pip install truststore")
+            print()
+            print("       It routes verification through the Windows certificate")
+            print("       store, where the proxy's root already is, and covers both")
+            print("       httpx and boto3.")
+    except ImportError:
+        print("       Install truststore and try again:  pip install truststore")
+
+    print()
+    print("       Do NOT set verify=False or disable certificate checking. That")
+    print("       sends the API key over a connection nobody is authenticating.")
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Read the API key from the host, ask Moody's for AWS credentials."
@@ -172,6 +222,7 @@ def main() -> int:
         raise
     except Exception as exc:
         print(f"\n{_NO} {type(exc).__name__}: {exc}")
+        _explain_if_tls(exc)
         print(f"{_NO} run with PYTHONFAULTHANDLER=1 or use the CLI for a full traceback")
         return 1
 
