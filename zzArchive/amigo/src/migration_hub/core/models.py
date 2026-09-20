@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as _dt
+import sqlite3
 from datetime import datetime
 from uuid import UUID
 
@@ -24,10 +26,25 @@ UTC_TIMESTAMP = DateTime().with_variant(DATETIME2, "mssql")
 UTC_NOW = func.now()
 
 @compiles(functions.now, "mssql")
-def _mssql_utc_now(element, compiler, **kw):
+def _mssql_utc_now(element: object, compiler: object, **kw: object) -> str:
     return "sysutcdatetime()"
 
 AUTO_PK = BigInteger().with_variant(Integer, "sqlite")
+
+def _register_sqlite_datetime_handlers() -> None:
+    sqlite3.register_adapter(_dt.date, lambda value: value.isoformat())
+    sqlite3.register_adapter(_dt.datetime, lambda value: value.isoformat(sep=" "))
+
+    def _convert_date(raw: bytes) -> _dt.date:
+        return _dt.date.fromisoformat(raw.decode())
+
+    def _convert_timestamp(raw: bytes) -> _dt.datetime:
+        return _dt.datetime.fromisoformat(raw.decode())
+
+    sqlite3.register_converter("date", _convert_date)
+    sqlite3.register_converter("timestamp", _convert_timestamp)
+
+_register_sqlite_datetime_handlers()
 
 class Base(DeclarativeBase):
     pass

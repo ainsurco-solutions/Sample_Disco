@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from math import ceil
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
@@ -13,8 +14,28 @@ from botocore.exceptions import ClientError
 from migration_hub.adapters.base import UploadTarget
 from migration_hub.adapters.irp.errors import UploadCredentialsExpiredError
 
+_MB = 1024 * 1024
+_GB = 1024 * _MB
+
+S3_MAX_PARTS = 10_000
+S3_MIN_PART = 5 * _MB
+S3_MAX_PART = 5 * _GB
+DEFAULT_MIN_CHUNK = 128 * _MB
+
 class ProgressCallback(Protocol):
     def __call__(self, *, bytes_transferred: int, total_bytes: int) -> None: ...
+
+def multipart_chunksize(file_size: int, *, min_chunk: int = DEFAULT_MIN_CHUNK) -> int:
+    if file_size < 0:
+        raise ValueError(f"file size cannot be negative: {file_size}")
+
+    chunk = max(min_chunk, S3_MIN_PART, ceil(file_size / S3_MAX_PARTS))
+    if chunk > S3_MAX_PART:
+        raise ValueError(
+            f"{file_size} bytes cannot be uploaded: it needs parts of {chunk} bytes, "
+            f"above S3's {S3_MAX_PART}-byte maximum part size"
+        )
+    return chunk
 
 def decode_presign_params(raw: dict[str, str]) -> dict[str, str]:
     decoded: dict[str, str] = {}
@@ -49,10 +70,15 @@ def upload_file(
     source: Path,
     target: UploadTarget,
     max_concurrency: int = 4,
-    multipart_chunksize_mb: int = 64,
+    multipart_chunksize_mb: int | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> None:
     bucket, key = _parse_bucket_and_key(target.upload_url)
+    file_size = source.stat().st_size
+    min_chunk = (
+        DEFAULT_MIN_CHUNK if multipart_chunksize_mb is None else multipart_chunksize_mb * _MB
+    )
+    chunksize = multipart_chunksize(file_size, min_chunk=min_chunk)
 
     client = boto3.client(
         "s3",
@@ -63,13 +89,13 @@ def upload_file(
         region_name=target.region,
     )
     transfer_config = TransferConfig(
-        multipart_chunksize=multipart_chunksize_mb * 1024 * 1024,
+        multipart_chunksize=chunksize,
         max_concurrency=max_concurrency,
     )
 
     callback = None
     if on_progress is not None:
-        total_bytes = source.stat().st_size
+        total_bytes = file_size
         state = {"transferred": 0}
 
         def _callback(bytes_amount: int) -> None:
