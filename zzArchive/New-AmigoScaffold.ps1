@@ -4,10 +4,13 @@
 
 .DESCRIPTION
     The client machine receives this code by hand-copying it out of the public
-    Sample_Disco repo. Creating 59 files across 14 nested folders by hand, in the
-    right places, is where that goes wrong -- a file in the wrong folder fails as
-    an ImportError, and a missing __init__.py fails as one too, both a long way
+    Sample_Disco repo. Creating dozens of files across nested folders by hand, in
+    the right places, is where that goes wrong -- a file in the wrong folder fails
+    as an ImportError, and a missing __init__.py fails as one too, both a long way
     from the person who made the mistake.
+
+    The count is deliberately not written here: the manifest below is generated
+    and grows, and a number in prose goes stale silently. The run reports it.
 
     This builds the empty shape so the only manual step left is pasting contents
     into files that already exist in the right place.
@@ -61,6 +64,7 @@ $ErrorActionPreference = 'Stop'
 # --- BEGIN GENERATED MANIFEST (push_amigo_to_demo.py --emit-scaffold) --------
 $Files = @(
     'src/migration_hub/__init__.py'
+    'src/migration_hub/_tls.py'
     'src/migration_hub/adapters/__init__.py'
     'src/migration_hub/adapters/base.py'
     'src/migration_hub/adapters/databridge/__init__.py'
@@ -126,6 +130,7 @@ $Files = @(
     '.streamlit/config.toml'
     'scripts/amigo.bat'
     'scripts/check_credentials.py'
+    'scripts/check_copy.py'
     'New-AmigoScaffold.ps1'
 )
 # --- END GENERATED MANIFEST -------------------------------------------------

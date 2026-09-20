@@ -1,7 +1,7 @@
 AMIGO published runtime -- generated, do not edit here.
 
-source commit : 22a72188dfa0035b95562c14ff6150621c72510b
-               docs: record today's transfer-route work against its tasks (TASK-0067, TASK-0071, TASK-0074)
+source commit : 70f6a4d4faa286e786e8f3820d08aebf9fe584d2
+               docs: a step-by-step code-transfer process for the devs (TASK-0067, TASK-0071)
 files         : 69
 
 Master is the AML-MigHub repo. Fixes made in this copy are lost on the
