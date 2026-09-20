@@ -316,7 +316,13 @@ class Registry:
             )
 
     def record_failure(
-        self, *, file_id: int, error: str, retryable: bool, max_attempts: int
+        self,
+        *,
+        file_id: int,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+        actor: str = "worker",
     ) -> FileState:
         with Session(self._engine) as session:
             file = session.get(MigrationFile, file_id)
@@ -327,7 +333,7 @@ class Registry:
         self.transition(
             file_id=file_id,
             to_state=FileState.FAILED,
-            actor="worker",
+            actor=actor,
             detail=error,
         )
 
@@ -337,7 +343,7 @@ class Registry:
         self.transition(
             file_id=file_id,
             to_state=FileState.ABANDONED,
-            actor="worker",
+            actor=actor,
             detail=(
                 error
                 if not retryable

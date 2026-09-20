@@ -78,6 +78,7 @@ def poll_running_imports() -> int:
         try:
             session = adapter.open_session()
             for file in importing:
+                assert file.job_id is not None
                 if reaper.reconcile_importing(
                     registry=registry,
                     adapter=adapter,

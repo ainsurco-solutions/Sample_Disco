@@ -76,14 +76,28 @@ def validate(batch: str = typer.Option(..., "--batch")) -> None:
 def stage(batch: str = typer.Option(..., "--batch")) -> None:
     settings = _load_settings()
     registry = _registry(settings)
-    staged = stager.stage_batch(
+    outcome = stager.stage_batch(
         registry=registry,
         staging_root=settings.staging_root,
         batch_id=batch,
         stage_locally=settings.stage_locally,
+        max_attempts=settings.max_attempts,
     )
     where = "into staging" if settings.stage_locally else "in place (no copy)"
-    typer.echo(f"staged {staged} file(s) {where} for batch {batch!r}")
+    typer.echo(f"staged {outcome.staged} file(s) {where} for batch {batch!r}")
+
+    if not outcome.failures:
+        return
+
+    typer.echo(f"\n{len(outcome.failures)} file(s) failed staging:", err=True)
+    for failure in outcome.failures:
+        typer.echo(f"  [{failure.file_id}] {failure.name}: {failure.error}", err=True)
+    typer.echo(
+        "\nThese are now FAILED and visible to retry. Fix the cause first -- "
+        "retrying a backup that is still being written will just fail again.",
+        err=True,
+    )
+    raise typer.Exit(1)
 
 @app.command()
 def run(

@@ -41,7 +41,7 @@ LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {
             FileState.ABANDONED,
         }
     ),
-    FileState.ABANDONED: frozenset({FileState.STAGED}),
+    FileState.ABANDONED: frozenset({FileState.STAGED, FileState.VALIDATED}),
 }
 
 class IllegalTransitionError(RuntimeError):

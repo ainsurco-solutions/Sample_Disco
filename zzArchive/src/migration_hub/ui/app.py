@@ -340,13 +340,20 @@ def _start_add_batch(
         st.write(f"**{ok}** validated, **{len(results) - ok}** rejected.")
 
         st.write(":material/inventory_2: Staging...")
-        staged = stager.stage_batch(
+        staging = stager.stage_batch(
             registry=registry,
             staging_root=settings.staging_root,
             batch_id=batch_id,
             stage_locally=settings.stage_locally,
+            max_attempts=settings.max_attempts,
         )
-        st.write(f"**{staged}** file(s) staged.")
+        st.write(f"**{staging.staged}** file(s) staged.")
+        if staging.failures:
+            st.warning(
+                f"**{len(staging.failures)}** file(s) failed staging and are now "
+                "FAILED, retryable below:\n\n"
+                + "\n".join(f"- `{f.name}` — {f.error}" for f in staging.failures)
+            )
 
         if batch_ops.state_of(registry=registry, batch_id=batch_id) is BatchState.PAUSED:
             batch_ops.resume(registry=registry, batch_id=batch_id)

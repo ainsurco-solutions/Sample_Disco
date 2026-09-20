@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from migration_hub.core import checksum
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import FileState
+from migration_hub.orchestration.batches import STAGING_FAILURE_PREFIX
 
 ROBOCOPY_FAILURE_THRESHOLD = 7
 
@@ -14,6 +16,30 @@ _ROBOCOPY = shutil.which("robocopy") or "robocopy"
 
 class StagingError(RuntimeError):
     pass
+
+@dataclass(frozen=True)
+class StagingFailure:
+
+    file_id: int
+    name: str
+    error: str
+
+@dataclass
+class StagingOutcome:
+
+    staged: int = 0
+    failures: list[StagingFailure] = field(default_factory=list)
+
+    def __int__(self) -> int:
+        return self.staged
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, int):
+            return self.staged == other
+        return NotImplemented
+
+    def __bool__(self) -> bool:
+        return bool(self.staged or self.failures)
 
 def stage_file(
     *,
@@ -74,24 +100,37 @@ def stage_batch(
     staging_root: Path,
     batch_id: str,
     stage_locally: bool = False,
-) -> int:
+    max_attempts: int = 3,
+) -> StagingOutcome:
     staged = 0
+    failures: list[StagingFailure] = []
     for file in registry.outstanding(batch_id=batch_id):
         if FileState(file.state) is not FileState.VALIDATED:
             continue
 
         source = Path(file.source_path)
-        if stage_locally:
-            target = staging_root / batch_id / source.name
-            stage_file(
-                source=source,
-                target=target,
-                expected_size=file.size_bytes,
-                expected_checksum=file.checksum,
+        try:
+            if stage_locally:
+                target = staging_root / batch_id / source.name
+                stage_file(
+                    source=source,
+                    target=target,
+                    expected_size=file.size_bytes,
+                    expected_checksum=file.checksum,
+                )
+            else:
+                target = source
+                _verify_in_place(source, expected_size=file.size_bytes)
+        except StagingError as exc:
+            registry.record_failure(
+                file_id=file.file_id,
+                error=f"{STAGING_FAILURE_PREFIX}{exc}",
+                retryable=True,
+                max_attempts=max_attempts,
+                actor="stage_batch",
             )
-        else:
-            target = source
-            _verify_in_place(source, expected_size=file.size_bytes)
+            failures.append(StagingFailure(file_id=file.file_id, name=source.name, error=str(exc)))
+            continue
 
         registry.transition(
             file_id=file.file_id,
@@ -100,7 +139,7 @@ def stage_batch(
             staged_path=str(target),
         )
         staged += 1
-    return staged
+    return StagingOutcome(staged=staged, failures=failures)
 
 def _verify_in_place(source: Path, *, expected_size: int) -> None:
     if not source.exists():
