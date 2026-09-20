@@ -1,7 +1,7 @@
 AMIGO published runtime -- generated, do not edit here.
 
-source commit : aca01b8505a9c0d199e34a9542d72be13188efd6
-               feat: trust the OS certificate store, so a TLS-inspecting proxy works (TASK-0074)
+source commit : 22a72188dfa0035b95562c14ff6150621c72510b
+               docs: record today's transfer-route work against its tasks (TASK-0067, TASK-0071, TASK-0074)
 files         : 69
 
 Master is the AML-MigHub repo. Fixes made in this copy are lost on the
