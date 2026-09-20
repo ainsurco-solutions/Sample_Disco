@@ -1,8 +1,8 @@
 AMIGO published runtime -- generated, do not edit here.
 
-source commit : e6eca3efb6407c11ace11fd6344cf875a43f2e31
-               feat: stamp published copies with their source commit (TASK-0067, TASK-0073)
-files         : 67
+source commit : 20a1dc0e37d2e4f5537869d6d77c3eaf7e465635
+               feat: verify a VM's copy against a published manifest (TASK-0067)
+files         : 68
 
 Master is the AML-MigHub repo. Fixes made in this copy are lost on the
 next publish -- and made blind, since the explanatory comments are
