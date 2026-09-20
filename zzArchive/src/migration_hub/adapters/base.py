@@ -26,6 +26,15 @@ class UploadTarget:
         return f"UploadTarget(folder_id={self.folder_id!r}, region=<redacted>, ...)"
 
 @dataclass(frozen=True, slots=True)
+class TargetDatabase:
+
+    database_id: str
+    database_name: str
+    database_type: str
+    server_name: str
+    size_in_mb: float | None
+
+@dataclass(frozen=True, slots=True)
 class ExposureSet:
 
     exposure_set_id: str

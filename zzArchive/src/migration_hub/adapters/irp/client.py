@@ -11,6 +11,7 @@ from migration_hub.adapters.base import (
     ExposureSet,
     JobStatus,
     PlatformSession,
+    TargetDatabase,
     UploadTarget,
 )
 from migration_hub.adapters.irp import session as irp_session
@@ -156,6 +157,60 @@ class IrpAdapter:
             params={"filter": f"exposureName = '{exposure_name}'"},
         )
         return len(response.json()) > 0
+
+    def search_databases(
+        self, *, page_size: int = 1000, max_pages: int = 100
+    ) -> list[TargetDatabase]:
+        databases: list[TargetDatabase] = []
+        seen_ids: set[str] = set()
+        offset = 0
+
+        for _ in range(max_pages):
+            response = self._request(
+                "GET",
+                "/platform/admindata/v1/databases",
+                params={"limit": page_size, "offset": offset},
+            )
+            page = response.json()
+            if isinstance(page, dict):
+                for key in ("searchItems", "items", "data", "results"):
+                    if isinstance(page.get(key), list):
+                        page = page[key]
+                        break
+                else:
+                    raise IrpError(
+                        "GET /platform/admindata/v1/databases returned an object, "
+                        f"not the documented array. Keys: {', '.join(sorted(page))}"
+                    )
+
+            for item in page:
+                database_id = str(item.get("databaseId") or "").strip()
+                if database_id and database_id in seen_ids:
+                    continue
+                if database_id:
+                    seen_ids.add(database_id)
+                size = item.get("sizeInMb")
+                databases.append(
+                    TargetDatabase(
+                        database_id=database_id,
+                        database_name=str(item.get("databaseName") or "").strip(),
+                        database_type=str(item.get("databaseType") or "").strip(),
+                        server_name=str(item.get("serverName") or "").strip(),
+                        size_in_mb=float(size) if size is not None else None,
+                    )
+                )
+
+            if len(page) < page_size:
+                break
+            offset += page_size
+        else:
+            raise IrpError(
+                f"GET /platform/admindata/v1/databases returned more than "
+                f"{max_pages * page_size} rows without ending. Stopped rather than "
+                "looping."
+            )
+
+        return databases
 
     def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
         url = str(self._client.base_url.join(path))
