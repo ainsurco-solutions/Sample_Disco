@@ -30,13 +30,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--bak",
-        required=True,
         help=r"Path to the .bak file -- a UNC network path "
         r"(\\fileserver\share\folder\test.bak) or a mapped drive letter "
-        r"(Z:\folder\test.bak) both work; pathlib handles either.",
+        r"(Z:\folder\test.bak) both work; pathlib handles either. Not "
+        "needed with --check-job.",
     )
-    parser.add_argument("--instance", required=True, help="Data Bridge SQL instance name")
-    parser.add_argument("--database", required=True, help="Database name to create")
+    parser.add_argument("--instance", help="Data Bridge SQL instance name. Not needed with --check-job.")
+    parser.add_argument("--database", help="Database name to create. Not needed with --check-job.")
+    parser.add_argument(
+        "--check-job",
+        default="",
+        metavar="JOB_ID",
+        help="Read-only: check an existing job's status and exit -- no "
+        "upload, no import trigger, no archive call. Use this before "
+        "re-running the full script if a previous run got a job id but "
+        "crashed before confirming it finished, so you don't risk "
+        "triggering a second import/archive for the same database.",
+    )
     parser.add_argument(
         "--resource-group-id",
         default="",
@@ -82,6 +92,41 @@ def main() -> int:
         import requests
     except ImportError:
         _fail("requests is not installed: pip install requests")
+        return 1
+
+    if args.check_job:
+        api = load_settings()
+        if not api.has_key:
+            _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
+            return 1
+        if not api.host:
+            _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
+            return 1
+        host = api.host.rstrip("/")
+        session = requests.Session()
+        session.headers.update({"Authorization": api.api_key})
+        url = f"{host}/databridge/v1/Jobs/{args.check_job}"
+        _step("check", f"GET {url} (read-only, single check)")
+        resp = session.get(url, timeout=30)
+        print(f"    http status: {resp.status_code}")
+        print(f"    body: {resp.text[:1000]}")
+        if resp.status_code < 300:
+            try:
+                body = resp.json()
+                status = body.get("status") if isinstance(body, dict) else body
+                print(f"\n    job status: {status}")
+                if status in _SUCCESS_STATUSES:
+                    print("    -> terminal, succeeded. Safe to move on to archiving; do not re-upload.")
+                elif status in _FAILURE_STATUSES:
+                    print("    -> terminal, failed. The import did not complete -- check with Moody's/MS Amlin before deciding whether re-running is safe, rather than assuming a retry is harmless.")
+                else:
+                    print("    -> not terminal yet. Still in progress -- wait and check again rather than re-running the full script.")
+            except ValueError:
+                pass
+        return 0
+
+    if not args.bak or not args.instance or not args.database:
+        _fail("--bak, --instance and --database are all required unless using --check-job.")
         return 1
 
     bak_path = Path(args.bak)
@@ -355,9 +400,18 @@ def _poll(session: object, url: str) -> str | None:
     deadline = time.time() + POLL_TIMEOUT_SECONDS
     while time.time() < deadline:
         response = session.get(url, timeout=30)
+        print(f"    ... http status: {response.status_code}")
         if response.status_code == 404:
             return None
-        body = response.json()
+        if response.status_code >= 400:
+            print(f"    ... body: {response.text[:300]!r}")
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            print(f"    ... non-JSON body: {response.text[:300]!r}")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
         raw_status = str(body.get("status") if isinstance(body, dict) else body)
         print(f"    ... status: {raw_status}")
         if raw_status in _SUCCESS_STATUSES or raw_status in _FAILURE_STATUSES:
