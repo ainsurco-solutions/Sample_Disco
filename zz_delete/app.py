@@ -1544,7 +1544,7 @@ loaded_sides = [
 tabs = st.tabs(
     [
         "Results",
-        *(f"{title} file" for _, title in loaded_sides),
+        *(title for _, title in loaded_sides),
         *(
             ["Duplicate names"]
             if (
