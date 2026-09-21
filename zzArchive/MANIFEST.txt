@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 27e672838bae810f92e90c15e06345cae3b1d778
+# source commit: f2a6c2e1494df7ff37c046ccf9b429a67cb864ec
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3040	102	efb56679a41dbeb97eecaefced24c856bd0e6730921685b651c0d05e78388691	.streamlit/config.toml
@@ -7,6 +7,7 @@ config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	RE
 config	12204	251	c8fc8dbbc3d0e754e3d2d763ef71a4de1a96251ac4aa3050353847a3eb1e0bed	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
 config	1527	44	b1e370386c619db3280e3c98275248786240cc8a82acfdf3fa50c91e9ddc811c	config/dev.example.json
+config	2602	61	e7d8ada712edef65afe9e64ebe614827c3a79ee5ebb8d06ee745095c137f5ff4	config/prod.example.json
 code	2947	62	f0524905acfcdd062608923c9101572ee7ec597b88bd6696e85c90985ec9f6ea	migrations/README.md
 code	1374	51	7fd7921e960540ceda3198a92447db457e14c301e3af857f7585d532c26e77a2	migrations/env.py
 code	688	31	ecd33ed15c4ac04d7bc50c24a9bb50791641b023b020713429f753862217d9c2	migrations/script.py.mako

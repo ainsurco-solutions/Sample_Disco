@@ -1,3 +1,3 @@
-source commit : 27e672838bae810f92e90c15e06345cae3b1d778
-               docs: distinguish "S3 is blocked" from "this command did not trust the proxy" (TASK-0071)
-files         : 74
+source commit : f2a6c2e1494df7ff37c046ccf9b429a67cb864ec
+               docs: mirror TASK-0074 status and owner in the backlog
+files         : 75

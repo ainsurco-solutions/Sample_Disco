@@ -1,0 +1,61 @@
+{
+  "$comment": [
+    "Non-secret settings for a PRODUCTION environment.",
+    "Copy to prod.json and fill in. Secrets belong in .env, never here --",
+    "the loader rejects any key containing key/secret/password/token/credential.",
+    "",
+    "environment MUST match MIGRATION_HUB_ENV or the load fails naming both",
+    "values. prod.json declaring 'prod' while MIGRATION_HUB_ENV is unset is the",
+    "commonest first error: unset defaults to 'dev', which then looks for a",
+    "config/dev.json that is not there.",
+    "",
+    "NOTE: only the key \"$comment\" is stripped before validation, and Settings",
+    "forbids unknown fields -- so put every note here. A \"$comment_foo\" key",
+    "makes the file fail to load.",
+    "",
+    "THERE IS NO DEV TIER ON A CLIENT VM. Every command is a prod command and",
+    "prints so in yellow at startup, which means the banner is constant and easy",
+    "to stop seeing. dry_run and the concurrency limits below are the real",
+    "guardrails -- treat them as such.",
+    "",
+    "Throughput values are deliberately conservative and must not be raised",
+    "until Moody's confirms their limits -- see",
+    "docs/api/open-questions-for-moodys.md item 6. max_concurrent_uploads is",
+    "per PROCESS, so three developers running one each is three concurrent",
+    "uploads against the same tenant.",
+    "",
+    "stage_locally=false (the default) uploads straight from source_root, the",
+    "share RatCat wrote the backups to -- no second copy, no extra writes.",
+    "Set it true to copy into staging_root first: that path uses robocopy /Z, so",
+    "a network interruption resumes rather than restarting the transfer. Worth",
+    "it for a very large file over an unreliable link; pointless otherwise.",
+    "Leave staging_root pointing somewhere OTHER than source_root even when it",
+    "is unused -- if it is ever switched on, it writes batch subfolders into",
+    "whatever it names, and a later scan would rediscover those copies."
+  ],
+
+  "environment": "prod",
+
+  "source_root": "\\\\REPLACE_WITH_BACKUP_SHARE\\EDM_Backups",
+  "staging_root": "D:\\MigrationHub\\staging",
+  "file_pattern": "*.bak",
+
+  "api_host": "REPLACE_WITH_MOODYS_HOST",
+  "api_key_env_var": "MOODYS_API_KEY",
+  "entitlement": "REPLACE_WITH_ENTITLEMENT",
+
+  "max_concurrent_uploads": 1,
+  "max_concurrent_imports": 1,
+  "poll_interval_seconds": 60,
+  "max_poll_minutes": 360,
+
+  "max_attempts": 3,
+  "claim_timeout_minutes": 420,
+  "backoff_base_seconds": 2.0,
+  "backoff_max_seconds": 300.0,
+
+  "stage_locally": false,
+
+  "compute_checksums": false,
+  "dry_run": true
+}
