@@ -117,7 +117,7 @@ not accidentally live. Resume OneDrive sync.
 
 
 -----------------------------------------------------------------------
-MEASURE THE RI ESTATE -- distribution, from the sizes already in Excel
+MEASURE THE ESTATE -- distribution, from the sizes already in Excel
 -----------------------------------------------------------------------
 Nothing to do with a failing run. This closes a standing gap in RSK-0006
 and needs no permission and no AMIGO.
@@ -126,65 +126,83 @@ WHY. The Direct server was measured; the RI server was not. RI's ~24 TB
 across 5,848 databases is a STATED WORKING ASSUMPTION that it follows
 Direct's distribution, not an observation. RSK-0006's own wording is that
 the residual concern is "shape, not size" -- if RI is flatter than Direct
-the total holds but the batch model changes -- and it names a
-sys.master_files query as the resolution "whenever the properties
-permission lands". Requested 2026-09-04, still pending.
+the total holds but the batch model changes.
 
-The sizes are already in a spreadsheet. Nine numbers settle it.
+--- FIRST: which server is this, and what unit? -----------------------
+Both were wrong on the first attempt (2026-09-21), so check them before
+reading anything into the numbers.
 
-Sizes assumed in column B, rows 2 to 6000, in GIGABYTES. Adjust the
-range. If the column is in MB, either divide by 1024 first or replace
-each threshold with its MB value (90 -> 92160, 200 -> 204800,
-500 -> 512000).
+UNIT. The first run gave MAX = 975,415.1 and SUM/1024 = 22,408. As GB
+those would be a 975 TB database and a 22,000 TB estate. The column was
+MEGABYTES. Every formula below is written for MB; if yours is in GB,
+divide each threshold by 1024 (92160 -> 90, and so on).
 
---- the two numbers that decide it ------------------------------------
+  Sanity check: MAX/1024 should read as a plausible GB figure. The
+  largest database in this estate is 952.55 GB.
+
+SERVER. That same MAX -- 975,415 MB = 952.6 GB -- is RSK-0006's recorded
+largest on DIRECT, so the first sheet was Direct data, not RI. If the
+sheet has a server column, filter it:
+
+  SRISKPD0101 = Direct (already measured)
+  SRISKPD0001 = RI     (the gap worth closing)
+
+  Cross-check against RSK-0006's Direct figures: 55 databases >= 90 GB,
+  17 above 200 GB, 4 above 500 GB, 11.4 TB total. If the >=512000 bucket
+  below returns 4, this is Direct. Materially more, and it is both
+  servers combined or something else again -- say which before anyone
+  records it.
+
+--- the two numbers that decide it (MB) -------------------------------
 Direct, measured: 0.7% of the count carries 32.5% of the volume. The RI
 assumption is ~2.0% of count. These two say whether that holds.
 
-  =ROUND(100*COUNTIFS(B2:B6000,">=90")/COUNT(B2:B6000),2)
-  =ROUND(100*SUMIFS(B2:B6000,B2:B6000,">=90")/SUM(B2:B6000),1)
+  =ROUND(100*COUNTIFS(B2:B6000,">=92160")/COUNT(B2:B6000),2)
+  =ROUND(100*SUMIFS(B2:B6000,B2:B6000,">=92160")/SUM(B2:B6000),1)
 
---- totals -------------------------------------------------------------
+--- totals (MB) --------------------------------------------------------
   =COUNT(B2:B6000)
-  =ROUND(SUM(B2:B6000)/1024,2)
-  =ROUND(MAX(B2:B6000),2)
+  =ROUND(SUM(B2:B6000)/1048576,2)        TB
+  =ROUND(MAX(B2:B6000)/1024,2)           GB
 
---- the shape, in seven buckets ---------------------------------------
-  =COUNTIFS(B2:B6000,"<1")
-  =COUNTIFS(B2:B6000,">=1",B2:B6000,"<10")
-  =COUNTIFS(B2:B6000,">=10",B2:B6000,"<50")
-  =COUNTIFS(B2:B6000,">=50",B2:B6000,"<90")
-  =COUNTIFS(B2:B6000,">=90",B2:B6000,"<200")
-  =COUNTIFS(B2:B6000,">=200",B2:B6000,"<500")
-  =COUNTIFS(B2:B6000,">=500")
+--- the shape, in seven buckets (MB) ----------------------------------
+  =COUNTIFS(B2:B6000,"<1024")
+  =COUNTIFS(B2:B6000,">=1024",B2:B6000,"<10240")
+  =COUNTIFS(B2:B6000,">=10240",B2:B6000,"<51200")
+  =COUNTIFS(B2:B6000,">=51200",B2:B6000,"<92160")
+  =COUNTIFS(B2:B6000,">=92160",B2:B6000,"<204800")
+  =COUNTIFS(B2:B6000,">=204800",B2:B6000,"<512000")
+  =COUNTIFS(B2:B6000,">=512000")
 
-The 90 / 200 / 500 boundaries are Direct's measured ones and the 200 GB
-working batch ceiling, so the two servers compare line for line.
+The 90 / 200 / 500 GB boundaries (92160 / 204800 / 512000 MB) are
+Direct's measured ones and the 200 GB working batch ceiling, so the two
+servers compare line for line.
 
 --- the heavy-lift candidates -----------------------------------------
-TASK-0020 needs the largest few named, not just counted. Sort descending
+TASK-0020 needs the largest few NAMED, not just counted. Sort descending
 on B and screenshot the top 20 with their names, or:
 
-  =LARGE(B2:B6000,1)      through   =LARGE(B2:B6000,20)
+  =ROUND(LARGE(B2:B6000,1)/1024,2)    through   =ROUND(LARGE(B2:B6000,20)/1024,2)
 
 --- what each outcome means -------------------------------------------
-  close to 2% of count    -> the assumption holds and RSK-0006 narrows
-  much flatter            -> the total may hold, but the batch model
+  RI close to 2% of count -> the assumption holds and RSK-0006 narrows
+  RI much flatter         -> the total may hold, but the batch model
                              changes: fewer outsized files, more
                              mid-sized ones to schedule
-  much steeper            -> more databases above the 200 GB ceiling
+  RI much steeper         -> more databases above the 200 GB ceiling
                              than the plan allows for
 
 --- one thing to confirm when you send them ---------------------------
 Whether column B is .BAK file sizes or actual database sizes. A .BAK is
 compressed by a data-dependent amount, so if these are backups the
 RANKING is reliable and the absolute figures are a LOWER BOUND. If they
-are real database sizes, this settles RSK-0006's RI half outright rather
+are real database sizes, this settles RSK-0006's half outright rather
 than narrowing it -- a materially different claim, and worth being sure
 which one is being made.
 
-RI only for now; the Direct server follows in about a week (2026-09-21),
-at which point the same nine formulas make the two directly comparable.
+Send the counts AND the server and unit answers together. A distribution
+attributed to the wrong server would corrupt a risk the plan depends on,
+and RSK-0006's Direct figures have already been corrected once.
 
 -----------------------------------------------------------------------
 WHY DID A FILE FAIL? -- reading last_error
