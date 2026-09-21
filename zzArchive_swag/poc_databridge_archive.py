@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -29,13 +30,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--bak",
-        required=True,
         help=r"Path to the .bak file -- a UNC network path "
         r"(\\fileserver\share\folder\test.bak) or a mapped drive letter "
-        r"(Z:\folder\test.bak) both work; pathlib handles either.",
+        r"(Z:\folder\test.bak) both work; pathlib handles either. Not "
+        "needed with --check-job.",
     )
-    parser.add_argument("--instance", required=True, help="Data Bridge SQL instance name")
-    parser.add_argument("--database", required=True, help="Database name to create")
+    parser.add_argument("--instance", help="Data Bridge SQL instance name. Not needed with --check-job.")
+    parser.add_argument("--database", help="Database name to create. Not needed with --check-job.")
+    parser.add_argument(
+        "--check-job",
+        default="",
+        metavar="JOB_ID",
+        help="Read-only: check an existing job's status and exit -- no "
+        "upload, no import trigger, no archive call. Use this before "
+        "re-running the full script if a previous run got a job id but "
+        "crashed before confirming it finished, so you don't risk "
+        "triggering a second import/archive for the same database.",
+    )
     parser.add_argument(
         "--resource-group-id",
         default="",
@@ -60,6 +71,16 @@ def main() -> int:
         "reference doc).",
     )
     parser.add_argument(
+        "--content-type",
+        default="application/octet-stream",
+        help="Content-Type header sent on the S3 PUT (step 3). The "
+        "presigned URL's X-Amz-SignedHeaders includes 'content-type', so "
+        "this must exactly match whatever value the tenant used when it "
+        "signed the URL, or S3 returns 403 SignatureDoesNotMatch. Not "
+        "documented anywhere -- try a different value (or '' for no "
+        "header) against a fresh presigned URL if the default fails.",
+    )
+    parser.add_argument(
         "--confirm",
         action="store_true",
         help="Actually perform the upload/import/archive calls. Without "
@@ -71,6 +92,41 @@ def main() -> int:
         import requests
     except ImportError:
         _fail("requests is not installed: pip install requests")
+        return 1
+
+    if args.check_job:
+        api = load_settings()
+        if not api.has_key:
+            _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
+            return 1
+        if not api.host:
+            _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
+            return 1
+        host = api.host.rstrip("/")
+        session = requests.Session()
+        session.headers.update({"Authorization": api.api_key})
+        url = f"{host}/databridge/v1/Jobs/{args.check_job}"
+        _step("check", f"GET {url} (read-only, single check)")
+        resp = session.get(url, timeout=30)
+        print(f"    http status: {resp.status_code}")
+        print(f"    body: {resp.text[:1000]}")
+        if resp.status_code < 300:
+            try:
+                body = resp.json()
+                status = body.get("status") if isinstance(body, dict) else body
+                print(f"\n    job status: {status}")
+                if status in _SUCCESS_STATUSES:
+                    print("    -> terminal, succeeded. Safe to move on to archiving; do not re-upload.")
+                elif status in _FAILURE_STATUSES:
+                    print("    -> terminal, failed. The import did not complete -- check with Moody's/MS Amlin before deciding whether re-running is safe, rather than assuming a retry is harmless.")
+                else:
+                    print("    -> not terminal yet. Still in progress -- wait and check again rather than re-running the full script.")
+            except ValueError:
+                pass
+        return 0
+
+    if not args.bak or not args.instance or not args.database:
+        _fail("--bak, --instance and --database are all required unless using --check-job.")
         return 1
 
     bak_path = Path(args.bak)
@@ -143,13 +199,60 @@ def main() -> int:
     if resp.status_code >= 400:
         _fail(resp.text[:300])
         return 1
-    mdf_uri = resp.json()["mdfUri"]
-    _ok("got presigned upload URL")
+    try:
+        body = resp.json()
+    except ValueError:
+        _ok(f"response is not JSON -- raw text: {resp.text[:500]!r}")
+        _fail(
+            "Cannot proceed automatically. If the text above is the presigned "
+            "URL itself, tell me and I'll change this to use resp.text directly."
+        )
+        return 1
+    mdf_uri = body.get("backupUri") or body.get("mdfUri") if isinstance(body, dict) else None
+    if not mdf_uri:
+        _fail(
+            f"neither 'backupUri' nor 'mdfUri' in the response -- this shape "
+            f"is not one we've seen before. Full body: {body!r}"
+        )
+        _fail(
+            "Report the body above and I'll correct the field name in the "
+            "script -- same situation this project already hit once with "
+            "'archiveName' vs 'exposureName' on the archives endpoint."
+        )
+        return 1
+    _ok(f"got presigned upload URL ({'backupUri' if body.get('backupUri') else 'mdfUri'})")
 
     _step("3", f"PUT {bak_path.name} to presigned URL ({size_mb:.1f} MB)")
+    put_headers = {}
+    if args.content_type:
+        put_headers["Content-Type"] = args.content_type
+        print(f"    sending Content-Type: {args.content_type!r}")
+    else:
+        print("    sending no Content-Type header")
     with bak_path.open("rb") as fh:
-        put_resp = requests.put(mdf_uri, data=fh, timeout=None)
+        put_resp = requests.put(mdf_uri, data=fh, headers=put_headers, timeout=None)
     print(f"    status: {put_resp.status_code}")
+    if put_resp.status_code == 403 and "SignatureDoesNotMatch" in put_resp.text:
+        _fail(
+            "S3 SignatureDoesNotMatch -- the presigned URL was signed with "
+            "'content-type' as a required header (visible in its "
+            "X-Amz-SignedHeaders query param)."
+        )
+        match = re.search(r"<StringToSign>(.*?)</StringToSign>", put_resp.text, re.S)
+        if match:
+            print("\n    Full <StringToSign> from AWS (the canonical request it hashed):")
+            print("    " + match.group(1).replace("\\n", "\n    "))
+            print(
+                "\n    Look for a 'content-type:...' line above -- that exact "
+                "string is what --content-type must match."
+            )
+        else:
+            print(f"\n    Full response body (no <StringToSign> found):\n    {put_resp.text}")
+        print(
+            "\n    Each attempt needs a fresh presigned URL -- this one may "
+            "now be considered used."
+        )
+        return 1
     if put_resp.status_code >= 300:
         _fail(put_resp.text[:300])
         return 1
@@ -297,9 +400,18 @@ def _poll(session: object, url: str) -> str | None:
     deadline = time.time() + POLL_TIMEOUT_SECONDS
     while time.time() < deadline:
         response = session.get(url, timeout=30)
+        print(f"    ... http status: {response.status_code}")
         if response.status_code == 404:
             return None
-        body = response.json()
+        if response.status_code >= 400:
+            print(f"    ... body: {response.text[:300]!r}")
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            print(f"    ... non-JSON body: {response.text[:300]!r}")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
         raw_status = str(body.get("status") if isinstance(body, dict) else body)
         print(f"    ... status: {raw_status}")
         if raw_status in _SUCCESS_STATUSES or raw_status in _FAILURE_STATUSES:
