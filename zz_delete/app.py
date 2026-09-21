@@ -1142,14 +1142,13 @@ with st.sidebar:
         render_step(step)
 
     st.divider()
-    st.divider()
     run_count = len(store.runs())
     if SQL.any_configured:
         st.caption(
             "Source servers: " + ", ".join(s.label for s in SQL.servers())
         )
     if API.configured:
-        st.caption(f"API host: `{API.host}` (list function pending)")
+        st.caption(f"API host: `{API.host}`")
     else:
         st.caption(
             "API not configured — copy `.env.example` to `.env` to set the "
