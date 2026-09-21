@@ -4,6 +4,7 @@ import argparse
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from settings import load_settings
@@ -25,6 +26,13 @@ def _ok(msg: str) -> None:
 
 def _fail(msg: str) -> None:
     print(f"    !! {msg}")
+
+def _run_guarded(label: str, func: Callable[[], int]) -> int:
+    try:
+        return func()
+    except Exception as exc:
+        _fail(f"unexpected exception in {label}: {exc!r}")
+        return 1
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -133,50 +141,57 @@ def main() -> int:
         return 1
 
     if args.check_job:
-        api = load_settings()
-        if not api.has_key:
-            _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
-            return 1
-        if not api.host:
-            _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
-            return 1
-        host = api.host.rstrip("/")
-        session = requests.Session()
-        session.headers.update({"Authorization": api.api_key})
-        url = f"{host}/databridge/v1/Jobs/{args.check_job}"
-        _step("check", f"GET {url} (read-only, single check)")
-        resp = session.get(url, timeout=30)
-        print(f"    http status: {resp.status_code}")
-        print(f"    body: {resp.text[:1000]}")
-        if resp.status_code < 300:
-            try:
-                body = resp.json()
-                status = body.get("status") if isinstance(body, dict) else body
-            except ValueError:
-                status = resp.text.strip()
-            print(f"\n    job status: {status}")
-            if status in _SUCCESS_STATUSES:
-                print("    -> terminal, succeeded. Safe to move on to archiving; do not re-upload.")
-            elif status in _FAILURE_STATUSES:
-                print("    -> terminal, failed. The import did not complete -- check with Moody's/MS Amlin before deciding whether re-running is safe, rather than assuming a retry is harmless.")
-            else:
-                print("    -> not terminal yet, or an unrecognised status string. If the import is actually done, tell me the exact text above and I'll add it to the known-success/failure sets.")
-        return 0
+        def _do_check_job() -> int:
+            api = load_settings()
+            if not api.has_key:
+                _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
+                return 1
+            if not api.host:
+                _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
+                return 1
+            host = api.host.rstrip("/")
+            session = requests.Session()
+            session.headers.update({"Authorization": api.api_key})
+            url = f"{host}/databridge/v1/Jobs/{args.check_job}"
+            _step("check", f"GET {url} (read-only, single check)")
+            resp = session.get(url, timeout=30)
+            print(f"    http status: {resp.status_code}")
+            print(f"    body: {resp.text[:1000]}")
+            if resp.status_code < 300:
+                try:
+                    body = resp.json()
+                    status = body.get("status") if isinstance(body, dict) else body
+                except ValueError:
+                    status = resp.text.strip()
+                print(f"\n    job status: {status}")
+                if status in _SUCCESS_STATUSES:
+                    print("    -> terminal, succeeded. Safe to move on to archiving; do not re-upload.")
+                elif status in _FAILURE_STATUSES:
+                    print("    -> terminal, failed. The import did not complete -- check with Moody's/MS Amlin before deciding whether re-running is safe, rather than assuming a retry is harmless.")
+                else:
+                    print("    -> not terminal yet, or an unrecognised status string. If the import is actually done, tell me the exact text above and I'll add it to the known-success/failure sets.")
+            return 0
+
+        return _run_guarded("--check-job", _do_check_job)
 
     if args.verify_only:
         if not args.database:
             _fail("--database is required with --verify-only.")
             return 1
-        api = load_settings()
-        if not api.has_key:
-            _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
-            return 1
-        if not api.host:
-            _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
-            return 1
-        session = requests.Session()
-        session.headers.update({"Authorization": api.api_key})
-        return _verify_archive(session, api.host.rstrip("/"), args, args.database)
+
+        def _do_verify_only() -> int:
+            api = load_settings()
+            if not api.has_key:
+                _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
+                return 1
+            if not api.host:
+                _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
+                return 1
+            session = requests.Session()
+            session.headers.update({"Authorization": api.api_key})
+            return _verify_archive(session, api.host.rstrip("/"), args, args.database)
+
+        return _run_guarded("--verify-only", _do_verify_only)
 
     if not args.instance:
         _fail("--instance is required unless using --check-job or --verify-only.")
@@ -266,7 +281,9 @@ def main() -> int:
     session.headers.update({"Authorization": api.api_key})
 
     if args.archive_only:
-        return _archive_and_verify(session, host, args, args.database)
+        return _run_guarded(
+            "--archive-only", lambda: _archive_and_verify(session, host, args, args.database)
+        )
 
     _step("1", "GET /databridge/v1/sql-instances")
     resp = session.get(f"{host}/databridge/v1/sql-instances", timeout=30)
@@ -285,7 +302,9 @@ def main() -> int:
         if len(targets) > 1:
             banner = f"Migrating {bak_path.name} -> database {database!r}"
             print(f"\n{'=' * len(banner)}\n{banner}\n{'=' * len(banner)}")
-        rc = _migrate_one(session, host, args, requests, bak_path, database)
+        rc = _run_guarded(
+            bak_path.name, lambda: _migrate_one(session, host, args, requests, bak_path, database)
+        )
         results.append((bak_path.name, database, rc))
         if rc != 0:
             print(f"    !! {bak_path.name} failed -- continuing to the next file, if any.")
@@ -542,9 +561,16 @@ def _verify_archive(session: object, host: str, args: argparse.Namespace, databa
     return 0
 
 def _poll(session: object, url: str) -> str | None:
+    import requests
+
     deadline = time.time() + POLL_TIMEOUT_SECONDS
     while time.time() < deadline:
-        response = session.get(url, timeout=30)
+        try:
+            response = session.get(url, timeout=30)
+        except requests.exceptions.RequestException as exc:
+            print(f"    ... connection error, retrying: {exc}")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
         print(f"    ... http status: {response.status_code}")
         if response.status_code == 404:
             return None
