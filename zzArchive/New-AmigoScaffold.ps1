@@ -205,6 +205,21 @@ foreach ($relative in $Files) {
         # -Force on New-Item truncates an existing file, which is exactly what
         # is wanted here and exactly what must not happen without -Force above.
         New-Item -ItemType File -Path $full -Force | Out-Null
+
+        # A package marker is published as one byte -- a single newline -- so a
+        # scaffolded zero-byte file differs from the manifest and check_copy.py
+        # reports it as EMPTY. That reading is correct by its own rules and
+        # useless in practice: EMPTY is meant to say "created but never pasted",
+        # and for an __init__.py that is already its finished state. Writing the
+        # newline here makes a correctly scaffolded tree verify clean, so the
+        # EMPTY column keeps meaning what it says.
+        #
+        # Only the empty markers. Any __init__.py with real content in it --
+        # migration_hub/__init__.py is 5 lines -- must still be pasted, and
+        # seeding it here would hide that behind a one-byte file.
+        if ($relative -match '__init__\.py$') {
+            [System.IO.File]::WriteAllText($full, "`n", (New-Object System.Text.UTF8Encoding $false))
+        }
     }
     $label = if ($exists) { 'trunc ' } else { 'create' }
     Write-Host ("  {0} {1}" -f $label, $relative)
