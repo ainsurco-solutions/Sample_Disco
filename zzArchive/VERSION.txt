@@ -1,3 +1,3 @@
-source commit : 874817557ef6b4288510f8d8709d9ec7fea2ca7d
-               docs: a copy-paste command sheet for the client VM (TASK-0071)
-files         : 71
+source commit : 8c6a0ef2e30360bc3acfa9f8e924d34e9c14107d
+               feat: a double-clickable registry backup (TASK-0071)
+files         : 73
