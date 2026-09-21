@@ -117,6 +117,67 @@ not accidentally live. Resume OneDrive sync.
 
 
 -----------------------------------------------------------------------
+MEASURE THE RI ESTATE -- size distribution from .BAK files
+-----------------------------------------------------------------------
+Unrelated to a failing run. This is a measurement worth taking while the
+share is readable, and it does not need AMIGO at all.
+
+WHY. RSK-0006 records that the Direct server was measured and the RI
+server was not: RI's ~24 TB across 5,848 databases is a STATED WORKING
+ASSUMPTION that it follows Direct's distribution, not an observation.
+The risk's own wording is that the residual concern is "shape, not size"
+-- if RI is flatter than Direct the total holds but the batch model
+changes -- and it names one sys.master_files query as the resolution,
+"whenever the properties permission lands". That permission was requested
+2026-09-04 and is still pending.
+
+\\sriskpd0001 IS the RI server, and this account can now read its backup
+share. .BAK sizes are a proxy for database size that needs no permission
+at all, and TASK-0020's own criteria already call .BAK size "arguably the
+better measure" for ranking the heavy lift.
+
+--- the listing -------------------------------------------------------
+Run from anywhere. Point it at the widest folder this account can read,
+not just the POC subfolder -- adjust the path if the share root differs.
+
+  Get-ChildItem "\\sriskpd0001\Backup" -Filter *.bak -Recurse -ErrorAction SilentlyContinue |
+    Select-Object @{n='GB';e={[math]::Round($_.Length/1GB,3)}}, Name, LastWriteTime |
+    Sort-Object GB -Descending |
+    Export-Csv -NoTypeInformation -Encoding UTF8 "$HOME\ri-bak-sizes.csv"
+
+Then the headline numbers:
+
+  $f = Import-Csv "$HOME\ri-bak-sizes.csv"
+  "files: $($f.Count)"
+  "total TB: $([math]::Round((($f | Measure-Object GB -Sum).Sum / 1024), 2))"
+  "over 90 GB : $(($f | Where-Object { [double]$_.GB -ge 90 }).Count)"
+  "over 200 GB: $(($f | Where-Object { [double]$_.GB -ge 200 }).Count)"
+  "over 500 GB: $(($f | Where-Object { [double]$_.GB -ge 500 }).Count)"
+  $f | Select-Object -First 20 | Format-Table -AutoSize
+
+--- what the numbers mean ----------------------------------------------
+Direct, measured: 55 databases between 90 GB and 952 GB -- 0.7% of the
+count carrying 32.5% of the volume. The RI assumption is ~2.0% of count
+carrying its volume, so roughly 115 heavy databases.
+
+  RI close to that shape      -> the assumption holds, RSK-0006 narrows
+  RI much flatter             -> the total may hold, but the batch model
+                                 changes: fewer outsized files, more
+                                 mid-sized ones to schedule
+  RI much steeper             -> more databases above the 200 GB working
+                                 ceiling than the plan plans for
+
+--- read it as a proxy, not a measurement ------------------------------
+A .BAK is not its database. Backup compression makes it smaller, and by
+how much depends on the data. Treat the RANKING as reliable and the
+ABSOLUTE figures as a lower bound -- enough to pick the heavy-lift
+candidates and to test the shape assumption, and not a substitute for
+sys.master_files when that permission lands.
+
+Send the CSV back rather than a screenshot; the distribution matters more
+than the top few rows.
+
+-----------------------------------------------------------------------
 WHY DID A FILE FAIL? -- reading last_error
 -----------------------------------------------------------------------
 ABANDONED means the error was judged NON-RETRYABLE, or attempts ran out.
