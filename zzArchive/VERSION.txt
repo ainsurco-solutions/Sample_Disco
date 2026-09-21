@@ -1,3 +1,7 @@
-source commit : 7e9d4c53248dfd339ffb81ef00a5bd0e2fc3dc9c
-               docs: MB thresholds and a server check before the distribution is read (TASK-0020, RSK-0006)
+source commit : 593f60a2942ae9d272a183722f2577b0cf32c105
+               docs: record the 2026-09-21 Reconcile session (TASK-0055)
 files         : 75
+
+WARNING: published from a DIRTY working tree. This copy does not
+         correspond to any commit. Re-publish from a clean checkout
+         before mirroring it to SharePoint.

@@ -337,3 +337,87 @@ python scripts\check_copy.py --all
 --all includes config-class files, which the default run skips. On this
 staged transfer, files not yet copied show as EMPTY and that is
 expected. What matters is that nothing you DID copy shows as DIFFER.
+
+-----------------------------------------------------------------------
+RUNNING THE AMIGO SCREENS (Streamlit UI)
+-----------------------------------------------------------------------
+This is the review UI for the Migration Hub itself -- batches, files and
+their states. It is NOT the Reconcile tool, which is a separate app in
+its own folder.
+
+COPY TWO FILES
+--------------
+The UI needs 27 files to import, and 25 of them are already on the VM
+from the CLI transfer. Only these two are new:
+
+  src\migration_hub\ui\__init__.py        (empty package marker)
+  src\migration_hub\ui\app.py
+
+Create the folder first if it is not there:
+
+  mkdir src\migration_hub\ui
+
+__init__.py must exist and contain exactly one newline -- an empty file
+of 0 bytes will fail check_copy. If you created it with the scaffold it
+is already correct.
+
+NOTHING ELSE TO INSTALL
+-----------------------
+streamlit, sqlalchemy and python-dotenv all came in with
+requirements.txt, so the environment is already complete. Confirm with:
+
+  python -c "import streamlit, sqlalchemy, dotenv; print('ok')"
+
+RUN IT
+------
+From the REPOSITORY ROOT, with the venv active:
+
+  python -m streamlit run src\migration_hub\ui\app.py
+
+Then open the URL it prints (usually http://localhost:8501).
+
+RUN IT FROM THE ROOT -- THIS MATTERS
+------------------------------------
+The app reads its configuration from a RELATIVE path, Path("config"),
+and picks up .env by searching upward from the working directory. Start
+it from anywhere else and it will either fail to find config\prod.json
+or -- worse -- find a different .env and point at the wrong registry.
+That second failure is silent: the screens come up looking fine and
+show the wrong database.
+
+If the top of the screen does not show a red PROD badge, stop and check
+where you launched it from.
+
+WHAT YOU SHOULD SEE
+-------------------
+  - a red PROD badge in the header (prod is the only environment on
+    this VM), and a dry-run badge if "dry_run": true is still set in
+    config\prod.json
+  - the batches in the registry, with each file's state
+  - no sidebar -- every control is in the header line
+
+If the registry is empty the screens will be too. That is correct, not
+a fault: the UI reads the same registry the CLI writes, so run a
+migration-hub command first if you want rows to look at.
+
+LOOKING IS SAFE. CLICKING IS NOT.
+---------------------------------
+Opening the UI does not move any data -- it reads the registry and
+shows it. Scrolling, filtering and opening a batch are all read-only.
+
+The action buttons are a different matter. Add batch, Resume, Pause and
+Retry call the real pipeline operations directly (stage_batch,
+start_run_subprocesses, retry_files). The app states this itself, in
+red, at the top of the screen on this VM:
+
+    "Production -- every action here is real."
+
+Whether dry_run stops an upload is decided further down in the
+pipeline, not by this screen, so do not treat the Dry run badge as a
+guard on the buttons. For a review of the SCREENS, look and do not
+click.
+
+STOPPING IT
+-----------
+Ctrl+C in the terminal. Closing the browser tab does not stop the
+server.
