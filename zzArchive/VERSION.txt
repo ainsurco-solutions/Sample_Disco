@@ -1,13 +1,3 @@
-AMIGO published runtime -- generated, do not edit here.
-
-source commit : 7b7087927b479a0a0f8c0e8daa44d11f1ffebda1
-               fix: publish a README, so pip install -e . works on a client VM (TASK-0071)
+source commit : 0b5a81e49cbcdb350709b327a1761cc207353ba4
+               fix: SessionStart hook must match every session and exit zero
 files         : 70
-
-WARNING: published from a DIRTY working tree. This copy does not
-         correspond to any commit. Re-publish from a clean checkout
-         before mirroring it to SharePoint.
-
-Master is the AML-MigHub repo. Fixes made in this copy are lost on the
-next publish -- and made blind, since the explanatory comments are
-stripped. See scripts/publish/PUBLISHING.md.
