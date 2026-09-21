@@ -785,13 +785,15 @@ def render_step(step: Step) -> None:
     can_fetch = step.kind in ("target", "inventory")
     api_col = card if can_fetch else None
 
-    with card:
-        uploaded = st.file_uploader(
-            step.label,
-            type=["csv"],
-            key=f"upload_{step.state_rows}",
-            label_visibility="collapsed",
-        )
+    uploaded = None
+    if step.state_rows not in ("target_rows", "vault_rows"):
+        with card:
+            uploaded = st.file_uploader(
+                step.label,
+                type=["csv"],
+                key=f"upload_{step.state_rows}",
+                label_visibility="collapsed",
+            )
 
     if api_col is not None and step.kind == "inventory":
         with api_col:
@@ -1044,11 +1046,6 @@ with st.sidebar:
     st.title("\U0001F50E Reconcile")
     st.caption("Did every in-scope database reach Data Vault?")
 
-    for step in STEPS:
-        render_step(step)
-
-    st.divider()
-
     if st.button(
         "\u21bb  Refresh all",
         key="refresh_all",
@@ -1140,6 +1137,12 @@ with st.sidebar:
         )
 
     st.divider()
+
+    for step in STEPS:
+        render_step(step)
+
+    st.divider()
+    st.divider()
     run_count = len(store.runs())
     if SQL.any_configured:
         st.caption(
@@ -1210,9 +1213,10 @@ result: Reconciliation | None = st.session_state.result
 
 if result is None:
     st.info(
-        "Upload the **Source (On Prem)** inventory and the **Data Bridge** list in "
-        "the sidebar, then press **Reconcile**. Add the **Data Vault** list to "
-        "check archiving too."
+        "Press **Refresh all** in the sidebar to fetch the Source inventory, "
+        "Data Bridge and Data Vault, then **Run reconciliation**. Source can "
+        "also be uploaded as a CSV if the servers are unreachable from here, "
+        "and the optional **Scope** list says which databases were wanted."
     )
     past_runs = store.runs()
     if past_runs:
