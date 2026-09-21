@@ -1,8 +1,9 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 70f6a4d4faa286e786e8f3820d08aebf9fe584d2
+# source commit: 7b7087927b479a0a0f8c0e8daa44d11f1ffebda1
 # kind	size	lines	sha256	path
 config	2772	56	7187526dd44f5a44fad66acc8813db4c890dad23efe0f0ee09dd6bc59bb4104f	.env.example
 config	3040	102	efb56679a41dbeb97eecaefced24c856bd0e6730921685b651c0d05e78388691	.streamlit/config.toml
+config	816	16	e1a4727b9f4f905c29fff7598521a80de6c3c1a1346e3a06098589701550790c	README.md
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
 config	1527	44	b1e370386c619db3280e3c98275248786240cc8a82acfdf3fa50c91e9ddc811c	config/dev.example.json
 code	2947	62	f0524905acfcdd062608923c9101572ee7ec597b88bd6696e85c90985ec9f6ea	migrations/README.md

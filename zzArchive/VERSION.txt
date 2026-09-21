@@ -1,8 +1,12 @@
 AMIGO published runtime -- generated, do not edit here.
 
-source commit : 70f6a4d4faa286e786e8f3820d08aebf9fe584d2
-               docs: a step-by-step code-transfer process for the devs (TASK-0067, TASK-0071)
-files         : 69
+source commit : 7b7087927b479a0a0f8c0e8daa44d11f1ffebda1
+               fix: publish a README, so pip install -e . works on a client VM (TASK-0071)
+files         : 70
+
+WARNING: published from a DIRTY working tree. This copy does not
+         correspond to any commit. Re-publish from a clean checkout
+         before mirroring it to SharePoint.
 
 Master is the AML-MigHub repo. Fixes made in this copy are lost on the
 next publish -- and made blind, since the explanatory comments are
