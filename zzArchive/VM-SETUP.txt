@@ -117,65 +117,74 @@ not accidentally live. Resume OneDrive sync.
 
 
 -----------------------------------------------------------------------
-MEASURE THE RI ESTATE -- size distribution from .BAK files
+MEASURE THE RI ESTATE -- distribution, from the sizes already in Excel
 -----------------------------------------------------------------------
-Unrelated to a failing run. This is a measurement worth taking while the
-share is readable, and it does not need AMIGO at all.
+Nothing to do with a failing run. This closes a standing gap in RSK-0006
+and needs no permission and no AMIGO.
 
-WHY. RSK-0006 records that the Direct server was measured and the RI
-server was not: RI's ~24 TB across 5,848 databases is a STATED WORKING
-ASSUMPTION that it follows Direct's distribution, not an observation.
-The risk's own wording is that the residual concern is "shape, not size"
--- if RI is flatter than Direct the total holds but the batch model
-changes -- and it names one sys.master_files query as the resolution,
-"whenever the properties permission lands". That permission was requested
-2026-09-04 and is still pending.
+WHY. The Direct server was measured; the RI server was not. RI's ~24 TB
+across 5,848 databases is a STATED WORKING ASSUMPTION that it follows
+Direct's distribution, not an observation. RSK-0006's own wording is that
+the residual concern is "shape, not size" -- if RI is flatter than Direct
+the total holds but the batch model changes -- and it names a
+sys.master_files query as the resolution "whenever the properties
+permission lands". Requested 2026-09-04, still pending.
 
-\\sriskpd0001 IS the RI server, and this account can now read its backup
-share. .BAK sizes are a proxy for database size that needs no permission
-at all, and TASK-0020's own criteria already call .BAK size "arguably the
-better measure" for ranking the heavy lift.
+The sizes are already in a spreadsheet. Nine numbers settle it.
 
---- the listing -------------------------------------------------------
-Run from anywhere. Point it at the widest folder this account can read,
-not just the POC subfolder -- adjust the path if the share root differs.
+Sizes assumed in column B, rows 2 to 6000, in GIGABYTES. Adjust the
+range. If the column is in MB, either divide by 1024 first or replace
+each threshold with its MB value (90 -> 92160, 200 -> 204800,
+500 -> 512000).
 
-  Get-ChildItem "\\sriskpd0001\Backup" -Filter *.bak -Recurse -ErrorAction SilentlyContinue |
-    Select-Object @{n='GB';e={[math]::Round($_.Length/1GB,3)}}, Name, LastWriteTime |
-    Sort-Object GB -Descending |
-    Export-Csv -NoTypeInformation -Encoding UTF8 "$HOME\ri-bak-sizes.csv"
+--- the two numbers that decide it ------------------------------------
+Direct, measured: 0.7% of the count carries 32.5% of the volume. The RI
+assumption is ~2.0% of count. These two say whether that holds.
 
-Then the headline numbers:
+  =ROUND(100*COUNTIFS(B2:B6000,">=90")/COUNT(B2:B6000),2)
+  =ROUND(100*SUMIFS(B2:B6000,B2:B6000,">=90")/SUM(B2:B6000),1)
 
-  $f = Import-Csv "$HOME\ri-bak-sizes.csv"
-  "files: $($f.Count)"
-  "total TB: $([math]::Round((($f | Measure-Object GB -Sum).Sum / 1024), 2))"
-  "over 90 GB : $(($f | Where-Object { [double]$_.GB -ge 90 }).Count)"
-  "over 200 GB: $(($f | Where-Object { [double]$_.GB -ge 200 }).Count)"
-  "over 500 GB: $(($f | Where-Object { [double]$_.GB -ge 500 }).Count)"
-  $f | Select-Object -First 20 | Format-Table -AutoSize
+--- totals -------------------------------------------------------------
+  =COUNT(B2:B6000)
+  =ROUND(SUM(B2:B6000)/1024,2)
+  =ROUND(MAX(B2:B6000),2)
 
---- what the numbers mean ----------------------------------------------
-Direct, measured: 55 databases between 90 GB and 952 GB -- 0.7% of the
-count carrying 32.5% of the volume. The RI assumption is ~2.0% of count
-carrying its volume, so roughly 115 heavy databases.
+--- the shape, in seven buckets ---------------------------------------
+  =COUNTIFS(B2:B6000,"<1")
+  =COUNTIFS(B2:B6000,">=1",B2:B6000,"<10")
+  =COUNTIFS(B2:B6000,">=10",B2:B6000,"<50")
+  =COUNTIFS(B2:B6000,">=50",B2:B6000,"<90")
+  =COUNTIFS(B2:B6000,">=90",B2:B6000,"<200")
+  =COUNTIFS(B2:B6000,">=200",B2:B6000,"<500")
+  =COUNTIFS(B2:B6000,">=500")
 
-  RI close to that shape      -> the assumption holds, RSK-0006 narrows
-  RI much flatter             -> the total may hold, but the batch model
-                                 changes: fewer outsized files, more
-                                 mid-sized ones to schedule
-  RI much steeper             -> more databases above the 200 GB working
-                                 ceiling than the plan plans for
+The 90 / 200 / 500 boundaries are Direct's measured ones and the 200 GB
+working batch ceiling, so the two servers compare line for line.
 
---- read it as a proxy, not a measurement ------------------------------
-A .BAK is not its database. Backup compression makes it smaller, and by
-how much depends on the data. Treat the RANKING as reliable and the
-ABSOLUTE figures as a lower bound -- enough to pick the heavy-lift
-candidates and to test the shape assumption, and not a substitute for
-sys.master_files when that permission lands.
+--- the heavy-lift candidates -----------------------------------------
+TASK-0020 needs the largest few named, not just counted. Sort descending
+on B and screenshot the top 20 with their names, or:
 
-Send the CSV back rather than a screenshot; the distribution matters more
-than the top few rows.
+  =LARGE(B2:B6000,1)      through   =LARGE(B2:B6000,20)
+
+--- what each outcome means -------------------------------------------
+  close to 2% of count    -> the assumption holds and RSK-0006 narrows
+  much flatter            -> the total may hold, but the batch model
+                             changes: fewer outsized files, more
+                             mid-sized ones to schedule
+  much steeper            -> more databases above the 200 GB ceiling
+                             than the plan allows for
+
+--- one thing to confirm when you send them ---------------------------
+Whether column B is .BAK file sizes or actual database sizes. A .BAK is
+compressed by a data-dependent amount, so if these are backups the
+RANKING is reliable and the absolute figures are a LOWER BOUND. If they
+are real database sizes, this settles RSK-0006's RI half outright rather
+than narrowing it -- a materially different claim, and worth being sure
+which one is being made.
+
+RI only for now; the Direct server follows in about a week (2026-09-21),
+at which point the same nine formulas make the two directly comparable.
 
 -----------------------------------------------------------------------
 WHY DID A FILE FAIL? -- reading last_error
