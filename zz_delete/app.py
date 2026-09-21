@@ -277,6 +277,8 @@ st.markdown(
         border-radius:4px; height:2rem; display:flex; align-items:center;
       }
 
+      .fn-track-over { overflow:visible; }
+
       .fn-bar {
         position:absolute; inset:0 auto 0 0; border-radius:4px;
         background:rgba(128,128,128,.42);
@@ -287,6 +289,13 @@ st.markdown(
       .fn-seg-done { background:#2f6f4f; border-radius:4px 0 0 4px; }
       .fn-seg-transit { background:#d98324; }
       .fn-seg-only { border-radius:4px; }
+
+      .fn-seg-absent {
+        background:repeating-linear-gradient(
+          135deg, #b3261e, #b3261e 4px, #8f1d18 4px, #8f1d18 8px
+        );
+        border-radius:0 4px 4px 0;
+      }
       .fn-legend {
         display:flex; gap:.9rem; flex-wrap:wrap;
         font-size:.75rem; opacity:.75; margin:-.2rem 0 .8rem 8.25rem;
@@ -1747,6 +1756,10 @@ with report_tab:
     )
     bridge_transit = max(bridge_total - vault_reached, 0)
 
+    scope_absent = next(
+        (s.unreachable for s in stages if s.name == "In scope"), 0
+    )
+
     rows_html = []
     for stage in stages:
         pct = 100.0 * stage.count / widest
@@ -1788,10 +1801,20 @@ with report_tab:
         else:
             bar_html = f"<div class='{bar_class}' style='width:{pct:.1f}%'></div>"
 
+        track_class = "fn-track"
+        if stage.unreachable and widest:
+            over_pct = 100.0 * stage.unreachable / widest
+            track_class = "fn-track fn-track-over"
+            bar_html += (
+                f"<div class='fn-seg fn-seg-absent' style='left:{pct:.1f}%;"
+                f"width:{over_pct:.1f}%'"
+                f" title='{stage.unreachable} wanted but not on prem'></div>"
+            )
+
         rows_html.append(
             "<div class='fn-row'>"
             f"<div class='fn-stage'>{html.escape(stage.name)}</div>"
-            "<div class='fn-track'>"
+            f"<div class='{track_class}'>"
             f"{bar_html}"
             f"<div class='fn-value'>{stage.count}"
             f"<span class='fn-share'>{share}</span></div>"
@@ -1804,15 +1827,36 @@ with report_tab:
         f"<div class='fn'>{''.join(rows_html)}</div>", unsafe_allow_html=True
     )
 
+    keys = []
     if report_result.vault_checked and bridge_transit:
-        st.markdown(
-            "<div class='fn-legend'>"
+        keys.append(
             "<span><span class='fn-key' style='background:#2f6f4f'></span>"
             f"Archived in Data Vault ({vault_reached:,})</span>"
             "<span><span class='fn-key' style='background:#d98324'></span>"
             f"In transit on the bridge ({bridge_transit:,})</span>"
-            "</div>",
+        )
+    if scope_absent:
+        keys.append(
+            "<span><span class='fn-key' style='background:"
+            "repeating-linear-gradient(135deg,#b3261e,#b3261e 3px,"
+            "#8f1d18 3px,#8f1d18 6px)'></span>"
+            f"Wanted but not on prem ({scope_absent:,})</span>"
+        )
+    if keys:
+        st.markdown(
+            f"<div class='fn-legend'>{''.join(keys)}</div>",
             unsafe_allow_html=True,
+        )
+
+    if scope_absent:
+        st.caption(
+            f"**The percentages above are of the {scope_base:,} databases that "
+            f"exist on prem and were wanted.** The {scope_absent:,} on the "
+            "scope list with no on-prem database are shown as the red overhang "
+            "and left out of the base: nothing can flow from a database that "
+            "is not there, and counting them in would mean progress could "
+            "never read 100%. They are a data-quality question about the scope "
+            "list, not migration work outstanding."
         )
 
     funnel_frame = pd.DataFrame(

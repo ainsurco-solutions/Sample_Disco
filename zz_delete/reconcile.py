@@ -690,6 +690,8 @@ class FunnelStage:
     of_previous: int
     note: str = ""
 
+    unreachable: int = 0
+
     @property
     def lost(self) -> int:
         return max(self.of_previous - self.count, 0)
@@ -856,7 +858,13 @@ def funnel(reconciliation: Reconciliation) -> tuple[FunnelStage, ...]:
             inventory,
             "databases on the on-prem SQL servers",
         ),
-        FunnelStage("In scope", in_scope, inventory, scope_note),
+        FunnelStage(
+            "In scope",
+            in_scope,
+            inventory,
+            scope_note,
+            unreachable=not_in_inventory,
+        ),
         FunnelStage(
             "Data Bridge",
             bridge,
