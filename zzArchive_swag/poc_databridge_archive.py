@@ -54,7 +54,19 @@ def main() -> int:
         "archiving -- for a database already confirmed imported (e.g. via "
         "--check-job). Needs --instance and --database, not --bak. Still "
         "confirms the database is actually present on Data Bridge (step "
-        "6) before archiving it, as a safety check.",
+        "6) before archiving it, as a safety check. WRITES DATA: unlike "
+        "Data Bridge's import, Data Vault accepts duplicate archive names "
+        "-- running this again for an already-archived database creates a "
+        "second real archive rather than failing. Use --verify-only "
+        "instead if you only need to check the result.",
+    )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Read-only: run just step 9 (searchArchives) for --database "
+        "and exit. No archive call, no risk of a duplicate. Use this to "
+        "re-check verification (e.g. after a filter-syntax fix) without "
+        "re-running --archive-only.",
     )
     parser.add_argument(
         "--resource-group-id",
@@ -134,8 +146,23 @@ def main() -> int:
                 print("    -> not terminal yet, or an unrecognised status string. If the import is actually done, tell me the exact text above and I'll add it to the known-success/failure sets.")
         return 0
 
+    if args.verify_only:
+        if not args.database:
+            _fail("--database is required with --verify-only.")
+            return 1
+        api = load_settings()
+        if not api.has_key:
+            _fail("No MOODYS_API_KEY in .env -- copy .env.example and fill it in.")
+            return 1
+        if not api.host:
+            _fail("No RECONCILE_API_HOST in .env, e.g. https://api-euw1.rms.com")
+            return 1
+        session = requests.Session()
+        session.headers.update({"Authorization": api.api_key})
+        return _verify_archive(session, api.host.rstrip("/"), args)
+
     if not args.instance or not args.database:
-        _fail("--instance and --database are required unless using --check-job.")
+        _fail("--instance and --database are required unless using --check-job or --verify-only.")
         return 1
 
     bak_path: Path | None = None
@@ -398,10 +425,13 @@ def _archive_and_verify(session: object, host: str, args: argparse.Namespace) ->
         else:
             _ok(f"archive job terminal status: {archive_status}")
 
-    _step("9", f"GET /platform/admindata/v1/archives?filter=archiveName='{args.database}' (verify)")
+    return _verify_archive(session, host, args)
+
+def _verify_archive(session: object, host: str, args: argparse.Namespace) -> int:
+    _step("9", f'GET /platform/admindata/v1/archives?filter=archiveName="{args.database}" (verify)')
     resp = session.get(
         f"{host}/platform/admindata/v1/archives",
-        params={"filter": f"archiveName = '{args.database}'", "limit": 100, "offset": 0},
+        params={"filter": f'archiveName="{args.database}"', "limit": 100, "offset": 0},
         timeout=30,
     )
     print(f"    status: {resp.status_code}")
@@ -409,13 +439,26 @@ def _archive_and_verify(session: object, host: str, args: argparse.Namespace) ->
         _fail(resp.text[:300])
         return 1
     rows = resp.json()
-    _ok(f"{len(rows)} archive row(s) matching archiveName = {args.database!r}")
+    _ok(f"{len(rows)} archive row(s) matching archiveName == {args.database!r}")
     for row in rows:
         print(
             f"       archiveId={row.get('archiveId')} "
             f"archivedAt={row.get('archivedAt')} "
             f"expirationDate={row.get('expirationDate')} "
             f"sizeInMb={row.get('sizeInMb')}"
+        )
+    if not rows:
+        print(
+            "    No matching row found. The archive job reported success, "
+            "so either the name doesn't match exactly (check case/exact "
+            "spelling), or it hasn't propagated to this list yet."
+        )
+    if len(rows) > 1:
+        print(
+            "    More than one row -- Data Vault accepts duplicate archive "
+            "names by design (data-vault-archive-api-findings.md §5). If "
+            "you ran --archive-only more than once for this database, this "
+            "is exactly that, not a bug."
         )
 
     print("\nDone. Compare expirationDate above against the intended retention.")
