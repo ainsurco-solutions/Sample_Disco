@@ -149,15 +149,14 @@ def main() -> int:
         _ok(f"response is not JSON -- raw text: {resp.text[:500]!r}")
         _fail(
             "Cannot proceed automatically. If the text above is the presigned "
-            "URL itself, tell me and I'll change this to use resp.text directly "
-            "instead of resp.json()['mdfUri']."
+            "URL itself, tell me and I'll change this to use resp.text directly."
         )
         return 1
-    mdf_uri = body.get("mdfUri") if isinstance(body, dict) else None
+    mdf_uri = body.get("backupUri") or body.get("mdfUri") if isinstance(body, dict) else None
     if not mdf_uri:
         _fail(
-            f"'mdfUri' not in the response -- this tenant returns a different "
-            f"shape than the vendor tutorial documents. Full body: {body!r}"
+            f"neither 'backupUri' nor 'mdfUri' in the response -- this shape "
+            f"is not one we've seen before. Full body: {body!r}"
         )
         _fail(
             "Report the body above and I'll correct the field name in the "
@@ -165,7 +164,7 @@ def main() -> int:
             "'archiveName' vs 'exposureName' on the archives endpoint."
         )
         return 1
-    _ok("got presigned upload URL")
+    _ok(f"got presigned upload URL ({'backupUri' if body.get('backupUri') else 'mdfUri'})")
 
     _step("3", f"PUT {bak_path.name} to presigned URL ({size_mb:.1f} MB)")
     with bak_path.open("rb") as fh:
