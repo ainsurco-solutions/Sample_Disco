@@ -1,3 +1,3 @@
-source commit : 97862d2493bf28a696b3548e51014d7d07be6e93
-               fix: status shows why a file failed, since run tells you to look there (TASK-0071)
+source commit : 9ea4b8c59550ca38bc1549b03af862fe02e95153
+               fix: a closed S3 connection retries instead of abandoning on sight (TASK-0071)
 files         : 74

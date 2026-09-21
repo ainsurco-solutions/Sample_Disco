@@ -9,10 +9,19 @@ from urllib.parse import urlparse
 
 import boto3
 from boto3.s3.transfer import TransferConfig
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 from migration_hub.adapters.base import UploadTarget
-from migration_hub.adapters.irp.errors import UploadCredentialsExpiredError
+from migration_hub.adapters.irp.errors import (
+    UploadCredentialsExpiredError,
+    UploadTransientError,
+)
 
 _MB = 1024 * 1024
 _GB = 1024 * _MB
@@ -106,6 +115,16 @@ def upload_file(
 
     try:
         client.upload_file(str(source), bucket, key, Config=transfer_config, Callback=callback)
+    except (
+        ConnectionClosedError,
+        ConnectTimeoutError,
+        EndpointConnectionError,
+        ReadTimeoutError,
+    ) as exc:
+        raise UploadTransientError(
+            f"S3 PUT for {bucket}/{key} failed on the connection, not the "
+            f"request: {type(exc).__name__}: {exc}"
+        ) from exc
     except ClientError as exc:
         status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
         if status == 403:

@@ -156,6 +156,56 @@ ABANDONED files are requeued to STAGED by retry, the same as FAILED:
 migration-hub retry --batch SMOKE01
 
 -----------------------------------------------------------------------
+ConnectionClosedError ON THE S3 ENDPOINT -- is S3 reachable?
+-----------------------------------------------------------------------
+If last_error names an *.s3.amazonaws.com URL, the upload reached the
+point of sending bytes and the connection was closed underneath it. The
+Moody's API call before it SUCCEEDED -- the audit trail shows "recorded
+folder_id" -- so this is not credentials and not entitlement.
+
+THE API HOST AND S3 ARE DIFFERENT HOSTS. check_credentials.py only ever
+talks to api-euw1.rms.com, so it passes on a network that permits that
+host and drops AWS. A proxy or firewall rule written for "the Moody's
+API" does exactly this, and it fails at the upload step rather than at
+startup.
+
+--- 1. can this machine reach S3 at all? ------------------------------
+A 403 or 404 is GOOD -- it means the request arrived. A timeout, a reset
+or ConnectionClosedError is the block.
+
+python -c "import httpx; r=httpx.get('https://rms-tenants-pe-eu-west-1.s3.amazonaws.com', timeout=15); print('reached S3, HTTP', r.status_code)"
+
+--- 2. what proxy settings are actually in force? ---------------------
+python -c "import os; [print(k, '=', os.environ.get(k)) for k in ('HTTPS_PROXY','HTTP_PROXY','NO_PROXY')]"
+
+If HTTPS_PROXY is set, the rule behind it must permit BOTH hosts. If it
+is empty and the network requires a proxy, boto3 never had one -- set it
+in .env and re-run.
+
+--- 3. the same request boto3 makes ------------------------------------
+Closer to the real thing than a plain GET: same library, same signing,
+same endpoint. It will report the AWS error rather than a generic one.
+
+python -c "import boto3,botocore; c=boto3.client('s3', region_name='eu-west-1'); print(c.meta.endpoint_url)"
+
+--- What to tell the network team --------------------------------------
+Outbound HTTPS to *.s3.eu-west-1.amazonaws.com and
+rms-tenants-pe-eu-west-1.s3.amazonaws.com, from this VM. Region
+eu-west-1, confirmed from the credentials Moody's returns. Uploads are
+signed per request with short-lived STS credentials, so the destination
+cannot be narrowed to a fixed URL.
+
+--- Why the file went to ABANDONED rather than FAILED ------------------
+A closed connection is transient by nature, but it arrived as an
+unrecognised error type, and unrecognised means non-retryable -- so it
+skipped the retries it should have had. Worth knowing when reading the
+state: ABANDONED here does not mean "this file is unmigratable".
+
+Once the network path is open, requeue it:
+
+migration-hub retry --batch SMOKE01
+
+-----------------------------------------------------------------------
 IF A RUN FAILS PART WAY
 -----------------------------------------------------------------------
 migration-hub status --batch SMOKE01     where it stopped

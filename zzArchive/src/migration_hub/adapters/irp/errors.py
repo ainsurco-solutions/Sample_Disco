@@ -14,6 +14,9 @@ class RateLimitedError(IrpError, RetryableError):
         RuntimeError.__init__(self, message)
         self.retry_after = retry_after
 
+class UploadTransientError(IrpError, RetryableError):
+    pass
+
 class UploadCredentialsExpiredError(IrpError, RestageError):
     pass
 
