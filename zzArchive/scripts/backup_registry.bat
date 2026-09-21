@@ -69,9 +69,18 @@ rem --- in use. Reading it here instead of hardcoding registry.db also covers
 rem --- the deployments that point MIGRATION_HUB_DATABASE_URL elsewhere.
 pushd "%RELEASE_ROOT%"
 
-set "DEST=%~1"
-
-python "%~dp0_backup_registry.py" %DEST:"=%
+rem --- Pass the destination only when there is one. The obvious
+rem --- `%DEST:"=%` -- batch's strip-quotes syntax -- does NOT expand to
+rem --- nothing when DEST is empty: it leaves a literal `"=` on the command
+rem --- line, which Python then reads as a destination and creates a folder
+rem --- named `=` next to the registry. Observed on the client VM
+rem --- (2026-09-21). %~1 has its surrounding quotes already stripped, so
+rem --- re-quoting it here is all that is needed for a path with spaces.
+if "%~1"=="" (
+    python "%~dp0_backup_registry.py"
+) else (
+    python "%~dp0_backup_registry.py" "%~1"
+)
 set "RC=%ERRORLEVEL%"
 
 popd
