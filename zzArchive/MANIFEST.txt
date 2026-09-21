@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 35819385031d5f6c7a572f95cbea63e5a9762cad
+# source commit: 8fe321aaa51fff528fd402208f49da3a86d0b596
 # kind	size	lines	sha256	path
 config	2772	56	7187526dd44f5a44fad66acc8813db4c890dad23efe0f0ee09dd6bc59bb4104f	.env.example
 config	3040	102	efb56679a41dbeb97eecaefced24c856bd0e6730921685b651c0d05e78388691	.streamlit/config.toml
@@ -14,7 +14,7 @@ code	7497	152	a320201cf996acaa2fca251200f7213bef584ea604daeaa32bde8dec2a840031	m
 config	2216	77	c16ba42f6b53208578ca5399d018519c7d36bda9a0221517d8bb61ca10fdc13c	pyproject.toml
 code	4800	95	acae32b0c5b58a2509dd23f9b2c6a25957e12c2ccacae6e3dbf60012d23bb4ef	requirements.txt
 code	9151	292	d425f9047ff556b326ceba8e8aca5b150ce83f52fcfba01de85059489680d326	scripts/amigo.bat
-code	5459	167	1bc1c72811a396fb9766102e3badb76f0e8254529e5ea213d0792e86b04db9fb	scripts/check_copy.py
+code	5559	168	78115401fa879c590017fed857e6dc4855d6692a9bd41cc5c2611d0f45c00c51	scripts/check_copy.py
 code	8515	233	1cf068e7d6c79ced980c438c4be68a58ffa7b8f50786ae3dea5f60762fe020d9	scripts/check_credentials.py
 code	10008	243	03e6e67336dd9b19fdaf96a0f0093d5097d97ae9d1402f7fa76bff1e51ec4669	New-AmigoScaffold.ps1
 code	69	5	cd5dccf0e6a1e627c496abd88a7882a54316b7b0ae08e2f82bb87df97b8f993f	src/migration_hub/__init__.py

@@ -51,7 +51,8 @@ def _digest(path: Path) -> tuple[str, int, int]:
     raw = path.read_bytes()
     normalised = raw.replace(b"\r\n", b"\n")
     text = normalised.decode("utf-8", errors="replace")
-    return hashlib.sha256(normalised).hexdigest(), len(normalised), len(text.splitlines())
+    canonical = normalised if (not normalised or normalised.endswith(b"\n")) else normalised + b"\n"
+    return hashlib.sha256(canonical).hexdigest(), len(normalised), len(text.splitlines())
 
 def main() -> int:
     parser = argparse.ArgumentParser(
