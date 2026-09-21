@@ -487,6 +487,16 @@ def render_outcome_cards(outcomes: list[Outcome], counts: dict[Outcome, int]) ->
         f"<div class='rc-row'>{''.join(cards)}</div>", unsafe_allow_html=True
     )
 
+def rows_to_frame(fetched: object) -> pd.DataFrame:
+    if isinstance(fetched, pd.DataFrame):
+        return fetched
+    return pd.DataFrame(
+        [
+            {k: v for k, v in row.data.items() if k != "_key_column"}
+            for row in (fetched or [])
+        ]
+    ).fillna("")
+
 def _first_column(frame: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
     def _key(name: str) -> str:
         return name.strip().casefold().replace(" ", "").replace("_", "")
@@ -1879,9 +1889,9 @@ with report_tab:
     st.divider()
     st.subheader("Data Vault activity")
 
-    vault_activity = st.session_state.get("vault_rows")
+    vault_activity = rows_to_frame(st.session_state.get("vault_rows"))
     _size_col = None
-    if vault_activity is not None and len(vault_activity):
+    if len(vault_activity):
         _size_col = next(
             (
                 c
@@ -1891,7 +1901,7 @@ with report_tab:
             None,
         )
 
-    if vault_activity is None or not len(vault_activity):
+    if not len(vault_activity):
         st.caption(
             "Load the Data Vault archive list to see activity. Nothing here "
             "needs a reconciliation run -- it reads the archive rows directly."
@@ -2048,7 +2058,7 @@ with report_tab:
                 use_container_width=True,
             )
 
-    if vault_activity is not None and len(vault_activity) and _size_col is not None:
+    if len(vault_activity) and _size_col is not None:
         st.divider()
         st.subheader("Data Vault size distribution")
 
