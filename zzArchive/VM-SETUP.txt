@@ -1,5 +1,5 @@
-AMIGO -- running a file through, copy-paste commands
-====================================================
+AMIGO on the POC VM -- copy-paste commands
+==========================================
 
 For the MS Amlin POC VM. Setup is done: the environment is configured,
 the schema is applied and check_credentials.py passes against the live
@@ -12,10 +12,203 @@ yours differs.
 Each step says what to expect. If a step does not produce it, stop there
 rather than running the next one.
 
+THIS FILE HAS TWO HALVES. Everything under CURRENT is something to run.
+Everything under HISTORIC is a fault that has already been diagnosed,
+kept for the record and for the next similar symptom -- do not work
+through it looking for something to do.
+
+
+=======================================================================
+CURRENT -- WHAT TO RUN NOW
+=======================================================================
+The AMIGO screens run today. The estate measurement runs as soon as the
+RI server's sizes arrive. The two upload steps are written and ready but
+BLOCKED -- see the note on STEP 1.
+
+
+-----------------------------------------------------------------------
+RUNNING THE AMIGO SCREENS (Streamlit UI)
+-----------------------------------------------------------------------
+This is the review UI for the Migration Hub itself -- batches, files and
+their states. It is NOT the Reconcile tool, which is a separate app in
+its own folder.
+
+COPY TWO FILES
+--------------
+The UI needs 27 files to import, and 25 of them are already on the VM
+from the CLI transfer. Only these two are new:
+
+  src\migration_hub\ui\__init__.py        (empty package marker)
+  src\migration_hub\ui\app.py
+
+Create the folder first if it is not there:
+
+  mkdir src\migration_hub\ui
+
+__init__.py must exist and contain exactly one newline -- an empty file
+of 0 bytes will fail check_copy. If you created it with the scaffold it
+is already correct.
+
+NOTHING ELSE TO INSTALL
+-----------------------
+streamlit, sqlalchemy and python-dotenv all came in with
+requirements.txt, so the environment is already complete. Confirm with:
+
+  python -c "import streamlit, sqlalchemy, dotenv; print('ok')"
+
+RUN IT
+------
+From the REPOSITORY ROOT, with the venv active:
+
+  python -m streamlit run src\migration_hub\ui\app.py
+
+Then open the URL it prints (usually http://localhost:8501).
+
+RUN IT FROM THE ROOT -- THIS MATTERS
+------------------------------------
+The app reads its configuration from a RELATIVE path, Path("config"),
+and picks up .env by searching upward from the working directory. Start
+it from anywhere else and it will either fail to find config\prod.json
+or -- worse -- find a different .env and point at the wrong registry.
+That second failure is silent: the screens come up looking fine and
+show the wrong database.
+
+If the top of the screen does not show a red PROD badge, stop and check
+where you launched it from.
+
+WHAT YOU SHOULD SEE
+-------------------
+  - a red PROD badge in the header (prod is the only environment on
+    this VM), and a dry-run badge if "dry_run": true is still set in
+    config\prod.json
+  - the batches in the registry, with each file's state
+  - no sidebar -- every control is in the header line
+
+If the registry is empty the screens will be too. That is correct, not
+a fault: the UI reads the same registry the CLI writes, so run a
+migration-hub command first if you want rows to look at.
+
+LOOKING IS SAFE. CLICKING IS NOT.
+---------------------------------
+Opening the UI does not move any data -- it reads the registry and
+shows it. Scrolling, filtering and opening a batch are all read-only.
+
+The action buttons are a different matter. Add batch, Resume, Pause and
+Retry call the real pipeline operations directly (stage_batch,
+start_run_subprocesses, retry_files). The app states this itself, in
+red, at the top of the screen on this VM:
+
+    "Production -- every action here is real."
+
+Whether dry_run stops an upload is decided further down in the
+pipeline, not by this screen, so do not treat the Dry run badge as a
+guard on the buttons. For a review of the SCREENS, look and do not
+click.
+
+STOPPING IT
+-----------
+Ctrl+C in the terminal. Closing the browser tab does not stop the
+server.
+
+
+-----------------------------------------------------------------------
+MEASURE THE ESTATE -- distribution, from the sizes already in Excel
+-----------------------------------------------------------------------
+Nothing to do with a failing run. This closes a standing gap in RSK-0006
+and needs no permission and no AMIGO.
+
+WHY. The Direct server was measured; the RI server was not. RI's ~24 TB
+across 5,848 databases is a STATED WORKING ASSUMPTION that it follows
+Direct's distribution, not an observation. RSK-0006's own wording is that
+the residual concern is "shape, not size" -- if RI is flatter than Direct
+the total holds but the batch model changes.
+
+--- FIRST: which server is this, and what unit? -----------------------
+Both were wrong on the first attempt (2026-09-21), so check them before
+reading anything into the numbers.
+
+UNIT. The first run gave MAX = 975,415.1 and SUM/1024 = 22,408. As GB
+those would be a 975 TB database and a 22,000 TB estate. The column was
+MEGABYTES. Every formula below is written for MB; if yours is in GB,
+divide each threshold by 1024 (92160 -> 90, and so on).
+
+  Sanity check: MAX/1024 should read as a plausible GB figure. The
+  largest database in this estate is 952.55 GB.
+
+SERVER. That same MAX -- 975,415 MB = 952.6 GB -- is RSK-0006's recorded
+largest on DIRECT, so the first sheet was Direct data, not RI. If the
+sheet has a server column, filter it:
+
+  SRISKPD0101 = Direct (already measured)
+  SRISKPD0001 = RI     (the gap worth closing)
+
+  Cross-check against RSK-0006's Direct figures: 55 databases >= 90 GB,
+  17 above 200 GB, 4 above 500 GB, 11.4 TB total. If the >=512000 bucket
+  below returns 4, this is Direct. Materially more, and it is both
+  servers combined or something else again -- say which before anyone
+  records it.
+
+--- the two numbers that decide it (MB) -------------------------------
+Direct, measured: 0.7% of the count carries 32.5% of the volume. The RI
+assumption is ~2.0% of count. These two say whether that holds.
+
+  =ROUND(100*COUNTIFS(B2:B6000,">=92160")/COUNT(B2:B6000),2)
+  =ROUND(100*SUMIFS(B2:B6000,B2:B6000,">=92160")/SUM(B2:B6000),1)
+
+--- totals (MB) --------------------------------------------------------
+  =COUNT(B2:B6000)
+  =ROUND(SUM(B2:B6000)/1048576,2)        TB
+  =ROUND(MAX(B2:B6000)/1024,2)           GB
+
+--- the shape, in seven buckets (MB) ----------------------------------
+  =COUNTIFS(B2:B6000,"<1024")
+  =COUNTIFS(B2:B6000,">=1024",B2:B6000,"<10240")
+  =COUNTIFS(B2:B6000,">=10240",B2:B6000,"<51200")
+  =COUNTIFS(B2:B6000,">=51200",B2:B6000,"<92160")
+  =COUNTIFS(B2:B6000,">=92160",B2:B6000,"<204800")
+  =COUNTIFS(B2:B6000,">=204800",B2:B6000,"<512000")
+  =COUNTIFS(B2:B6000,">=512000")
+
+The 90 / 200 / 500 GB boundaries (92160 / 204800 / 512000 MB) are
+Direct's measured ones and the 200 GB working batch ceiling, so the two
+servers compare line for line.
+
+--- the heavy-lift candidates -----------------------------------------
+TASK-0020 needs the largest few NAMED, not just counted. Sort descending
+on B and screenshot the top 20 with their names, or:
+
+  =ROUND(LARGE(B2:B6000,1)/1024,2)    through   =ROUND(LARGE(B2:B6000,20)/1024,2)
+
+--- what each outcome means -------------------------------------------
+  RI close to 2% of count -> the assumption holds and RSK-0006 narrows
+  RI much flatter         -> the total may hold, but the batch model
+                             changes: fewer outsized files, more
+                             mid-sized ones to schedule
+  RI much steeper         -> more databases above the 200 GB ceiling
+                             than the plan allows for
+
+--- one thing to confirm when you send them ---------------------------
+Whether column B is .BAK file sizes or actual database sizes. A .BAK is
+compressed by a data-dependent amount, so if these are backups the
+RANKING is reliable and the absolute figures are a LOWER BOUND. If they
+are real database sizes, this settles RSK-0006's half outright rather
+than narrowing it -- a materially different claim, and worth being sure
+which one is being made.
+
+Send the counts AND the server and unit answers together. A distribution
+attributed to the wrong server would corrupt a risk the plan depends on,
+and RSK-0006's Direct figures have already been corrected once.
+
 
 -----------------------------------------------------------------------
 STEP 1 -- one file, dry run, no vendor calls
 -----------------------------------------------------------------------
+NOTE (2026-09-21): THIS CANNOT COMPLETE YET. `plan`, `validate` and
+`stage` work on real data. The upload fails, because cli.py still wires
+the superseded IrpAdapter -- TASK-0075, blocked on ADR-0009's review.
+Swagat expects to land the change by COB 2026-09-22. Run steps 1a-1d to
+see the pipeline work; 1e will not upload until then.
+
 Run these ONE AT A TIME and read each result before the next. Any batch
 id will do; SMOKE01 is used here so it is obvious later what it was for.
 
@@ -116,97 +309,28 @@ Set "dry_run": true again in config\prod.json, so the next command is
 not accidentally live. Resume OneDrive sync.
 
 
------------------------------------------------------------------------
-MEASURE THE ESTATE -- distribution, from the sizes already in Excel
------------------------------------------------------------------------
-Nothing to do with a failing run. This closes a standing gap in RSK-0006
-and needs no permission and no AMIGO.
+=======================================================================
+HISTORIC -- TROUBLESHOOTING ALREADY DONE
+=======================================================================
+Nothing below is a current task. These are the diagnostics written while
+chasing faults on this VM, kept because they record what was checked and
+what the answer turned out to be -- which is worth more than the commands
+themselves if a similar symptom comes back.
 
-WHY. The Direct server was measured; the RI server was not. RI's ~24 TB
-across 5,848 databases is a STATED WORKING ASSUMPTION that it follows
-Direct's distribution, not an observation. RSK-0006's own wording is that
-the residual concern is "shape, not size" -- if RI is flatter than Direct
-the total holds but the batch model changes.
+Read the verdict at the top of each one before running anything: in at
+least one case the investigation was sound and the conclusion it was
+heading towards was wrong.
 
---- FIRST: which server is this, and what unit? -----------------------
-Both were wrong on the first attempt (2026-09-21), so check them before
-reading anything into the numbers.
-
-UNIT. The first run gave MAX = 975,415.1 and SUM/1024 = 22,408. As GB
-those would be a 975 TB database and a 22,000 TB estate. The column was
-MEGABYTES. Every formula below is written for MB; if yours is in GB,
-divide each threshold by 1024 (92160 -> 90, and so on).
-
-  Sanity check: MAX/1024 should read as a plausible GB figure. The
-  largest database in this estate is 952.55 GB.
-
-SERVER. That same MAX -- 975,415 MB = 952.6 GB -- is RSK-0006's recorded
-largest on DIRECT, so the first sheet was Direct data, not RI. If the
-sheet has a server column, filter it:
-
-  SRISKPD0101 = Direct (already measured)
-  SRISKPD0001 = RI     (the gap worth closing)
-
-  Cross-check against RSK-0006's Direct figures: 55 databases >= 90 GB,
-  17 above 200 GB, 4 above 500 GB, 11.4 TB total. If the >=512000 bucket
-  below returns 4, this is Direct. Materially more, and it is both
-  servers combined or something else again -- say which before anyone
-  records it.
-
---- the two numbers that decide it (MB) -------------------------------
-Direct, measured: 0.7% of the count carries 32.5% of the volume. The RI
-assumption is ~2.0% of count. These two say whether that holds.
-
-  =ROUND(100*COUNTIFS(B2:B6000,">=92160")/COUNT(B2:B6000),2)
-  =ROUND(100*SUMIFS(B2:B6000,B2:B6000,">=92160")/SUM(B2:B6000),1)
-
---- totals (MB) --------------------------------------------------------
-  =COUNT(B2:B6000)
-  =ROUND(SUM(B2:B6000)/1048576,2)        TB
-  =ROUND(MAX(B2:B6000)/1024,2)           GB
-
---- the shape, in seven buckets (MB) ----------------------------------
-  =COUNTIFS(B2:B6000,"<1024")
-  =COUNTIFS(B2:B6000,">=1024",B2:B6000,"<10240")
-  =COUNTIFS(B2:B6000,">=10240",B2:B6000,"<51200")
-  =COUNTIFS(B2:B6000,">=51200",B2:B6000,"<92160")
-  =COUNTIFS(B2:B6000,">=92160",B2:B6000,"<204800")
-  =COUNTIFS(B2:B6000,">=204800",B2:B6000,"<512000")
-  =COUNTIFS(B2:B6000,">=512000")
-
-The 90 / 200 / 500 GB boundaries (92160 / 204800 / 512000 MB) are
-Direct's measured ones and the 200 GB working batch ceiling, so the two
-servers compare line for line.
-
---- the heavy-lift candidates -----------------------------------------
-TASK-0020 needs the largest few NAMED, not just counted. Sort descending
-on B and screenshot the top 20 with their names, or:
-
-  =ROUND(LARGE(B2:B6000,1)/1024,2)    through   =ROUND(LARGE(B2:B6000,20)/1024,2)
-
---- what each outcome means -------------------------------------------
-  RI close to 2% of count -> the assumption holds and RSK-0006 narrows
-  RI much flatter         -> the total may hold, but the batch model
-                             changes: fewer outsized files, more
-                             mid-sized ones to schedule
-  RI much steeper         -> more databases above the 200 GB ceiling
-                             than the plan allows for
-
---- one thing to confirm when you send them ---------------------------
-Whether column B is .BAK file sizes or actual database sizes. A .BAK is
-compressed by a data-dependent amount, so if these are backups the
-RANKING is reliable and the absolute figures are a LOWER BOUND. If they
-are real database sizes, this settles RSK-0006's half outright rather
-than narrowing it -- a materially different claim, and worth being sure
-which one is being made.
-
-Send the counts AND the server and unit answers together. A distribution
-attributed to the wrong server would corrupt a risk the plan depends on,
-and RSK-0006's Direct figures have already been corrected once.
 
 -----------------------------------------------------------------------
 WHY DID A FILE FAIL? -- reading last_error
 -----------------------------------------------------------------------
+VERDICT (2026-09-21): SOLVED -- and the answer was not in these commands.
+The file failed because cli.py wired the superseded `platform/import/v1`
+adapter, not because of anything about the file or its path. See ADR-0008
+and ADR-0009. These queries are still the right way to read last_error
+for a NEW failure, so they are kept.
+
 ABANDONED means the error was judged NON-RETRYABLE, or attempts ran out.
 On a first attempt it is the former: something about this file or its
 path, not a transient problem worth retrying.
@@ -246,6 +370,21 @@ migration-hub retry --batch SMOKE01
 -----------------------------------------------------------------------
 ConnectionClosedError ON THE S3 ENDPOINT -- is S3 reachable?
 -----------------------------------------------------------------------
+VERDICT (2026-09-21): S3 WAS NEVER BLOCKED. An afternoon went into this
+theory and it was wrong. The real cause was the superseded adapter
+(ADR-0008/0009), and Swagat's POC put a file through the same network
+without difficulty.
+
+What genuinely came out of it, and is worth keeping:
+  - CERTIFICATE_VERIFY_FAILED means TLS inspection, NOT a block. The
+    check below that reported it used plain httpx, which does not load
+    truststore the way AMIGO does. A failure here does not imply AMIGO
+    would fail.
+  - TLS inspection IS in force on this VM, truststore handles it, and no
+    proxy credentials are needed (access-request item 3.6, closed).
+
+Run these only if a NEW failure names an s3.amazonaws.com URL.
+
 If last_error names an *.s3.amazonaws.com URL, the upload reached the
 point of sending bytes and the connection was closed underneath it. The
 Moody's API call before it SUCCEEDED -- the audit trail shows "recorded
@@ -337,87 +476,3 @@ python scripts\check_copy.py --all
 --all includes config-class files, which the default run skips. On this
 staged transfer, files not yet copied show as EMPTY and that is
 expected. What matters is that nothing you DID copy shows as DIFFER.
-
------------------------------------------------------------------------
-RUNNING THE AMIGO SCREENS (Streamlit UI)
------------------------------------------------------------------------
-This is the review UI for the Migration Hub itself -- batches, files and
-their states. It is NOT the Reconcile tool, which is a separate app in
-its own folder.
-
-COPY TWO FILES
---------------
-The UI needs 27 files to import, and 25 of them are already on the VM
-from the CLI transfer. Only these two are new:
-
-  src\migration_hub\ui\__init__.py        (empty package marker)
-  src\migration_hub\ui\app.py
-
-Create the folder first if it is not there:
-
-  mkdir src\migration_hub\ui
-
-__init__.py must exist and contain exactly one newline -- an empty file
-of 0 bytes will fail check_copy. If you created it with the scaffold it
-is already correct.
-
-NOTHING ELSE TO INSTALL
------------------------
-streamlit, sqlalchemy and python-dotenv all came in with
-requirements.txt, so the environment is already complete. Confirm with:
-
-  python -c "import streamlit, sqlalchemy, dotenv; print('ok')"
-
-RUN IT
-------
-From the REPOSITORY ROOT, with the venv active:
-
-  python -m streamlit run src\migration_hub\ui\app.py
-
-Then open the URL it prints (usually http://localhost:8501).
-
-RUN IT FROM THE ROOT -- THIS MATTERS
-------------------------------------
-The app reads its configuration from a RELATIVE path, Path("config"),
-and picks up .env by searching upward from the working directory. Start
-it from anywhere else and it will either fail to find config\prod.json
-or -- worse -- find a different .env and point at the wrong registry.
-That second failure is silent: the screens come up looking fine and
-show the wrong database.
-
-If the top of the screen does not show a red PROD badge, stop and check
-where you launched it from.
-
-WHAT YOU SHOULD SEE
--------------------
-  - a red PROD badge in the header (prod is the only environment on
-    this VM), and a dry-run badge if "dry_run": true is still set in
-    config\prod.json
-  - the batches in the registry, with each file's state
-  - no sidebar -- every control is in the header line
-
-If the registry is empty the screens will be too. That is correct, not
-a fault: the UI reads the same registry the CLI writes, so run a
-migration-hub command first if you want rows to look at.
-
-LOOKING IS SAFE. CLICKING IS NOT.
----------------------------------
-Opening the UI does not move any data -- it reads the registry and
-shows it. Scrolling, filtering and opening a batch are all read-only.
-
-The action buttons are a different matter. Add batch, Resume, Pause and
-Retry call the real pipeline operations directly (stage_batch,
-start_run_subprocesses, retry_files). The app states this itself, in
-red, at the top of the screen on this VM:
-
-    "Production -- every action here is real."
-
-Whether dry_run stops an upload is decided further down in the
-pipeline, not by this screen, so do not treat the Dry run badge as a
-guard on the buttons. For a review of the SCREENS, look and do not
-click.
-
-STOPPING IT
------------
-Ctrl+C in the terminal. Closing the browser tab does not stop the
-server.

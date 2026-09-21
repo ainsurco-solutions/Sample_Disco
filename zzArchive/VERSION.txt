@@ -1,5 +1,5 @@
-source commit : 593f60a2942ae9d272a183722f2577b0cf32c105
-               docs: record the 2026-09-21 Reconcile session (TASK-0055)
+source commit : 994527a5c3b97432ceca2ee571efe7d7c9a226a6
+               docs: how to run the AMIGO screens on the client VM (TASK-0071)
 files         : 75
 
 WARNING: published from a DIRTY working tree. This copy does not
