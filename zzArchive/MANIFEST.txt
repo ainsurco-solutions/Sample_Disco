@@ -1,10 +1,10 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 57f46135523726e90fd8f0b6462a6aa739c3d7d0
+# source commit: 97862d2493bf28a696b3548e51014d7d07be6e93
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3040	102	efb56679a41dbeb97eecaefced24c856bd0e6730921685b651c0d05e78388691	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
-config	6117	143	e5fac0dc52b81f0e9ccb904b800d35934db33edc0aa087f266ce60bfcdc9d418	VM-SETUP.txt
+config	8282	182	459d0412d9b881b46e19bb0d3e9e798aa7cace49c03fa1ac8fddf1f62623b36a	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
 config	1527	44	b1e370386c619db3280e3c98275248786240cc8a82acfdf3fa50c91e9ddc811c	config/dev.example.json
 code	2947	62	f0524905acfcdd062608923c9101572ee7ec597b88bd6696e85c90985ec9f6ea	migrations/README.md
@@ -42,7 +42,7 @@ code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/mi
 code	2776	76	c9dee776331ee91937dceb86f46fce363fc0770e0aefb673bee21be81e2d6089	src/migration_hub/api/routers/batches.py
 code	4837	145	164991e08e3fd742dc1e1e668da946b994df1072772538ccfb34ac26575c9fb6	src/migration_hub/api/routers/files.py
 code	773	23	d404bc8cf372c3599022678125cafa3f7eb6dae87f1e0b5a062579c1d429b8c8	src/migration_hub/api/routers/health.py
-code	14373	394	57a0b982a29f9b4af5a631ceadd35fab5d081381b8c44ba4676ff5e039ef4349	src/migration_hub/cli.py
+code	14774	404	d73b8afea2d15876931134ff08b36eeb89d22c30c7aaa2b7afecd7e3a7c93673	src/migration_hub/cli.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/config/__init__.py
 code	3648	109	8a53306fab977798c5dde78978679f7f3ce7185382cae2d9147ca1d9feda5548	src/migration_hub/config/settings.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/consumers/__init__.py

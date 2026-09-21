@@ -117,6 +117,45 @@ not accidentally live. Resume OneDrive sync.
 
 
 -----------------------------------------------------------------------
+WHY DID A FILE FAIL? -- reading last_error
+-----------------------------------------------------------------------
+ABANDONED means the error was judged NON-RETRYABLE, or attempts ran out.
+On a first attempt it is the former: something about this file or its
+path, not a transient problem worth retrying.
+
+`status` prints only the state histogram, so the reason has to come from
+the registry. Both of these are read-only.
+
+--- every file, with its error ----------------------------------------
+python -c "import sqlite3; c=sqlite3.connect('registry.db'); [print(r) for r in c.execute('SELECT file_id, source_database, state, attempts, last_error FROM migration_file')]"
+
+--- the full audit trail, newest last ----------------------------------
+Every transition, who made it and why. This is what says WHICH STEP
+failed, which last_error alone does not.
+
+python -c "import sqlite3; c=sqlite3.connect('registry.db'); [print(r) for r in c.execute('SELECT event_id, file_id, from_state, to_state, actor, detail FROM migration_event ORDER BY event_id')]"
+
+--- what the source row actually recorded ------------------------------
+plan captures size and last-write time at discovery and compares them
+after staging, because RatCat writes to the share independently of
+AMIGO. A file still being written when it was discovered fails here.
+
+python -c "import sqlite3; c=sqlite3.connect('registry.db'); [print(r) for r in c.execute('SELECT file_id, source_path, size_bytes, source_last_write, target_exposure_name FROM migration_file')]"
+
+--- can this machine actually read the file? ---------------------------
+Under dry_run no vendor call happens, so a first-attempt failure is
+local: the share not reachable from this account, a permissions problem,
+or the file changed since discovery. Substitute the source_path printed
+above.
+
+  Get-Item "\\sriskpd0001\Backup\Silviu\<name>.bak" | Select-Object Length, LastWriteTime
+
+--- once the cause is fixed --------------------------------------------
+ABANDONED files are requeued to STAGED by retry, the same as FAILED:
+
+migration-hub retry --batch SMOKE01
+
+-----------------------------------------------------------------------
 IF A RUN FAILS PART WAY
 -----------------------------------------------------------------------
 migration-hub status --batch SMOKE01     where it stopped

@@ -257,6 +257,16 @@ def status(batch: str | None = typer.Option(None, "--batch")) -> None:
     for state in FileState:
         typer.echo(f"  {state.value:<12} {counts[state]}")
 
+    stuck = registry.files_in_states(
+        states=(FileState.FAILED, FileState.ABANDONED), batch_id=batch
+    )
+    if stuck:
+        typer.echo("")
+        typer.echo(f"{len(stuck)} file(s) need attention:")
+        for file in stuck:
+            typer.echo(f"  [{file.file_id}] {file.source_database} -- {file.state}")
+            typer.echo(f"      {file.last_error or '(no error recorded)'}")
+
 controls_app = typer.Typer(help="Open, close and inspect per-run batch-controls records.")
 app.add_typer(controls_app, name="controls")
 
