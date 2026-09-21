@@ -472,7 +472,7 @@ def render_finding_buttons(
         if st.button(
             "Show all",
             key="filter_btn_clear",
-            use_container_width=True,
+            width="stretch",
             type="primary" if selected is None else "secondary",
         ):
             st.session_state.outcome_filter = None
@@ -490,7 +490,7 @@ def render_finding_buttons(
                 outcome.value,
                 key=f"filter_btn_{outcome.name}",
                 disabled=not count,
-                use_container_width=True,
+                width="stretch",
                 type="primary" if selected == outcome.value else "secondary",
                 help=OUTCOME_HELP[outcome],
             ):
@@ -661,7 +661,7 @@ def render_file_tab(
         )
         view = view[mask.loc[view.index]]
 
-    st.dataframe(view, hide_index=True, use_container_width=True, height=420)
+    st.dataframe(view, hide_index=True, width="stretch", height=420)
     st.caption(f"Showing {len(view)} of {len(rows)} rows, every column as supplied.")
 
     left_dl, right_dl = st.columns(2)
@@ -677,7 +677,7 @@ def render_file_tab(
             file_name=f"{Path(filename).stem}-{slug}.csv",
             mime="text/csv",
             key=f"dl_filtered_{key}",
-            use_container_width=True,
+            width="stretch",
             disabled=len(view) == len(rows),
             help="What the table is showing, with every filter applied.",
         )
@@ -689,7 +689,7 @@ def render_file_tab(
                 file_name=filename,
                 mime="text/csv",
                 key=f"dl_raw_{key}",
-                use_container_width=True,
+                width="stretch",
                 help="The original upload, byte for byte.",
             )
         else:
@@ -699,7 +699,7 @@ def render_file_tab(
                 file_name=filename,
                 mime="text/csv",
                 key=f"dl_raw_{key}",
-                use_container_width=True,
+                width="stretch",
                 help="Everything returned, whatever the filter shows.",
             )
 
@@ -812,7 +812,7 @@ def render_step(step: Step) -> None:
                     "Query server — no .env config",
                     key=f"sql_{step.state_rows}",
                     disabled=True,
-                    use_container_width=True,
+                    width="stretch",
                     help=(
                         "Set RECONCILE_SQL_DIRECT_HOST or "
                         "RECONCILE_SQL_RI_HOST in .env to query the source "
@@ -833,7 +833,7 @@ def render_step(step: Step) -> None:
                 if st.button(
                     "Query server",
                     key=f"sql_{step.state_rows}",
-                    use_container_width=True,
+                    width="stretch",
                     help=f"Runs: {INVENTORY_QUERY}",
                 ):
                     wanted = (
@@ -873,7 +873,7 @@ def render_step(step: Step) -> None:
                 if st.button(
                     "Call API",
                     key=f"api_{step.state_rows}",
-                    use_container_width=True,
+                    width="stretch",
                     help=(
                         f"GET {API.vault_url()} — matching on "
                         f"{API.vault_name_field}"
@@ -902,7 +902,7 @@ def render_step(step: Step) -> None:
                     "Call API — no .env config",
                     key=f"api_{step.state_rows}",
                     disabled=True,
-                    use_container_width=True,
+                    width="stretch",
                     help=(
                         "Set RECONCILE_API_HOST and MOODYS_API_KEY in .env to "
                         "fetch the archive list directly."
@@ -915,7 +915,7 @@ def render_step(step: Step) -> None:
                 if st.button(
                     "Call API",
                     key=f"api_{step.state_rows}",
-                    use_container_width=True,
+                    width="stretch",
                     help=(
                         f"GET {API.exposures_url()} — matching on "
                         f"{API.bridge_name_field}"
@@ -943,7 +943,7 @@ def render_step(step: Step) -> None:
                     "Call API — no .env config",
                     key=f"api_{step.state_rows}",
                     disabled=True,
-                    use_container_width=True,
+                    width="stretch",
                     help=(
                         "Set RECONCILE_API_HOST and MOODYS_API_KEY in .env to "
                         f"fetch the platform list directly. Unset: "
@@ -1058,7 +1058,7 @@ with st.sidebar:
     if st.button(
         "\u21bb  Refresh all",
         key="refresh_all",
-        use_container_width=True,
+        width="stretch",
         help=(
             "Runs steps 1, 3 and 4: the on-prem inventory, Data Bridge and "
             "Data Vault. Scope is a file and is left alone."
@@ -1099,7 +1099,7 @@ with st.sidebar:
         "Run reconciliation",
         type="primary",
         disabled=not ready,
-        use_container_width=True,
+        width="stretch",
     ):
         master_rows = st.session_state.master_rows
         target_rows = st.session_state.target_rows
@@ -1186,7 +1186,7 @@ with st.sidebar:
         else:
             st.warning(f"Would delete {preview.summary()}. This cannot be undone.")
             confirm = st.checkbox("Yes, delete them", key="purge_confirm")
-            if st.button("Purge", disabled=not confirm, use_container_width=True):
+            if st.button("Purge", disabled=not confirm, width="stretch"):
                 report = store.purge(int(keep))
                 if st.session_state.run_id not in report.runs_kept:
                     st.session_state.result = None
@@ -1247,7 +1247,7 @@ if result is None:
                 ]
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
         chosen = st.selectbox("Reopen a run", [r.id for r in past_runs])
         if st.button("Open"):
@@ -1676,7 +1676,7 @@ if vault_dupes_tab is not None:
 
             st.dataframe(
                 pd.DataFrame(summary),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             st.caption(
@@ -1724,7 +1724,7 @@ if vault_dupes_tab is not None:
                     )
                 else:
                     st.dataframe(
-                        detail, use_container_width=True, hide_index=True
+                        detail, width="stretch", hide_index=True
                     )
                 if len(ordered) > 2:
                     st.caption(
@@ -1956,7 +1956,7 @@ with report_tab:
         ]
     )
     with st.expander("The same figures as a table"):
-        st.dataframe(funnel_frame, hide_index=True, use_container_width=True)
+        st.dataframe(funnel_frame, hide_index=True, width="stretch")
 
     if report_result.vault_checked:
         archived = stages[-1].count
@@ -2019,7 +2019,7 @@ with report_tab:
                 ]
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
         run_ids = [r.id for r in history]
@@ -2036,7 +2036,7 @@ with report_tab:
                 key="reopen_run",
                 label_visibility="collapsed",
             )
-            if st.button("Reopen", use_container_width=True):
+            if st.button("Reopen", width="stretch"):
                 st.session_state.result = store.load_run(int(chosen_run))
                 st.session_state.run_id = int(chosen_run)
                 st.session_state.outcome_filter = None
@@ -2053,7 +2053,7 @@ with report_tab:
             later = st.selectbox(
                 "Later run", run_ids, index=0, key="cmp_later"
             )
-            if st.button("Compare", use_container_width=True):
+            if st.button("Compare", width="stretch"):
                 if earlier == later:
                     st.info("Pick two different runs.")
                 else:
@@ -2192,7 +2192,7 @@ with report_tab:
                     activity.groupby("_day")["_mb"].sum() / 1024
                 ).round(2)
             st.dataframe(table.reset_index().rename(columns={"_day": "day"}),
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width="stretch")
 
             if creator_col is not None:
                 agg = {"archives": (creator_col, "size")}
@@ -2207,7 +2207,7 @@ with report_tab:
                         .reset_index()
                         .sort_values("archives", ascending=False),
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                     )
                 else:
                     st.caption("No manual archives in this listing.")
@@ -2220,7 +2220,7 @@ with report_tab:
                         .reset_index()
                         .sort_values("archives", ascending=False),
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                     )
 
             st.markdown("**Manual rate, and what it implies**")
@@ -2255,7 +2255,7 @@ with report_tab:
                 data=table.reset_index().rename(columns={"_day": "day"}).to_csv(index=False),
                 file_name="vault-activity-by-day.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
     if len(vault_activity) and _size_col is not None:
@@ -2302,7 +2302,7 @@ with report_tab:
             )
 
             st.bar_chart(dist.set_index("band")["archives"], height=240)
-            st.dataframe(dist, hide_index=True, use_container_width=True)
+            st.dataframe(dist, hide_index=True, width="stretch")
             st.caption(
                 "Bands match the source-side analysis (RSK-0006), so the Vault "
                 "contents compare against the estate they came from. Sizes read "
@@ -2335,7 +2335,7 @@ with results_tab:
     if search:
         view = view[view["Name"].str.contains(search, case=False, na=False)]
 
-    st.dataframe(view, hide_index=True, use_container_width=True)
+    st.dataframe(view, hide_index=True, width="stretch")
     st.caption(f"Showing {len(view)} of {len(frame)} rows.")
 
     left_dl, right_dl = st.columns(2)
@@ -2345,7 +2345,7 @@ with results_tab:
             data=view.to_csv(index=False),
             file_name="reconciliation-filtered.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
             disabled=len(view) == len(frame),
             help="What the table is showing, with the filter applied.",
         )
@@ -2355,7 +2355,7 @@ with results_tab:
             data=to_csv(result),
             file_name="reconciliation.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
             help="Every row, whatever the filter says.",
         )
 
