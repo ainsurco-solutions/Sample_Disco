@@ -1425,24 +1425,61 @@ settled = [o for o in SETTLED_ORDER if o not in FINDINGS] + [
 ]
 
 st.markdown(
-    "<div class='rc-label rc-label-spaced'>Settled</div>", unsafe_allow_html=True
+    "<div class='rc-label rc-label-spaced'>Settled"
+    "<span class='rc-hint'> &mdash; nothing to do about these</span></div>",
+    unsafe_allow_html=True,
 )
 render_outcome_cards(settled, counts)
+st.caption(
+    "Each database counts once here: either it is settled (out of scope, or "
+    "archived and done) or it needs attention below. Nothing appears in both."
+)
 
 scope_note = (
-    f"{result.master_count} master rows against {result.target_count} platform rows"
+    f"Compared {result.master_count:,} on-prem databases against "
+    f"{result.target_count:,} rows from the Data Bridge API"
 )
 if result.vault_checked:
-    scope_note += f" and {result.vault_count} vault rows"
+    scope_note += f" and {result.vault_count:,} from the Data Vault API"
 scope_note += f". Run {st.session_state.run_id}."
 st.caption(scope_note)
 
+if result.vault_checked and result.vault_count > result.target_count:
+    st.caption(
+        f"The Data Vault list is larger than the Data Bridge list "
+        f"({result.vault_count:,} vs {result.target_count:,}) because "
+        "archiving moves a database rather than copying it: the bridge is a "
+        "staging area that empties as archiving proceeds. Both lists also "
+        "include databases outside this reconciliation, which appear as "
+        "Orphaned below."
+    )
+
 st.markdown(
     "<div class='rc-label rc-label-spaced'>Needs attention"
-    "<span class='rc-hint'> — click to filter the results table</span></div>",
+    "<span class='rc-hint'> &mdash; click to filter the results table</span></div>",
     unsafe_allow_html=True,
 )
 render_finding_buttons(findings, counts, len(result.findings), result.is_clean)
+
+_explain = []
+if counts.get(Outcome.ORPHANED):
+    _explain.append(
+        f"**Orphaned ({counts[Outcome.ORPHANED]:,})** &mdash; in the Data "
+        "Bridge or Data Vault list, but on neither the on-prem inventory nor "
+        "the scope list. Usually databases Amlin migrated themselves, or "
+        "named differently on the two sides. Not migration work outstanding, "
+        "but worth knowing the lists disagree."
+    )
+if counts.get(Outcome.MISSING):
+    _explain.append(
+        f"**Missing ({counts[Outcome.MISSING]:,})** &mdash; wanted, on prem, "
+        "and in neither Data Bridge nor Data Vault: work not started. It will "
+        "not equal *In Scope and Available* minus *Archived* minus *In "
+        "transit*, because a database reported as Duplicate is counted there "
+        "and not here."
+    )
+if _explain:
+    st.caption("  \n".join(_explain))
 
 for _conflict in config_conflicts():
     st.error(
