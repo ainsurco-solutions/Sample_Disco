@@ -1,7 +1,7 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 46e46306c72a9c2858cdc814b4e2b35a4e54709a
+# source commit: 206a475f85193bc2b94ce0c1b4fd366f1046fa9f
 # kind	size	lines	sha256	path
-config	2772	56	7187526dd44f5a44fad66acc8813db4c890dad23efe0f0ee09dd6bc59bb4104f	.env.example
+config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3040	102	efb56679a41dbeb97eecaefced24c856bd0e6730921685b651c0d05e78388691	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
 config	6141	146	1132ade95c1cd993e67deb79d2eee7a75f18c854ef216f7a7475c8b8a77d9e16	VM-SETUP.txt
@@ -14,7 +14,7 @@ code	4	1	b42f2099187886def637d6aa840022266e05cb6c987a9394e708e23cd505eb46	migrat
 code	7497	152	a320201cf996acaa2fca251200f7213bef584ea604daeaa32bde8dec2a840031	migrations/versions/3405822f52ca_create_registry_schema.py
 config	2216	77	c16ba42f6b53208578ca5399d018519c7d36bda9a0221517d8bb61ca10fdc13c	pyproject.toml
 code	4800	95	acae32b0c5b58a2509dd23f9b2c6a25957e12c2ccacae6e3dbf60012d23bb4ef	requirements.txt
-code	2019	62	dd8cdd4e9ed148c8448c0c0178871f98c9e194b58a7a81323f1d474e5891765d	scripts/_backup_registry.py
+code	2493	76	345b1747b35c5f5e34c45a02eddd15743fb88ffe8627eff4d4476cf9935d41e6	scripts/_backup_registry.py
 code	9151	292	d425f9047ff556b326ceba8e8aca5b150ce83f52fcfba01de85059489680d326	scripts/amigo.bat
 code	3544	97	b0c59b3f4282f00403f90976617babcf42c0cef0a282a99b67c7b0c7d9245b8e	scripts/backup_registry.bat
 code	5559	168	78115401fa879c590017fed857e6dc4855d6692a9bd41cc5c2611d0f45c00c51	scripts/check_copy.py

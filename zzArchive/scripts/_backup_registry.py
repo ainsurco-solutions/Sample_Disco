@@ -31,7 +31,12 @@ def main() -> int:
     if not source.is_file():
         raise SystemExit(f"No registry at {source}\nNothing to back up.")
 
-    dest_dir = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else source.parent
+    if len(sys.argv) > 1:
+        dest_dir = Path(sys.argv[1]).expanduser()
+    elif os.environ.get("MIGRATION_HUB_BACKUP_DIR"):
+        dest_dir = Path(os.environ["MIGRATION_HUB_BACKUP_DIR"]).expanduser()
+    else:
+        dest_dir = source.parent
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -39,8 +44,16 @@ def main() -> int:
     if target.exists():
         raise SystemExit(f"{target} already exists. Not overwriting it.")
 
+    if len(sys.argv) > 1:
+        chosen = "argument"
+    elif os.environ.get("MIGRATION_HUB_BACKUP_DIR"):
+        chosen = "MIGRATION_HUB_BACKUP_DIR"
+    else:
+        chosen = "default -- beside the registry"
+
     print(f"  source : {source}")
     print(f"  target : {target}")
+    print(f"  dest   : {chosen}")
     print()
 
     connection = sqlite3.connect(str(source))
@@ -52,10 +65,11 @@ def main() -> int:
     size = target.stat().st_size
     print(f"  [ok] wrote {size:,} bytes")
     print()
-    print("  A snapshot beside the original is not yet a backup -- if that folder")
-    print("  is the problem, both copies are gone. Copy it somewhere other than")
-    print("  the machine that wrote it, or pass a destination folder as the first")
-    print("  argument.")
+    if dest_dir.resolve() == source.parent.resolve():
+        print("  This snapshot is beside the original, which is not yet a backup --")
+        print("  if that folder is the problem, both copies are gone. Pass a")
+        print("  destination folder as the first argument, or set")
+        print("  MIGRATION_HUB_BACKUP_DIR in .env.")
     return 0
 
 if __name__ == "__main__":
