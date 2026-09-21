@@ -143,7 +143,28 @@ def main() -> int:
     if resp.status_code >= 400:
         _fail(resp.text[:300])
         return 1
-    mdf_uri = resp.json()["mdfUri"]
+    try:
+        body = resp.json()
+    except ValueError:
+        _ok(f"response is not JSON -- raw text: {resp.text[:500]!r}")
+        _fail(
+            "Cannot proceed automatically. If the text above is the presigned "
+            "URL itself, tell me and I'll change this to use resp.text directly "
+            "instead of resp.json()['mdfUri']."
+        )
+        return 1
+    mdf_uri = body.get("mdfUri") if isinstance(body, dict) else None
+    if not mdf_uri:
+        _fail(
+            f"'mdfUri' not in the response -- this tenant returns a different "
+            f"shape than the vendor tutorial documents. Full body: {body!r}"
+        )
+        _fail(
+            "Report the body above and I'll correct the field name in the "
+            "script -- same situation this project already hit once with "
+            "'archiveName' vs 'exposureName' on the archives endpoint."
+        )
+        return 1
     _ok("got presigned upload URL")
 
     _step("3", f"PUT {bak_path.name} to presigned URL ({size_mb:.1f} MB)")
