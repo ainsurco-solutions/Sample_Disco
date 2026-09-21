@@ -283,6 +283,17 @@ st.markdown(
       }
       .fn-bar-done { background:#2f6f4f; }
 
+      .fn-seg { position:absolute; top:0; bottom:0; }
+      .fn-seg-done { background:#2f6f4f; border-radius:4px 0 0 4px; }
+      .fn-seg-transit { background:#d98324; }
+      .fn-seg-only { border-radius:4px; }
+      .fn-legend {
+        display:flex; gap:.9rem; flex-wrap:wrap;
+        font-size:.75rem; opacity:.75; margin:-.2rem 0 .8rem 8.25rem;
+      }
+      .fn-key { display:inline-block; width:.6rem; height:.6rem;
+                border-radius:2px; margin-right:.3rem; vertical-align:middle; }
+
       .fn-value {
         position:relative; margin-left:auto; padding-right:.6rem;
         font-weight:700; font-size:.95rem;
@@ -1727,6 +1738,15 @@ with report_tab:
     scope_base = next(
         (s.count for s in stages if s.name == "In scope"), 0
     )
+
+    vault_reached = next(
+        (s.count for s in stages if s.name == "Data Vault"), 0
+    )
+    bridge_total = next(
+        (s.count for s in stages if s.name == "Data Bridge"), 0
+    )
+    bridge_transit = max(bridge_total - vault_reached, 0)
+
     rows_html = []
     for stage in stages:
         pct = 100.0 * stage.count / widest
@@ -1744,11 +1764,35 @@ with report_tab:
             lost += f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% kept</span>"
         done = stage.name == "Data Vault" and report_result.vault_checked
         bar_class = "fn-bar fn-bar-done" if done else "fn-bar"
+
+        if (
+            stage.name == "Data Bridge"
+            and report_result.vault_checked
+            and stage.count
+        ):
+            archived_here = min(vault_reached, stage.count)
+            transit_here = stage.count - archived_here
+            done_pct = pct * archived_here / stage.count
+            transit_pct = pct - done_pct
+            done_class = "fn-seg fn-seg-done" + ("" if transit_here else " fn-seg-only")
+            bar_html = (
+                f"<div class='{done_class}' style='left:0;width:{done_pct:.1f}%'"
+                f" title='{archived_here} archived in Data Vault'></div>"
+            )
+            if transit_here:
+                bar_html += (
+                    f"<div class='fn-seg fn-seg-transit' style='left:{done_pct:.1f}%;"
+                    f"width:{transit_pct:.1f}%;border-radius:0 4px 4px 0'"
+                    f" title='{transit_here} still in transit'></div>"
+                )
+        else:
+            bar_html = f"<div class='{bar_class}' style='width:{pct:.1f}%'></div>"
+
         rows_html.append(
             "<div class='fn-row'>"
             f"<div class='fn-stage'>{html.escape(stage.name)}</div>"
             "<div class='fn-track'>"
-            f"<div class='{bar_class}' style='width:{pct:.1f}%'></div>"
+            f"{bar_html}"
             f"<div class='fn-value'>{stage.count}"
             f"<span class='fn-share'>{share}</span></div>"
             "</div>"
@@ -1759,6 +1803,17 @@ with report_tab:
     st.markdown(
         f"<div class='fn'>{''.join(rows_html)}</div>", unsafe_allow_html=True
     )
+
+    if report_result.vault_checked and bridge_transit:
+        st.markdown(
+            "<div class='fn-legend'>"
+            "<span><span class='fn-key' style='background:#2f6f4f'></span>"
+            f"Archived in Data Vault ({vault_reached:,})</span>"
+            "<span><span class='fn-key' style='background:#d98324'></span>"
+            f"In transit on the bridge ({bridge_transit:,})</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     funnel_frame = pd.DataFrame(
         [
