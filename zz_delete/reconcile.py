@@ -37,6 +37,9 @@ UNCHECKED: frozenset[Outcome] = frozenset(
 
 MASTER_NAME_COLUMNS = ("database name", "database_name", "name", "db name", "db_name")
 
+CREATOR_COLUMNS = ("createdby", "created_by", "created by", "owner", "archivedby")
+CREATED_DATE_COLUMNS = ("createdat", "created_at", "created at", "created", "createddate")
+
 TARGET_NAME_COLUMNS = (
     "databasename",
     "database name",

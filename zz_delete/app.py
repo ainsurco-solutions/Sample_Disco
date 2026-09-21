@@ -10,6 +10,8 @@ import pandas as pd
 import streamlit as st
 from reconcile import (
     FINDINGS,
+    CREATED_DATE_COLUMNS,
+    CREATOR_COLUMNS,
     MASTER_NAME_COLUMNS,
     LoadError,
     Outcome,
@@ -483,6 +485,16 @@ def render_outcome_cards(outcomes: list[Outcome], counts: dict[Outcome, int]) ->
         f"<div class='rc-row'>{''.join(cards)}</div>", unsafe_allow_html=True
     )
 
+def _first_column(frame: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
+    def _key(name: str) -> str:
+        return name.strip().casefold().replace(" ", "").replace("_", "")
+
+    normalised = {_key(c): c for c in frame.columns}
+    for candidate in candidates:
+        if _key(candidate) in normalised:
+            return normalised[_key(candidate)]
+    return None
+
 def render_file_tab(
     title: str,
     filename: str,
@@ -531,6 +543,42 @@ def render_file_tab(
             ),
         )
 
+    creator_column = _first_column(rows, CREATOR_COLUMNS)
+    date_column = _first_column(rows, CREATED_DATE_COLUMNS)
+
+    creators: list[str] = []
+    date_range = None
+    if creator_column is not None or date_column is not None:
+        left_f, right_f = st.columns(2)
+        if creator_column is not None:
+            with left_f:
+                options = sorted(
+                    {
+                        value.strip()
+                        for value in rows[creator_column].astype(str)
+                        if value.strip() and value.strip().lower() != "nan"
+                    }
+                )
+                creators = st.multiselect(
+                    f"Created by ({creator_column})",
+                    options,
+                    key=f"creator_{key}",
+                    placeholder="anyone",
+                )
+        if date_column is not None:
+            with right_f:
+                stamps = pd.to_datetime(rows[date_column], errors="coerce", utc=True)
+                if stamps.notna().any():
+                    earliest = stamps.min().date()
+                    latest = stamps.max().date()
+                    date_range = st.date_input(
+                        f"Created between ({date_column})",
+                        value=(earliest, latest),
+                        min_value=earliest,
+                        max_value=latest,
+                        key=f"created_{key}",
+                    )
+
     search = st.text_input(
         "Filter rows containing", "", key=f"filter_{key}", placeholder="any text"
     )
@@ -550,6 +598,20 @@ def render_file_tab(
                 wanted
             )
             view = rows[in_missing if scope_view == "Missing from prem" else ~in_missing]
+
+    if creators and creator_column is not None:
+        view = view[view[creator_column].astype(str).str.strip().isin(creators)]
+
+    if (
+        date_range
+        and date_column is not None
+        and isinstance(date_range, (tuple, list))
+        and len(date_range) == 2
+    ):
+        start, end = date_range
+        stamps = pd.to_datetime(view[date_column], errors="coerce", utc=True)
+        within = (stamps.dt.date >= start) & (stamps.dt.date <= end)
+        view = view[within | stamps.isna()]
 
     if search:
         mask = rows.apply(
