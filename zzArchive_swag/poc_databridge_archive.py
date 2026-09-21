@@ -48,6 +48,15 @@ def main() -> int:
         "triggering a second import/archive for the same database.",
     )
     parser.add_argument(
+        "--archive-only",
+        action="store_true",
+        help="Skip the upload/import steps entirely and go straight to "
+        "archiving -- for a database already confirmed imported (e.g. via "
+        "--check-job). Needs --instance and --database, not --bak. Still "
+        "confirms the database is actually present on Data Bridge (step "
+        "6) before archiving it, as a safety check.",
+    )
+    parser.add_argument(
         "--resource-group-id",
         default="",
         help="x-rms-resource-group-id for the archive call. If omitted, "
@@ -114,40 +123,46 @@ def main() -> int:
             try:
                 body = resp.json()
                 status = body.get("status") if isinstance(body, dict) else body
-                print(f"\n    job status: {status}")
-                if status in _SUCCESS_STATUSES:
-                    print("    -> terminal, succeeded. Safe to move on to archiving; do not re-upload.")
-                elif status in _FAILURE_STATUSES:
-                    print("    -> terminal, failed. The import did not complete -- check with Moody's/MS Amlin before deciding whether re-running is safe, rather than assuming a retry is harmless.")
-                else:
-                    print("    -> not terminal yet. Still in progress -- wait and check again rather than re-running the full script.")
             except ValueError:
-                pass
+                status = resp.text.strip()
+            print(f"\n    job status: {status}")
+            if status in _SUCCESS_STATUSES:
+                print("    -> terminal, succeeded. Safe to move on to archiving; do not re-upload.")
+            elif status in _FAILURE_STATUSES:
+                print("    -> terminal, failed. The import did not complete -- check with Moody's/MS Amlin before deciding whether re-running is safe, rather than assuming a retry is harmless.")
+            else:
+                print("    -> not terminal yet, or an unrecognised status string. If the import is actually done, tell me the exact text above and I'll add it to the known-success/failure sets.")
         return 0
 
-    if not args.bak or not args.instance or not args.database:
-        _fail("--bak, --instance and --database are all required unless using --check-job.")
+    if not args.instance or not args.database:
+        _fail("--instance and --database are required unless using --check-job.")
         return 1
 
-    bak_path = Path(args.bak)
-    if not bak_path.is_file():
-        _fail(
-            f"Cannot find {bak_path} -- check the network path is reachable "
-            "and you have read access (a UNC path needs the share mounted "
-            "or your account to already have permission; a mapped drive "
-            "needs the drive connected in this session)."
-        )
-        return 1
-    size_bytes = bak_path.stat().st_size
-    size_mb = size_bytes / (1024 * 1024)
-    print(f"Using .bak file: {bak_path} ({size_mb:.1f} MB)")
-    if size_bytes >= LARGE_FILE_THRESHOLD_BYTES:
-        _fail(
-            "File is >= 5 GB. This POC only implements the small-database "
-            "flow -- use the large multipart flow for a file this size "
-            "(see client.py::_upload_large)."
-        )
-        return 1
+    bak_path: Path | None = None
+    size_mb = 0.0
+    if not args.archive_only:
+        if not args.bak:
+            _fail("--bak is required unless --archive-only or --check-job.")
+            return 1
+        bak_path = Path(args.bak)
+        if not bak_path.is_file():
+            _fail(
+                f"Cannot find {bak_path} -- check the network path is reachable "
+                "and you have read access (a UNC path needs the share mounted "
+                "or your account to already have permission; a mapped drive "
+                "needs the drive connected in this session)."
+            )
+            return 1
+        size_bytes = bak_path.stat().st_size
+        size_mb = size_bytes / (1024 * 1024)
+        print(f"Using .bak file: {bak_path} ({size_mb:.1f} MB)")
+        if size_bytes >= LARGE_FILE_THRESHOLD_BYTES:
+            _fail(
+                "File is >= 5 GB. This POC only implements the small-database "
+                "flow -- use the large multipart flow for a file this size "
+                "(see client.py::_upload_large)."
+            )
+            return 1
 
     api = load_settings()
     if not api.has_key:
@@ -163,9 +178,11 @@ def main() -> int:
         print("\nDRY RUN -- pass --confirm to actually upload/import/archive.")
         print("Would run against:")
         print(f"  host              = {host}")
+        print(f"  mode              = {'archive-only (no upload/import)' if args.archive_only else 'full pipeline'}")
         print(f"  instance          = {args.instance}")
         print(f"  database          = {args.database}")
-        print(f"  bak file          = {bak_path} ({size_mb:.1f} MB)")
+        if bak_path is not None:
+            print(f"  bak file          = {bak_path} ({size_mb:.1f} MB)")
         print(
             f"  resource-group-id = "
             f"{args.resource_group_id or f'(none given -- will try to resolve via {args.entitlement!r})'}"
@@ -175,6 +192,11 @@ def main() -> int:
 
     session = requests.Session()
     session.headers.update({"Authorization": api.api_key})
+
+    if args.archive_only:
+        return _archive_and_verify(session, host, args)
+
+    assert bak_path is not None
 
     _step("1", "GET /databridge/v1/sql-instances")
     resp = session.get(f"{host}/databridge/v1/sql-instances", timeout=30)
@@ -289,6 +311,9 @@ def main() -> int:
         _fail("import did not succeed -- stopping before archiving")
         return 1
 
+    return _archive_and_verify(session, host, args)
+
+def _archive_and_verify(session: object, host: str, args: argparse.Namespace) -> int:
     _step("6", "GET .../databases (confirm database landed)")
     resp = session.get(f"{host}/databridge/v1/sql-instances/{args.instance}/databases", timeout=30)
     print(f"    status: {resp.status_code}")
@@ -298,7 +323,7 @@ def main() -> int:
     landed = any(item.get("name") == args.database for item in resp.json())
     _ok(f"database present on Data Bridge: {landed}")
     if not landed:
-        _fail("job reported success but the database isn't listed -- investigate before archiving")
+        _fail("the database isn't listed on Data Bridge -- investigate before archiving")
         return 1
 
     resource_group_id = args.resource_group_id
@@ -408,14 +433,14 @@ def _poll(session: object, url: str) -> str | None:
             return None
         try:
             body = response.json()
+            raw_status = str(body.get("status") if isinstance(body, dict) else body)
         except ValueError:
-            print(f"    ... non-JSON body: {response.text[:300]!r}")
-            time.sleep(POLL_INTERVAL_SECONDS)
-            continue
-        raw_status = str(body.get("status") if isinstance(body, dict) else body)
+            raw_status = response.text.strip()
         print(f"    ... status: {raw_status}")
         if raw_status in _SUCCESS_STATUSES or raw_status in _FAILURE_STATUSES:
             return raw_status
+        if not raw_status:
+            print(f"    ... empty body, treating as not-ready-yet: {response.text[:300]!r}")
         time.sleep(POLL_INTERVAL_SECONDS)
     return None
 
