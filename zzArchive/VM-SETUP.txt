@@ -41,6 +41,7 @@ from the CLI transfer. These are the ones to add:
   src\migration_hub\ui\__init__.py        (package marker)
   src\migration_hub\ui\app.py
   .streamlit\config.toml                  (the theme)
+  .streamlit\config.navy.toml             (the alternative theme)
 
 .streamlit\config.toml is easy to miss -- the folder name starts with a
 dot and Explorer may hide it. Without it the screens fall back to
@@ -118,6 +119,44 @@ STOPPING IT
 -----------
 Ctrl+C in the terminal. Closing the browser tab does not stop the
 server.
+
+TWO THEMES TO COMPARE
+---------------------
+config.toml        teal primary, IBM Plex. The palette agreed with the
+                   operator from a mockup. This is what loads by default.
+
+config.navy.toml   MS Amlin navy #1B1464, the same brand palette the
+                   Reconcile tool uses, so the two tools match in front
+                   of the client. Same type, same radii, same light and
+                   dark modes; only the primary, links and the blue
+                   family change.
+
+Streamlit only ever reads config.toml. To try the navy one:
+
+  copy .streamlit\config.toml .streamlit\config.teal.toml
+  copy .streamlit\config.navy.toml .streamlit\config.toml
+
+then restart Streamlit (Ctrl+C and run it again -- a theme change is not
+picked up by the browser's Rerun). To go back, copy config.teal.toml
+over config.toml.
+
+ONE THING THE CONFIG FILE DOES NOT COVER. The pipeline stepper is the
+only hand-drawn HTML in the app, and Streamlit does not expose resolved
+theme colours to arbitrary HTML -- so the stepper carries its own copy
+of the palette in app.py (_TRACKER_PALETTE). Swap the config alone and
+the stepper stays teal against navy buttons. The navy values to use are
+written in the comment directly above that dict.
+
+Neither theme changes what any number means. Red still means a file
+needs attention, green still means done, in both.
+
+WHAT IS NOT IN EITHER THEME
+---------------------------
+MS Amlin's own red, #FF1F27. Red already has a job on these screens --
+FAILED, ABANDONED, the PROD banner -- and putting the brand red on a
+button would use one colour for both "press this" and "this is wrong".
+The navy carries the brand instead. Same decision the Reconcile tool
+made, for the same reason.
 
 
 -----------------------------------------------------------------------
