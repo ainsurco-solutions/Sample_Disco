@@ -10,9 +10,11 @@ import pandas as pd
 import streamlit as st
 from reconcile import (
     FINDINGS,
+    AUTOMATED_ACTORS,
     CREATED_DATE_COLUMNS,
     CREATOR_COLUMNS,
     MASTER_NAME_COLUMNS,
+    SIZE_FIELDS_MB,
     LoadError,
     Outcome,
     QueryError,
@@ -1786,6 +1788,229 @@ with report_tab:
                     with gone:
                         st.markdown("**No longer present**")
                         st.write(diff["disappeared"] or "—")
+
+    st.divider()
+    st.subheader("Data Vault activity")
+
+    vault_activity = st.session_state.get("vault_rows")
+    _size_col = None
+    if vault_activity is not None and len(vault_activity):
+        _size_col = next(
+            (
+                c
+                for c in vault_activity.columns
+                if c.strip().casefold() in {f.casefold() for f in SIZE_FIELDS_MB}
+            ),
+            None,
+        )
+
+    if vault_activity is None or not len(vault_activity):
+        st.caption(
+            "Load the Data Vault archive list to see activity. Nothing here "
+            "needs a reconciliation run -- it reads the archive rows directly."
+        )
+    else:
+        created_col = _first_column(vault_activity, CREATED_DATE_COLUMNS)
+        creator_col = _first_column(vault_activity, CREATOR_COLUMNS)
+
+        if created_col is None:
+            st.caption(
+                "These rows carry no creation date, so activity over time "
+                "cannot be derived from them."
+            )
+        else:
+            activity = vault_activity.copy()
+            stamps = pd.to_datetime(activity[created_col], errors="coerce", utc=True)
+            unparsed = int(stamps.isna().sum())
+            activity = activity[stamps.notna()].copy()
+            activity["_day"] = stamps[stamps.notna()].dt.date
+
+            if unparsed:
+                st.caption(
+                    f"{unparsed} row(s) have no usable creation date and are "
+                    "excluded from the counts below."
+                )
+
+            if _size_col is not None:
+                activity["_mb"] = pd.to_numeric(
+                    activity[_size_col], errors="coerce"
+                ).fillna(0)
+
+            if creator_col is not None:
+                automated_mask = (
+                    activity[creator_col]
+                    .astype(str)
+                    .str.strip()
+                    .str.casefold()
+                    .isin(AUTOMATED_ACTORS)
+                )
+            else:
+                automated_mask = pd.Series(False, index=activity.index)
+            activity["_source"] = ["Automation" if a else "Manual" for a in automated_mask]
+
+            manual = activity[~automated_mask]
+            automated = activity[automated_mask]
+
+            def _rate(frame: pd.DataFrame) -> tuple[int, int, float, float]:
+                if not len(frame):
+                    return 0, 0, 0.0, 0.0
+                by_day = frame.groupby("_day").size()
+                mean = float(by_day.mean())
+                recent = float(by_day.tail(3).mean()) if len(by_day) >= 3 else mean
+                return int(by_day.sum()), len(by_day), mean, recent
+
+            m_total, m_days, m_mean, m_recent = _rate(manual)
+            a_total, a_days, a_mean, a_recent = _rate(automated)
+
+            left_m, mid_m, right_m = st.columns(3)
+            left_m.metric("Manual", f"{m_total:,}", f"{m_mean:,.0f}/day")
+            mid_m.metric("Automation", f"{a_total:,}", f"{a_mean:,.0f}/day" if a_days else None)
+            right_m.metric("Total in Vault", f"{m_total + a_total:,}")
+
+            st.markdown("**Archived per day**")
+            per_day_split = (
+                activity.groupby(["_day", "_source"]).size().unstack(fill_value=0)
+            )
+            for column in ("Manual", "Automation"):
+                if column not in per_day_split.columns:
+                    per_day_split[column] = 0
+            per_day_split = per_day_split[["Manual", "Automation"]]
+            st.bar_chart(per_day_split, height=240)
+
+            if _size_col is not None:
+                st.markdown("**GB per day**")
+                gb_split = (
+                    activity.groupby(["_day", "_source"])["_mb"].sum().unstack(fill_value=0)
+                    / 1024
+                ).round(2)
+                for column in ("Manual", "Automation"):
+                    if column not in gb_split.columns:
+                        gb_split[column] = 0.0
+                st.bar_chart(gb_split[["Manual", "Automation"]], height=240)
+
+            table = per_day_split.copy()
+            table["Total"] = table["Manual"] + table["Automation"]
+            if _size_col is not None:
+                table["GB"] = (
+                    activity.groupby("_day")["_mb"].sum() / 1024
+                ).round(2)
+            st.dataframe(table.reset_index().rename(columns={"_day": "day"}),
+                         hide_index=True, use_container_width=True)
+
+            if creator_col is not None:
+                agg = {"archives": (creator_col, "size")}
+                if _size_col is not None:
+                    agg["GB"] = ("_mb", lambda s: round(s.sum() / 1024, 2))
+
+                st.markdown("**Per person** (manual only)")
+                if len(manual):
+                    st.dataframe(
+                        manual.groupby(creator_col)
+                        .agg(**agg)
+                        .reset_index()
+                        .sort_values("archives", ascending=False),
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                else:
+                    st.caption("No manual archives in this listing.")
+
+                if len(automated):
+                    st.markdown("**Automation**")
+                    st.dataframe(
+                        automated.groupby(creator_col)
+                        .agg(**agg)
+                        .reset_index()
+                        .sort_values("archives", ascending=False),
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+            st.markdown("**Manual rate, and what it implies**")
+            if not m_days:
+                st.caption("No manual archives in this listing.")
+            else:
+                projection = (
+                    f"about {8000 / m_recent:,.0f} working day(s)"
+                    if m_recent
+                    else "an unknown number of days"
+                )
+                st.caption(
+                    f"{m_total:,} archive(s) by hand over {m_days} active "
+                    f"day(s) -- mean {m_mean:,.0f}/day, {m_recent:,.0f}/day "
+                    f"over the last three. At the recent rate, 8,000 databases "
+                    f"would take {projection}. This is the figure an automated "
+                    "rate has to beat; record it alongside any POC timing "
+                    "(TASK-0022). It counts archives rather than volume, so a "
+                    "day of small databases and a day of large ones weigh the "
+                    "same -- read it with the GB chart above, not instead of it."
+                )
+                if a_days:
+                    st.caption(
+                        f"Automation: {a_total:,} archive(s) over {a_days} "
+                        f"active day(s), mean {a_mean:,.0f}/day. **Too small a "
+                        "sample to extrapolate from** -- it is early POC "
+                        "traffic, not a sustained rate."
+                    )
+
+            st.download_button(
+                "Download activity by day (CSV)",
+                data=table.reset_index().rename(columns={"_day": "day"}).to_csv(index=False),
+                file_name="vault-activity-by-day.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+    if vault_activity is not None and len(vault_activity) and _size_col is not None:
+        st.divider()
+        st.subheader("Data Vault size distribution")
+
+        sizes_mb = pd.to_numeric(vault_activity[_size_col], errors="coerce").dropna()
+        if not len(sizes_mb):
+            st.caption(f"No usable numbers in {_size_col!r}.")
+        else:
+            bands = (
+                ("< 1 GB", 0, 1024),
+                ("1-10 GB", 1024, 10240),
+                ("10-50 GB", 10240, 51200),
+                ("50-90 GB", 51200, 92160),
+                ("90-200 GB", 92160, 204800),
+                ("200-500 GB", 204800, 512000),
+                (">= 500 GB", 512000, None),
+            )
+            rows_out = []
+            for label, lo, hi in bands:
+                sel = sizes_mb[(sizes_mb >= lo) & ((sizes_mb < hi) if hi else True)]
+                rows_out.append(
+                    {
+                        "band": label,
+                        "archives": len(sel),
+                        "GB": round(float(sel.sum()) / 1024, 2),
+                    }
+                )
+            dist = pd.DataFrame(rows_out)
+
+            total_mb = float(sizes_mb.sum())
+            heavy = sizes_mb[sizes_mb >= 92160]
+            left_d, mid_d, right_d = st.columns(3)
+            left_d.metric("Total", f"{total_mb / 1024:,.0f} GB")
+            left_d.caption(f"{total_mb / 1048576:,.2f} TB")
+            mid_d.metric("Largest", f"{sizes_mb.max() / 1024:,.1f} GB")
+            right_d.metric(
+                "90 GB and over",
+                f"{len(heavy):,}",
+                f"{100 * float(heavy.sum()) / total_mb:.0f}% of volume"
+                if total_mb
+                else None,
+            )
+
+            st.bar_chart(dist.set_index("band")["archives"], height=240)
+            st.dataframe(dist, hide_index=True, use_container_width=True)
+            st.caption(
+                "Bands match the source-side analysis (RSK-0006), so the Vault "
+                "contents compare against the estate they came from. Sizes read "
+                f"from {_size_col!r}."
+            )
 
 with results_tab:
     frame = results_frame(result)
