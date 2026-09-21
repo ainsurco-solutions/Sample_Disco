@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -58,6 +59,16 @@ def main() -> int:
         help="ISO 8601 expirationDate for the archive call, e.g. "
         "2031-09-21T00:00:00.000. Omit for a permanent archive (per the "
         "reference doc).",
+    )
+    parser.add_argument(
+        "--content-type",
+        default="application/octet-stream",
+        help="Content-Type header sent on the S3 PUT (step 3). The "
+        "presigned URL's X-Amz-SignedHeaders includes 'content-type', so "
+        "this must exactly match whatever value the tenant used when it "
+        "signed the URL, or S3 returns 403 SignatureDoesNotMatch. Not "
+        "documented anywhere -- try a different value (or '' for no "
+        "header) against a fresh presigned URL if the default fails.",
     )
     parser.add_argument(
         "--confirm",
@@ -167,9 +178,36 @@ def main() -> int:
     _ok(f"got presigned upload URL ({'backupUri' if body.get('backupUri') else 'mdfUri'})")
 
     _step("3", f"PUT {bak_path.name} to presigned URL ({size_mb:.1f} MB)")
+    put_headers = {}
+    if args.content_type:
+        put_headers["Content-Type"] = args.content_type
+        print(f"    sending Content-Type: {args.content_type!r}")
+    else:
+        print("    sending no Content-Type header")
     with bak_path.open("rb") as fh:
-        put_resp = requests.put(mdf_uri, data=fh, timeout=None)
+        put_resp = requests.put(mdf_uri, data=fh, headers=put_headers, timeout=None)
     print(f"    status: {put_resp.status_code}")
+    if put_resp.status_code == 403 and "SignatureDoesNotMatch" in put_resp.text:
+        _fail(
+            "S3 SignatureDoesNotMatch -- the presigned URL was signed with "
+            "'content-type' as a required header (visible in its "
+            "X-Amz-SignedHeaders query param)."
+        )
+        match = re.search(r"<StringToSign>(.*?)</StringToSign>", put_resp.text, re.S)
+        if match:
+            print("\n    Full <StringToSign> from AWS (the canonical request it hashed):")
+            print("    " + match.group(1).replace("\\n", "\n    "))
+            print(
+                "\n    Look for a 'content-type:...' line above -- that exact "
+                "string is what --content-type must match."
+            )
+        else:
+            print(f"\n    Full response body (no <StringToSign> found):\n    {put_resp.text}")
+        print(
+            "\n    Each attempt needs a fresh presigned URL -- this one may "
+            "now be considered used."
+        )
+        return 1
     if put_resp.status_code >= 300:
         _fail(put_resp.text[:300])
         return 1
