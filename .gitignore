@@ -1,0 +1,13 @@
+# Compiled Python. These are machine- and run-specific, and were never meant
+# to be part of the published copy -- a stale .pyc surviving a source change
+# is a bug source, not history worth keeping.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Secrets. The .example files are committed; a real .env never is.
+.env
+.env.*
+!.env.example
+!.env.*.example
