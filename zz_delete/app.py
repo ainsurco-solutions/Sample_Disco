@@ -947,12 +947,99 @@ def render_step(step: Step) -> None:
             st.session_state.step_errors[step.state_rows] = str(exc)
             st.error(str(exc))
 
+def refresh_all_sources() -> tuple[list[str], list[str]]:
+    loaded: list[str] = []
+    failures: list[str] = []
+
+    servers = SQL.servers()
+    if not servers:
+        failures.append("Source: no SQL server configured in .env")
+    else:
+        rows: list = []
+        server_errors: list[str] = []
+        for server in servers:
+            try:
+                rows += load_inventory_from_sql(
+                    server.connection_string(), INVENTORY_QUERY, server.label
+                )
+            except QueryError as exc:
+                server_errors.append(f"Source ({server.label}): {exc}")
+        if server_errors:
+            failures.extend(server_errors)
+        else:
+            st.session_state["master_rows"] = rows
+            st.session_state["master_label"] = (
+                "Direct + RI" if len(servers) > 1 else f"{servers[0].label} server"
+            )
+            st.session_state.step_source["master_rows"] = "api"
+            st.session_state.step_errors.pop("master_rows", None)
+            st.session_state.raw_text.pop("master_rows", None)
+            loaded.append(f"Source ({len(rows):,})")
+
+    if not API.configured:
+        failures.append("Data Bridge and Data Vault: no API config in .env")
+        return loaded, failures
+
+    try:
+        bridge_rows = load_bridge_from_api(
+            API.exposures_url(), API.api_key, name_field=API.bridge_name_field
+        )
+    except QueryError as exc:
+        failures.append(f"Data Bridge: {exc}")
+    else:
+        st.session_state["target_rows"] = bridge_rows
+        st.session_state["target_label"] = "Data Bridge API"
+        st.session_state.step_source["target_rows"] = "api"
+        st.session_state.step_errors.pop("target_rows", None)
+        st.session_state.raw_text.pop("target_rows", None)
+        loaded.append(f"Data Bridge ({len(bridge_rows):,})")
+
+    try:
+        vault_rows = load_vault_from_api(
+            API.vault_url(), API.api_key, name_field=API.vault_name_field
+        )
+    except QueryError as exc:
+        failures.append(f"Data Vault: {exc}")
+    else:
+        st.session_state["vault_rows"] = vault_rows
+        st.session_state["vault_label"] = "Data Vault API"
+        st.session_state.step_source["vault_rows"] = "api"
+        st.session_state.step_errors.pop("vault_rows", None)
+        st.session_state.raw_text.pop("vault_rows", None)
+        loaded.append(f"Data Vault ({len(vault_rows):,})")
+
+    return loaded, failures
+
 with st.sidebar:
     st.title("\U0001F50E Reconcile")
     st.caption("Did every in-scope database reach Data Vault?")
 
     for step in STEPS:
         render_step(step)
+
+    st.divider()
+
+    if st.button(
+        "\u21bb  Refresh all",
+        key="refresh_all",
+        use_container_width=True,
+        help=(
+            "Runs steps 1, 3 and 4: the on-prem inventory, Data Bridge and "
+            "Data Vault. Scope is a file and is left alone."
+        ),
+    ):
+        with st.spinner("Fetching Source, Data Bridge and Data Vault..."):
+            loaded, failures = refresh_all_sources()
+        st.session_state["refresh_report"] = (loaded, failures)
+        st.rerun()
+
+    report = st.session_state.pop("refresh_report", None)
+    if report is not None:
+        refreshed, problems = report
+        if refreshed:
+            st.success("Refreshed: " + ", ".join(refreshed))
+        for problem in problems:
+            st.error(problem)
 
     st.divider()
 
