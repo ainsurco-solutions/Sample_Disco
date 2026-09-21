@@ -1810,6 +1810,7 @@ with report_tab:
     )
 
     rows_html = []
+    previous_name = ""
     for stage in stages:
         pct = 100.0 * stage.count / widest
         share = (
@@ -1822,8 +1823,11 @@ with report_tab:
             if stage.lost
             else ""
         )
-        if stage.lost and stage.of_previous:
-            lost += f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% kept</span>"
+        if stage.lost and stage.of_previous and previous_name:
+            lost += (
+                f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% of "
+                f"{html.escape(previous_name)}</span>"
+            )
         done = stage.name == "Data Vault" and report_result.vault_checked
         bar_class = "fn-bar fn-bar-done" if done else "fn-bar"
 
@@ -1869,7 +1873,7 @@ with report_tab:
         room = 100.0 - bar_end_pct
         if stage.lost and room > 20.0:
             kept = (
-                f"<span class='fn-gap-kept'>{stage.percent_of_previous:.0f}% kept</span>"
+                f"<span class='fn-gap-kept'>not yet in {html.escape(stage.name)}</span>"
                 if stage.of_previous
                 else ""
             )
@@ -1892,8 +1896,16 @@ with report_tab:
             f"<div class='fn-note'>{html.escape(stage.note)}</div>"
             "</div>"
         )
+        previous_name = stage.name
     st.markdown(
         f"<div class='fn'>{''.join(rows_html)}</div>", unsafe_allow_html=True
+    )
+
+    st.caption(
+        "Each row shows two figures: the share **of scope** (the same base "
+        "down the column) and the share **of the stage above** (a different "
+        "base on every row). The red number is what has not reached that "
+        "stage yet -- databases waiting or in transit, not databases lost."
     )
 
     keys = []
