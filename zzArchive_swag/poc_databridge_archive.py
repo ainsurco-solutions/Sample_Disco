@@ -30,13 +30,30 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--bak",
-        help=r"Path to the .bak file -- a UNC network path "
+        help=r"Path to a single .bak file -- a UNC network path "
         r"(\\fileserver\share\folder\test.bak) or a mapped drive letter "
-        r"(Z:\folder\test.bak) both work; pathlib handles either. Not "
-        "needed with --check-job.",
+        r"(Z:\folder\test.bak) both work; pathlib handles either. Exactly "
+        "one of --bak or --bak-dir is required for the full pipeline "
+        "(not needed with --check-job, --verify-only or --archive-only).",
     )
-    parser.add_argument("--instance", help="Data Bridge SQL instance name. Not needed with --check-job.")
-    parser.add_argument("--database", help="Database name to create. Not needed with --check-job.")
+    parser.add_argument(
+        "--bak-dir",
+        help="Path to a FOLDER of .bak files -- migrates every *.bak in it "
+        "(non-recursive, sorted by name), one at a time: import, archive, "
+        "verify, then the next file. The database name for each file is "
+        "derived from its filename (the stem, without .bak) -- so rename "
+        "files first if that's not the name you want on Data Bridge. Not "
+        "combined with --database (derived per file) or --bak.",
+    )
+    parser.add_argument(
+        "--instance",
+        help="Data Bridge SQL instance name. Not needed with --check-job.",
+    )
+    parser.add_argument(
+        "--database",
+        help="Database name to create. Required with --bak; not used "
+        "with --bak-dir (derived per file); not needed with --check-job.",
+    )
     parser.add_argument(
         "--check-job",
         default="",
@@ -159,17 +176,49 @@ def main() -> int:
             return 1
         session = requests.Session()
         session.headers.update({"Authorization": api.api_key})
-        return _verify_archive(session, api.host.rstrip("/"), args)
+        return _verify_archive(session, api.host.rstrip("/"), args, args.database)
 
-    if not args.instance or not args.database:
-        _fail("--instance and --database are required unless using --check-job or --verify-only.")
+    if not args.instance:
+        _fail("--instance is required unless using --check-job or --verify-only.")
         return 1
 
-    bak_path: Path | None = None
-    size_mb = 0.0
-    if not args.archive_only:
+    targets: list[tuple[Path, str]] = []
+    if args.archive_only:
+        if not args.database:
+            _fail("--database is required with --archive-only.")
+            return 1
+        if args.bak or args.bak_dir:
+            _fail("--bak/--bak-dir are not used with --archive-only -- nothing is uploaded.")
+            return 1
+    elif args.bak_dir:
+        if args.bak:
+            _fail("--bak and --bak-dir are mutually exclusive.")
+            return 1
+        if args.database:
+            _fail("--database is not used with --bak-dir -- it's derived per file from each filename.")
+            return 1
+        folder = Path(args.bak_dir)
+        if not folder.is_dir():
+            _fail(
+                f"Cannot find folder {folder} -- check the network path is "
+                "reachable and you have read access."
+            )
+            return 1
+        bak_files = sorted(folder.glob("*.bak"))
+        if not bak_files:
+            _fail(f"No .bak files found directly in {folder} (non-recursive).")
+            return 1
+        print(f"Found {len(bak_files)} .bak file(s) in {folder}:")
+        for f in bak_files:
+            size_mb = f.stat().st_size / (1024 * 1024)
+            print(f"  {f.name:<50} {size_mb:>8.1f} MB  -> database {f.stem!r}")
+        targets = [(f, f.stem) for f in bak_files]
+    else:
         if not args.bak:
-            _fail("--bak is required unless --archive-only or --check-job.")
+            _fail("--bak or --bak-dir is required unless --archive-only or --check-job.")
+            return 1
+        if not args.database:
+            _fail("--database is required with --bak.")
             return 1
         bak_path = Path(args.bak)
         if not bak_path.is_file():
@@ -180,16 +229,9 @@ def main() -> int:
                 "needs the drive connected in this session)."
             )
             return 1
-        size_bytes = bak_path.stat().st_size
-        size_mb = size_bytes / (1024 * 1024)
+        size_mb = bak_path.stat().st_size / (1024 * 1024)
         print(f"Using .bak file: {bak_path} ({size_mb:.1f} MB)")
-        if size_bytes >= LARGE_FILE_THRESHOLD_BYTES:
-            _fail(
-                "File is >= 5 GB. This POC only implements the small-database "
-                "flow -- use the large multipart flow for a file this size "
-                "(see client.py::_upload_large)."
-            )
-            return 1
+        targets = [(bak_path, args.database)]
 
     api = load_settings()
     if not api.has_key:
@@ -205,11 +247,14 @@ def main() -> int:
         print("\nDRY RUN -- pass --confirm to actually upload/import/archive.")
         print("Would run against:")
         print(f"  host              = {host}")
-        print(f"  mode              = {'archive-only (no upload/import)' if args.archive_only else 'full pipeline'}")
+        if args.archive_only:
+            print("  mode              = archive-only (no upload/import)")
+            print(f"  database          = {args.database}")
+        else:
+            print(f"  mode              = full pipeline, {len(targets)} database(s)")
+            for bak_path, database in targets:
+                print(f"    {bak_path.name} -> {database}")
         print(f"  instance          = {args.instance}")
-        print(f"  database          = {args.database}")
-        if bak_path is not None:
-            print(f"  bak file          = {bak_path} ({size_mb:.1f} MB)")
         print(
             f"  resource-group-id = "
             f"{args.resource_group_id or f'(none given -- will try to resolve via {args.entitlement!r})'}"
@@ -221,9 +266,7 @@ def main() -> int:
     session.headers.update({"Authorization": api.api_key})
 
     if args.archive_only:
-        return _archive_and_verify(session, host, args)
-
-    assert bak_path is not None
+        return _archive_and_verify(session, host, args, args.database)
 
     _step("1", "GET /databridge/v1/sql-instances")
     resp = session.get(f"{host}/databridge/v1/sql-instances", timeout=30)
@@ -237,9 +280,43 @@ def main() -> int:
         _fail(f"{args.instance!r} is not in the list above -- check spelling.")
         return 1
 
-    _step("2", f"GET .../Databases/{args.database}/import?importFrom=bak")
+    results: list[tuple[str, str, int]] = []
+    for bak_path, database in targets:
+        if len(targets) > 1:
+            banner = f"Migrating {bak_path.name} -> database {database!r}"
+            print(f"\n{'=' * len(banner)}\n{banner}\n{'=' * len(banner)}")
+        rc = _migrate_one(session, host, args, requests, bak_path, database)
+        results.append((bak_path.name, database, rc))
+        if rc != 0:
+            print(f"    !! {bak_path.name} failed -- continuing to the next file, if any.")
+
+    if len(results) > 1:
+        print(f"\n{'=' * 10}\nSummary\n{'=' * 10}")
+        for name, database, rc in results:
+            print(f"  {'OK  ' if rc == 0 else 'FAIL'}  {name:<50} -> {database}")
+
+    return 0 if all(rc == 0 for _, _, rc in results) else 1
+
+def _migrate_one(
+    session: object,
+    host: str,
+    args: argparse.Namespace,
+    requests_module: object,
+    bak_path: Path,
+    database: str,
+) -> int:
+    size_mb = bak_path.stat().st_size / (1024 * 1024)
+    if bak_path.stat().st_size >= LARGE_FILE_THRESHOLD_BYTES:
+        _fail(
+            f"{bak_path.name} is >= 5 GB. This POC only implements the "
+            "small-database flow -- use the large multipart flow for a "
+            "file this size (see client.py::_upload_large)."
+        )
+        return 1
+
+    _step("2", f"GET .../Databases/{database}/import?importFrom=bak")
     resp = session.get(
-        f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{args.database}/import",
+        f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{database}/import",
         params={"importFrom": _FORMAT_CODES["bak"]},
         headers={"accept": "text/plain"},
         timeout=30,
@@ -279,7 +356,7 @@ def main() -> int:
     else:
         print("    sending no Content-Type header")
     with bak_path.open("rb") as fh:
-        put_resp = requests.put(mdf_uri, data=fh, headers=put_headers, timeout=None)
+        put_resp = requests_module.put(mdf_uri, data=fh, headers=put_headers, timeout=None)
     print(f"    status: {put_resp.status_code}")
     if put_resp.status_code == 403 and "SignatureDoesNotMatch" in put_resp.text:
         _fail(
@@ -309,7 +386,7 @@ def main() -> int:
 
     _step("4", "POST .../import (trigger job)")
     resp = session.post(
-        f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{args.database}/import",
+        f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{database}/import",
         params={"importFrom": _FORMAT_CODES["bak"]},
         headers={"accept": "application/json", "content-type": "application/json"},
         json={"groupIds": []},
@@ -338,16 +415,16 @@ def main() -> int:
         _fail("import did not succeed -- stopping before archiving")
         return 1
 
-    return _archive_and_verify(session, host, args)
+    return _archive_and_verify(session, host, args, database)
 
-def _archive_and_verify(session: object, host: str, args: argparse.Namespace) -> int:
+def _archive_and_verify(session: object, host: str, args: argparse.Namespace, database: str) -> int:
     _step("6", "GET .../databases (confirm database landed)")
     resp = session.get(f"{host}/databridge/v1/sql-instances/{args.instance}/databases", timeout=30)
     print(f"    status: {resp.status_code}")
     if resp.status_code >= 400:
         _fail(resp.text[:300])
         return 1
-    landed = any(item.get("name") == args.database for item in resp.json())
+    landed = any(item.get("name") == database for item in resp.json())
     _ok(f"database present on Data Bridge: {landed}")
     if not landed:
         _fail("the database isn't listed on Data Bridge -- investigate before archiving")
@@ -398,7 +475,7 @@ def _archive_and_verify(session: object, host: str, args: argparse.Namespace) ->
     if args.retention_date:
         archive_body["expirationDate"] = args.retention_date
     resp = session.post(
-        f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{args.database}/archive",
+        f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{database}/archive",
         headers=archive_headers,
         json=archive_body,
         timeout=30,
@@ -425,13 +502,13 @@ def _archive_and_verify(session: object, host: str, args: argparse.Namespace) ->
         else:
             _ok(f"archive job terminal status: {archive_status}")
 
-    return _verify_archive(session, host, args)
+    return _verify_archive(session, host, args, database)
 
-def _verify_archive(session: object, host: str, args: argparse.Namespace) -> int:
-    _step("9", f'GET /platform/admindata/v1/archives?filter=archiveName="{args.database}" (verify)')
+def _verify_archive(session: object, host: str, args: argparse.Namespace, database: str) -> int:
+    _step("9", f'GET /platform/admindata/v1/archives?filter=archiveName="{database}" (verify)')
     resp = session.get(
         f"{host}/platform/admindata/v1/archives",
-        params={"filter": f'archiveName="{args.database}"', "limit": 100, "offset": 0},
+        params={"filter": f'archiveName="{database}"', "limit": 100, "offset": 0},
         timeout=30,
     )
     print(f"    status: {resp.status_code}")
@@ -439,7 +516,7 @@ def _verify_archive(session: object, host: str, args: argparse.Namespace) -> int
         _fail(resp.text[:300])
         return 1
     rows = resp.json()
-    _ok(f"{len(rows)} archive row(s) matching archiveName == {args.database!r}")
+    _ok(f"{len(rows)} archive row(s) matching archiveName == {database!r}")
     for row in rows:
         print(
             f"       archiveId={row.get('archiveId')} "
