@@ -630,7 +630,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                         "target_exposure_name": f.target_exposure_name,
                         "state": f.state,
                         "progress": _STATE_PROGRESS[FileState(f.state)],
-                        "size_bytes": f.size_bytes,
+                        "size_mb": round(f.size_bytes / (1024 * 1024), 1),
                         "attempts": f.attempts,
                         "started_at": f.created_at,
                         "ended_at": terminal_times.get(f.file_id),
@@ -647,7 +647,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                     "progress": st.column_config.ProgressColumn(
                         "Progress", min_value=0, max_value=100, format="%d%%"
                     ),
-                    "size_bytes": st.column_config.NumberColumn("Size", format="compact"),
+                    "size_mb": st.column_config.NumberColumn("Size (MB)", format="%.1f"),
                     "attempts": st.column_config.NumberColumn("Attempts"),
                     "started_at": st.column_config.DatetimeColumn("Started", format="HH:mm:ss"),
                     "ended_at": st.column_config.DatetimeColumn("Ended", format="HH:mm:ss"),
