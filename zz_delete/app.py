@@ -277,8 +277,6 @@ st.markdown(
         border-radius:4px; height:2rem; display:flex; align-items:center;
       }
 
-      .fn-track-over { overflow:visible; }
-
       .fn-bar {
         position:absolute; inset:0 auto 0 0; border-radius:4px;
         background:rgba(128,128,128,.42);
@@ -290,12 +288,21 @@ st.markdown(
       .fn-seg-transit { background:#d98324; }
       .fn-seg-only { border-radius:4px; }
 
+      .fn-seg-scope { background:#3a6ea5; border-radius:4px 0 0 4px; }
       .fn-seg-absent {
         background:repeating-linear-gradient(
-          135deg, #b3261e, #b3261e 4px, #8f1d18 4px, #8f1d18 8px
+          135deg, #c4342c, #c4342c 5px, #9b241d 5px, #9b241d 10px
         );
         border-radius:0 4px 4px 0;
       }
+
+      .fn-gap {
+        position:absolute; top:0; bottom:0;
+        display:flex; align-items:center;
+        padding-left:.5rem; font-size:.8rem; font-weight:600;
+        color:#b3261e; opacity:.85; white-space:nowrap; pointer-events:none;
+      }
+      .fn-gap-kept { font-weight:400; opacity:.75; margin-left:.4rem; }
       .fn-legend {
         display:flex; gap:.9rem; flex-wrap:wrap;
         font-size:.75rem; opacity:.75; margin:-.2rem 0 .8rem 8.25rem;
@@ -325,6 +332,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+MINUS = "\u2212"
 
 RED = "#b3261e"
 AMBER = "#b26a00"
@@ -1772,7 +1781,7 @@ with report_tab:
             else ""
         )
         lost = (
-            f"−{stage.lost}"
+            f"−{stage.lost:,}"
             if stage.lost
             else ""
         )
@@ -1780,6 +1789,8 @@ with report_tab:
             lost += f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% kept</span>"
         done = stage.name == "Data Vault" and report_result.vault_checked
         bar_class = "fn-bar fn-bar-done" if done else "fn-bar"
+
+        bar_end_pct = pct
 
         if (
             stage.name == "Data Bridge"
@@ -1806,19 +1817,37 @@ with report_tab:
 
         track_class = "fn-track"
         if stage.unreachable and widest:
-            over_pct = 100.0 * stage.unreachable / widest
-            track_class = "fn-track fn-track-over"
-            bar_html += (
+            absent_pct = 100.0 * stage.unreachable / widest
+            bar_end_pct = pct + absent_pct
+            bar_html = (
+                f"<div class='fn-seg fn-seg-scope' style='left:0;"
+                f"width:{pct:.1f}%'"
+                f" title='{stage.count} wanted and on prem'></div>"
                 f"<div class='fn-seg fn-seg-absent' style='left:{pct:.1f}%;"
-                f"width:{over_pct:.1f}%'"
+                f"width:{absent_pct:.1f}%'"
                 f" title='{stage.unreachable} wanted but not on prem'></div>"
             )
+
+        gap_html = ""
+        room = 100.0 - bar_end_pct
+        if stage.lost and room > 20.0:
+            kept = (
+                f"<span class='fn-gap-kept'>{stage.percent_of_previous:.0f}% kept</span>"
+                if stage.of_previous
+                else ""
+            )
+            gap_html = (
+                f"<div class='fn-gap' style='left:{bar_end_pct:.1f}%'>"
+                f"{MINUS}{stage.lost:,}{kept}</div>"
+            )
+            lost = ""
 
         rows_html.append(
             "<div class='fn-row'>"
             f"<div class='fn-stage'>{html.escape(stage.name)}</div>"
             f"<div class='{track_class}'>"
             f"{bar_html}"
+            f"{gap_html}"
             f"<div class='fn-value'>{stage.count}"
             f"<span class='fn-share'>{share}</span></div>"
             "</div>"
@@ -1840,9 +1869,11 @@ with report_tab:
         )
     if scope_absent:
         keys.append(
+            "<span><span class='fn-key' style='background:#3a6ea5'></span>"
+            f"Wanted and on prem ({scope_base:,})</span>"
             "<span><span class='fn-key' style='background:"
-            "repeating-linear-gradient(135deg,#b3261e,#b3261e 3px,"
-            "#8f1d18 3px,#8f1d18 6px)'></span>"
+            "repeating-linear-gradient(135deg,#c4342c,#c4342c 3px,"
+            "#9b241d 3px,#9b241d 6px)'></span>"
             f"Wanted but not on prem ({scope_absent:,})</span>"
         )
     if keys:
@@ -1855,8 +1886,9 @@ with report_tab:
         st.caption(
             f"**The percentages above are of the {scope_base:,} databases that "
             f"exist on prem and were wanted.** The {scope_absent:,} on the "
-            "scope list with no on-prem database are shown as the red overhang "
-            "and left out of the base: nothing can flow from a database that "
+            "scope list with no on-prem database are the hatched red tail of "
+            "the In scope bar, and are left out of the base: nothing can flow "
+            "from a database that "
             "is not there, and counting them in would mean progress could "
             "never read 100%. They are a data-quality question about the scope "
             "list, not migration work outstanding."
