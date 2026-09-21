@@ -170,23 +170,42 @@ API" does exactly this, and it fails at the upload step rather than at
 startup.
 
 --- 1. can this machine reach S3 at all? ------------------------------
-A 403 or 404 is GOOD -- it means the request arrived. A timeout, a reset
-or ConnectionClosedError is the block.
+A 403 or 404 is GOOD -- the request arrived. A timeout or a reset is a
+block. CERTIFICATE_VERIFY_FAILED is NEITHER: it means you reached the
+proxy and this particular command did not trust its certificate. Plain
+httpx does not load truststore, so that result says nothing about
+whether AMIGO can connect -- see check 2, which is the real test.
 
 python -c "import httpx; r=httpx.get('https://rms-tenants-pe-eu-west-1.s3.amazonaws.com', timeout=15); print('reached S3, HTTP', r.status_code)"
 
---- 2. what proxy settings are actually in force? ---------------------
+--- 2. the same request, the way AMIGO makes it -----------------------
+THIS is the one that matters. truststore routes verification through the
+Windows certificate store, where the proxy's internal root already is,
+and it patches the ssl layer so it covers boto3 as well as httpx.
+
+python -c "import sys; sys.path.insert(0,'src'); from migration_hub import _tls; ok=_tls.inject(); print('truststore active:', ok, _tls.unavailable_reason or ''); import httpx; r=httpx.get('https://rms-tenants-pe-eu-west-1.s3.amazonaws.com', timeout=15); print('reached S3, HTTP', r.status_code)"
+
+  truststore active: True  + an HTTP status  -> the path works; the upload
+      failure is something else, and check 3 will show it
+  truststore active: True  + CERTIFICATE_VERIFY_FAILED -> the proxy root is
+      not in the Windows store, or this is a different proxy from the one
+      the Moody's host goes through
+  truststore active: False -> truststore did not load; the reason is
+      printed beside it
+
+--- 3. an actual S3 call through boto3 --------------------------------
+Closest to the upload itself: same library, same signing, same endpoint.
+Expect a credentials or access error -- that still proves the CONNECTION
+works, which is what is being tested here.
+
+python -c "import sys; sys.path.insert(0,'src'); from migration_hub import _tls; _tls.inject(); import boto3; boto3.client('s3', region_name='eu-west-1').list_buckets()"
+
+--- 4. what proxy settings are actually in force? ---------------------
 python -c "import os; [print(k, '=', os.environ.get(k)) for k in ('HTTPS_PROXY','HTTP_PROXY','NO_PROXY')]"
 
-If HTTPS_PROXY is set, the rule behind it must permit BOTH hosts. If it
-is empty and the network requires a proxy, boto3 never had one -- set it
-in .env and re-run.
-
---- 3. the same request boto3 makes ------------------------------------
-Closer to the real thing than a plain GET: same library, same signing,
-same endpoint. It will report the AWS error rather than a generic one.
-
-python -c "import boto3,botocore; c=boto3.client('s3', region_name='eu-west-1'); print(c.meta.endpoint_url)"
+A rule written for "the Moody's API" covers api-euw1.rms.com and not
+*.s3.amazonaws.com. They are different hosts, which is why
+check_credentials.py passes and the upload does not.
 
 --- What to tell the network team --------------------------------------
 Outbound HTTPS to *.s3.eu-west-1.amazonaws.com and
