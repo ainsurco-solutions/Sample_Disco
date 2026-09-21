@@ -1,138 +1,135 @@
-AMIGO -- client VM setup, copy-paste commands
-=============================================
+AMIGO -- running a file through, copy-paste commands
+====================================================
 
-Written 2026-09-21 for the MS Amlin POC VM (Python 3.14.5, prod-only,
-registry on OneDrive). Run from the tree root -- the one containing
-config\ and .env. Paths below assume C:\Users\GDSDRA\OneDrive - MS
-Amlin\_Projects\POC; change them if yours differs.
+For the MS Amlin POC VM. Setup is done: the environment is configured,
+the schema is applied and check_credentials.py passes against the live
+tenant, so those steps are no longer here.
+
+Run from the tree root -- the one holding config\ and .env. Paths below
+assume C:\Users\GDSDRA\OneDrive - MS Amlin\_Projects\POC; change them if
+yours differs.
 
 Each step says what to expect. If a step does not produce it, stop there
 rather than running the next one.
 
 
 -----------------------------------------------------------------------
-STEP 1 -- what is .env actually supplying?
+STEP 1 -- one file, dry run, no vendor calls
 -----------------------------------------------------------------------
-Run this in a FRESH terminal. A $env: value set earlier in a session
-takes precedence over .env -- load_dotenv() does not overwrite variables
-that are already set -- so an old value can mask the file.
+Run these ONE AT A TIME and read each result before the next. Any batch
+id will do; SMOKE01 is used here so it is obvious later what it was for.
 
-python -c "from dotenv import load_dotenv; load_dotenv(); import os; [print(k, '=', repr(os.environ.get(k))) for k in ('MIGRATION_HUB_ENV','MIGRATION_HUB_DATABASE_URL','MIGRATION_HUB_ALLOW_NETWORK_REGISTRY','MOODYS_API_KEY')]"
+--- 1a. See what is actually on the share ------------------------------
+plan registers everything matching *.bak unless capped, and it recurses
+into subfolders. Look before you scan, and pick a SMALL file for the
+first pass -- the first real upload should not be a 90 GB RDM.
 
-EXPECT: four lines, none of them None.
+  Get-ChildItem "\\sriskpd0001\Backup\Silviu" -Filter *.bak -Recurse | Select-Object Name, @{n='GB';e={[math]::Round($_.Length/1GB,2)}}
 
-  MIGRATION_HUB_ENV                    -> 'prod'
-  MIGRATION_HUB_DATABASE_URL           -> must NOT contain D:/  (no D drive on this VM)
-  MIGRATION_HUB_ALLOW_NETWORK_REGISTRY -> 'yes'   (required: the registry is under OneDrive)
-  MOODYS_API_KEY                       -> your key
+RatCat's backup process runs independently of AMIGO, so make sure
+whatever you point at has FINISHED being written. plan records size and
+last-write time at discovery and compares them again after staging; a
+file still growing will fail there rather than here.
 
-Anything None, or a D:/ path, means .env needs the edit in step 2.
-
-
------------------------------------------------------------------------
-STEP 2 -- .env contents
------------------------------------------------------------------------
-Only if step 1 showed something wrong. Open .env and make these four
-lines read exactly this. No quotes, no spaces around the = sign.
-
-MIGRATION_HUB_ENV=prod
-MOODYS_API_KEY=<your key>
-MIGRATION_HUB_ALLOW_NETWORK_REGISTRY=yes
-MIGRATION_HUB_DATABASE_URL=sqlite:///C:/Users/GDSDRA/OneDrive - MS Amlin/_Projects/POC/registry.db
-
-Notes:
-  - Forward slashes, even on Windows. sqlite:/// + an absolute path
-    means three slashes, then C:.
-  - ALLOW_NETWORK_REGISTRY is required because the path contains
-    "onedrive". Startup refuses such a path otherwise: a sync client
-    rewrites the file from a second process, which is how SQLite gets a
-    torn write. Accepted here because local disk is not writable for
-    this account (RSK-0008).
-  - SAVE THE FILE. An unsaved editor tab is not on disk; VS Code shows a
-    white dot on the tab when it has unsaved changes.
-
-Then re-run step 1 in a fresh terminal.
-
-
------------------------------------------------------------------------
-STEP 3 -- load the config
------------------------------------------------------------------------
-migration-hub status
-
-EXPECT: "environment: prod" in yellow, then a count per state.
-
-Also watch for a line about WAL. With ALLOW_NETWORK_REGISTRY set, the
-usual hard check is skipped, so that line is the ONLY signal of whether
-concurrency degraded:
-  - "WAL was granted"          -> good
-  - "fell back to ... journal" -> readers now block the writer
-
-Common failures:
-  "No config file for environment 'dev'"   -> MIGRATION_HUB_ENV not reaching
-                                              the process; go back to step 1
-  "Requested environment 'dev' but ...     -> same cause
-   config\prod.json declares 'prod'"
-  "cannot find the path specified: 'D:\'"  -> database URL still points at
-                                              a drive that does not exist
-  "registry path ... is inside a
-   file-sync folder"                       -> ALLOW_NETWORK_REGISTRY not set
-
-
------------------------------------------------------------------------
-STEP 4 -- prove the vendor boundary
------------------------------------------------------------------------
-python scripts\check_credentials.py
-
-EXPECT: it reads the key, calls Moody's for AWS credentials, and reports
-which S3 auth model came back.
-
-On a certificate error it names TLS inspection as the likely cause and
-says whether truststore is active. Do NOT work around that with
-verify=False.
-
-
------------------------------------------------------------------------
-STEP 5 -- one file, dry run, no vendor calls
------------------------------------------------------------------------
-Run these one at a time and read each result before the next.
-
+--- 1b. plan -----------------------------------------------------------
 migration-hub plan --batch SMOKE01 --max-files 1
+
+EXPECT: registered 1 new file(s) into batch 'SMOKE01' from \\sriskpd0001\...
+
+Read-only and idempotent -- re-running never resets progress on rows
+that already exist, so it is safe to repeat. Files are taken in sorted
+order, so --max-files 1 picks the same one every time.
+
+If it registers 0, nothing under source_root matches *.bak. Check the
+path and the pattern in config\prod.json.
+
+--- 1c. validate -------------------------------------------------------
 migration-hub validate --batch SMOKE01
+
+EXPECT: validated 1 file(s): 1 VALIDATED, 0 REJECTED
+
+This is the step most likely to reject something. It checks the file
+exists, is a file, ends in .bak, is not zero-length, and that the target
+exposure name derived from the filename is valid. A rejection names the
+file and the reason; an unusual filename is the usual cause.
+
+--- 1d. stage ----------------------------------------------------------
 migration-hub stage --batch SMOKE01
+
+EXPECT: staged 1 file(s) in place (no copy)
+
+"in place" because stage_locally is false -- nothing is copied and the
+upload reads straight from the share. A copy would need somewhere to put
+35 TB.
+
+--- 1e. run (still a dry run) ------------------------------------------
 migration-hub run --batch SMOKE01 --max-files 1
 
-EXPECT:
-  plan     -> "registered 1 new file(s) into batch 'SMOKE01' from ..."
-  validate -> "validated 1 file(s): 1 VALIDATED, 0 REJECTED"
-  stage    -> "staged 1 file(s) in place (no copy)"   (stage_locally is false)
-  run      -> a per-file outcome line, then a running total
+EXPECT: a per-file outcome line, then a running total.
 
-plan is read-only and safe to repeat. With dry_run true, run makes no
-vendor calls and returns the file to STAGED unchanged.
+With dry_run true this makes NO vendor calls and returns the file to
+STAGED unchanged. It deliberately does not mark the batch RUNNING
+either, so the batch does not read as in-progress forever.
 
-If plan registers 0 files, source_root has no *.bak in it. Check:
+--- 1f. confirm --------------------------------------------------------
+migration-hub status --batch SMOKE01
 
-  Get-ChildItem "\sriskpd0001\Backup\Silviu" -Filter *.bak | Select-Object -First 3 Name, Length
+The counts should reflect what happened. Nothing has left the building.
 
 
 -----------------------------------------------------------------------
-STEP 6 -- the real thing
+STEP 2 -- the real thing
 -----------------------------------------------------------------------
-Only after step 5 is clean. In config\prod.json set:
+Only once step 1 is clean.
+
+--- 2a. Pause OneDrive sync -------------------------------------------
+The registry lives on a synced path. A sync client rewriting the file
+from another process is how SQLite gets a torn write, and the failure is
+a corrupted registry rather than an error. Pause sync for the duration
+of the run.
+
+--- 2b. Back up the registry ------------------------------------------
+scriptsackup_registry.bat
+
+Writes a dated VACUUM INTO snapshot -- a consistent copy of a live
+database, which a plain file copy is not. Set MIGRATION_HUB_BACKUP_DIR
+in .env to send it off this machine, or pass a folder as the argument.
+
+--- 2c. Go live --------------------------------------------------------
+In config\prod.json set:
 
   "dry_run": false
 
-then run ONLY the last command again:
+then run ONLY this again:
 
 migration-hub run --batch SMOKE01 --max-files 1
 
-This uploads one file to the live Moody's tenant. Leave
-max_concurrent_uploads and max_concurrent_imports at 1 -- three devs on
-this tenant at 1 each is already three concurrent uploads.
+Watch it move STAGED -> UPLOADING -> UPLOADED -> IMPORTING -> VERIFYING
+-> COMPLETED. The import is polled, so IMPORTING can sit for a while:
+poll_interval_seconds is 60 and max_poll_minutes is 360.
 
-Afterwards, put dry_run back to true so the next command is not
-accidentally live.
+Leave max_concurrent_uploads and max_concurrent_imports at 1. Three devs
+against this tenant at 1 each is already three concurrent uploads.
 
+--- 2d. Put the safety catch back --------------------------------------
+Set "dry_run": true again in config\prod.json, so the next command is
+not accidentally live. Resume OneDrive sync.
+
+
+-----------------------------------------------------------------------
+IF A RUN FAILS PART WAY
+-----------------------------------------------------------------------
+migration-hub status --batch SMOKE01     where it stopped
+migration-hub retry  --batch SMOKE01     retry the FAILED files
+migration-hub reap                       release a dead worker's claims
+
+A file in FAILED is visible and retryable -- the registry is the record
+of what happened, which is why it is worth backing up.
+
+Do not retry a failed upload blindly. The design is to check the target
+against Moody's platform first: a reported failure does not prove
+nothing landed, and re-uploading a database that is already there
+creates a duplicate.
 
 -----------------------------------------------------------------------
 IF SOMETHING LOOKS WRONG

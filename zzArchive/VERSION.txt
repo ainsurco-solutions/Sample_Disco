@@ -1,3 +1,3 @@
-source commit : ae781754364b017d4f6cb6cf0e35d10b00629f71
-               feat: a double-clickable copy check (TASK-0071)
+source commit : 57f46135523726e90fd8f0b6462a6aa739c3d7d0
+               docs: VM-SETUP.txt covers the run, not the setup that is now done (TASK-0071)
 files         : 74
