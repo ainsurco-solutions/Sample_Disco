@@ -1,0 +1,146 @@
+AMIGO -- client VM setup, copy-paste commands
+=============================================
+
+Written 2026-09-21 for the MS Amlin POC VM (Python 3.14.5, prod-only,
+registry on OneDrive). Run from the tree root -- the one containing
+config\ and .env. Paths below assume C:\Users\GDSDRA\OneDrive - MS
+Amlin\_Projects\POC; change them if yours differs.
+
+Each step says what to expect. If a step does not produce it, stop there
+rather than running the next one.
+
+
+-----------------------------------------------------------------------
+STEP 1 -- what is .env actually supplying?
+-----------------------------------------------------------------------
+Run this in a FRESH terminal. A $env: value set earlier in a session
+takes precedence over .env -- load_dotenv() does not overwrite variables
+that are already set -- so an old value can mask the file.
+
+python -c "from dotenv import load_dotenv; load_dotenv(); import os; [print(k, '=', repr(os.environ.get(k))) for k in ('MIGRATION_HUB_ENV','MIGRATION_HUB_DATABASE_URL','MIGRATION_HUB_ALLOW_NETWORK_REGISTRY','MOODYS_API_KEY')]"
+
+EXPECT: four lines, none of them None.
+
+  MIGRATION_HUB_ENV                    -> 'prod'
+  MIGRATION_HUB_DATABASE_URL           -> must NOT contain D:/  (no D drive on this VM)
+  MIGRATION_HUB_ALLOW_NETWORK_REGISTRY -> 'yes'   (required: the registry is under OneDrive)
+  MOODYS_API_KEY                       -> your key
+
+Anything None, or a D:/ path, means .env needs the edit in step 2.
+
+
+-----------------------------------------------------------------------
+STEP 2 -- .env contents
+-----------------------------------------------------------------------
+Only if step 1 showed something wrong. Open .env and make these four
+lines read exactly this. No quotes, no spaces around the = sign.
+
+MIGRATION_HUB_ENV=prod
+MOODYS_API_KEY=<your key>
+MIGRATION_HUB_ALLOW_NETWORK_REGISTRY=yes
+MIGRATION_HUB_DATABASE_URL=sqlite:///C:/Users/GDSDRA/OneDrive - MS Amlin/_Projects/POC/registry.db
+
+Notes:
+  - Forward slashes, even on Windows. sqlite:/// + an absolute path
+    means three slashes, then C:.
+  - ALLOW_NETWORK_REGISTRY is required because the path contains
+    "onedrive". Startup refuses such a path otherwise: a sync client
+    rewrites the file from a second process, which is how SQLite gets a
+    torn write. Accepted here because local disk is not writable for
+    this account (RSK-0008).
+  - SAVE THE FILE. An unsaved editor tab is not on disk; VS Code shows a
+    white dot on the tab when it has unsaved changes.
+
+Then re-run step 1 in a fresh terminal.
+
+
+-----------------------------------------------------------------------
+STEP 3 -- load the config
+-----------------------------------------------------------------------
+migration-hub status
+
+EXPECT: "environment: prod" in yellow, then a count per state.
+
+Also watch for a line about WAL. With ALLOW_NETWORK_REGISTRY set, the
+usual hard check is skipped, so that line is the ONLY signal of whether
+concurrency degraded:
+  - "WAL was granted"          -> good
+  - "fell back to ... journal" -> readers now block the writer
+
+Common failures:
+  "No config file for environment 'dev'"   -> MIGRATION_HUB_ENV not reaching
+                                              the process; go back to step 1
+  "Requested environment 'dev' but ...     -> same cause
+   config\prod.json declares 'prod'"
+  "cannot find the path specified: 'D:\'"  -> database URL still points at
+                                              a drive that does not exist
+  "registry path ... is inside a
+   file-sync folder"                       -> ALLOW_NETWORK_REGISTRY not set
+
+
+-----------------------------------------------------------------------
+STEP 4 -- prove the vendor boundary
+-----------------------------------------------------------------------
+python scripts\check_credentials.py
+
+EXPECT: it reads the key, calls Moody's for AWS credentials, and reports
+which S3 auth model came back.
+
+On a certificate error it names TLS inspection as the likely cause and
+says whether truststore is active. Do NOT work around that with
+verify=False.
+
+
+-----------------------------------------------------------------------
+STEP 5 -- one file, dry run, no vendor calls
+-----------------------------------------------------------------------
+Run these one at a time and read each result before the next.
+
+migration-hub plan --batch SMOKE01 --max-files 1
+migration-hub validate --batch SMOKE01
+migration-hub stage --batch SMOKE01
+migration-hub run --batch SMOKE01 --max-files 1
+
+EXPECT:
+  plan     -> "registered 1 new file(s) into batch 'SMOKE01' from ..."
+  validate -> "validated 1 file(s): 1 VALIDATED, 0 REJECTED"
+  stage    -> "staged 1 file(s) in place (no copy)"   (stage_locally is false)
+  run      -> a per-file outcome line, then a running total
+
+plan is read-only and safe to repeat. With dry_run true, run makes no
+vendor calls and returns the file to STAGED unchanged.
+
+If plan registers 0 files, source_root has no *.bak in it. Check:
+
+  Get-ChildItem "\sriskpd0001\Backup\Silviu" -Filter *.bak | Select-Object -First 3 Name, Length
+
+
+-----------------------------------------------------------------------
+STEP 6 -- the real thing
+-----------------------------------------------------------------------
+Only after step 5 is clean. In config\prod.json set:
+
+  "dry_run": false
+
+then run ONLY the last command again:
+
+migration-hub run --batch SMOKE01 --max-files 1
+
+This uploads one file to the live Moody's tenant. Leave
+max_concurrent_uploads and max_concurrent_imports at 1 -- three devs on
+this tenant at 1 each is already three concurrent uploads.
+
+Afterwards, put dry_run back to true so the next command is not
+accidentally live.
+
+
+-----------------------------------------------------------------------
+IF SOMETHING LOOKS WRONG
+-----------------------------------------------------------------------
+Verify the copy against what was published (no network needed):
+
+python scripts\check_copy.py --all
+
+--all includes config-class files, which the default run skips. On this
+staged transfer, files not yet copied show as EMPTY and that is
+expected. What matters is that nothing you DID copy shows as DIFFER.
