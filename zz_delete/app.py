@@ -2054,7 +2054,9 @@ with report_tab:
             stamps = pd.to_datetime(activity[created_col], errors="coerce", utc=True)
             unparsed = int(stamps.isna().sum())
             activity = activity[stamps.notna()].copy()
-            activity["_day"] = stamps[stamps.notna()].dt.date
+            activity["_day"] = (
+                stamps[stamps.notna()].dt.tz_localize(None).dt.floor("D")
+            )
 
             if unparsed:
                 st.caption(
@@ -2094,11 +2096,26 @@ with report_tab:
             a_total, a_days, a_mean, a_recent = _rate(automated)
 
             left_m, mid_m, right_m = st.columns(3)
-            left_m.metric("Manual", f"{m_total:,}", f"{m_mean:,.0f}/day")
-            mid_m.metric("Automation", f"{a_total:,}", f"{a_mean:,.0f}/day" if a_days else None)
+            left_m.metric("Manual", f"{m_total:,}")
+            left_m.caption(
+                f"{m_mean:,.0f}/day over {m_days} active day(s)"
+                if m_days
+                else "no archives"
+            )
+            mid_m.metric("Automation", f"{a_total:,}")
+            mid_m.caption(
+                f"{a_mean:,.0f}/day over {a_days} active day(s)"
+                if a_days
+                else "none yet"
+            )
             right_m.metric("Total in Vault", f"{m_total + a_total:,}")
+            right_m.caption(
+                f"{100.0 * a_total / (m_total + a_total):.1f}% automated"
+                if (m_total + a_total)
+                else ""
+            )
 
-            st.markdown("**Archived per day**")
+            st.markdown("**DB Archived per day**")
             per_day_split = (
                 activity.groupby(["_day", "_source"]).size().unstack(fill_value=0)
             )
