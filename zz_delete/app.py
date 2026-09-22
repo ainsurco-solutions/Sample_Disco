@@ -314,6 +314,14 @@ st.markdown(
         position:relative; margin-left:auto; padding-right:.6rem;
         font-weight:700; font-size:.95rem;
       }
+
+      .fn-value-in {
+        position:absolute; left:.7rem; top:0; bottom:0;
+        display:flex; align-items:center;
+        color:#fff; font-weight:700; font-size:.95rem;
+        text-shadow:0 1px 2px rgba(0,0,0,.35);
+        pointer-events:none; white-space:nowrap;
+      }
       .fn-drop { font-size:.85rem; font-weight:600; color:#b3261e; }
 
       .fn-share {
@@ -1828,8 +1836,11 @@ with report_tab:
                 f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% of "
                 f"{html.escape(previous_name)}</span>"
             )
+        done_seg_pct = 0.0
         done = stage.name == "Data Vault" and report_result.vault_checked
         bar_class = "fn-bar fn-bar-done" if done else "fn-bar"
+        if done:
+            done_seg_pct = pct
 
         bar_end_pct = pct
 
@@ -1843,6 +1854,7 @@ with report_tab:
             done_pct = pct * archived_here / stage.count
             transit_pct = pct - done_pct
             done_class = "fn-seg fn-seg-done" + ("" if transit_here else " fn-seg-only")
+            done_seg_pct = done_pct
             bar_html = (
                 f"<div class='{done_class}' style='left:0;width:{done_pct:.1f}%'"
                 f" title='{archived_here} archived in Data Vault'></div>"
@@ -1883,14 +1895,25 @@ with report_tab:
             )
             lost = ""
 
+        value_inside = done_seg_pct >= 9.0
+        if value_inside:
+            value_html = (
+                f"<div class='fn-value-in'>{stage.count:,}</div>"
+                f"<div class='fn-value'><span class='fn-share'>{share}</span></div>"
+            )
+        else:
+            value_html = (
+                f"<div class='fn-value'>{stage.count:,}"
+                f"<span class='fn-share'>{share}</span></div>"
+            )
+
         rows_html.append(
             "<div class='fn-row'>"
             f"<div class='fn-stage'>{html.escape(stage.name)}</div>"
             f"<div class='{track_class}'>"
             f"{bar_html}"
             f"{gap_html}"
-            f"<div class='fn-value'>{stage.count}"
-            f"<span class='fn-share'>{share}</span></div>"
+            f"{value_html}"
             "</div>"
             f"<div class='fn-drop'>{lost}</div>"
             f"<div class='fn-note'>{html.escape(stage.note)}</div>"
