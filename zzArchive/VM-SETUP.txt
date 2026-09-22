@@ -41,13 +41,13 @@ from the CLI transfer. These are the ones to add:
   src\migration_hub\ui\__init__.py        (package marker)
   src\migration_hub\ui\app.py
   .streamlit\config.toml                  (the theme)
-  .streamlit\config.navy.toml             (the alternative theme)
+  .streamlit\config.teal.toml             (the alternative, inert)
 
 .streamlit\config.toml is easy to miss -- the folder name starts with a
 dot and Explorer may hide it. Without it the screens fall back to
 Streamlit's stock look: a BRIGHT RED "Add batch" button on a white
 background. That is a missing file, not a fault in the app. With it you
-get the agreed palette -- teal primary, IBM Plex type, and a dark mode
+get the chosen palette -- MS Amlin navy, IBM Plex type, and a dark mode
 you can toggle from the app's own settings menu.
 
 Create the folder first if it is not there:
@@ -120,35 +120,30 @@ STOPPING IT
 Ctrl+C in the terminal. Closing the browser tab does not stop the
 server.
 
-TWO THEMES TO COMPARE
----------------------
-config.toml        teal primary, IBM Plex. The palette agreed with the
-                   operator from a mockup. This is what loads by default.
-
-config.navy.toml   MS Amlin navy #1B1464, the same brand palette the
+THE THEME
+---------
+config.toml        THE ACTIVE ONE. MS Amlin navy #1B1464, taken from the
+                   company's own stylesheet -- the same palette the
                    Reconcile tool uses, so the two tools match in front
-                   of the client. Same type, same radii, same light and
-                   dark modes; only the primary, links and the blue
-                   family change.
+                   of the client. Chosen on the VM 2026-09-21.
 
-Streamlit only ever reads config.toml. To try the navy one:
+config.teal.toml   The previous palette, kept for reference. Streamlit
+                   does not read this file. Nothing to do with it.
 
-  copy .streamlit\config.toml .streamlit\config.teal.toml
-  copy .streamlit\config.navy.toml .streamlit\config.toml
+Nothing to rename any more: copy both files over and the navy theme
+loads on its own. A theme change needs a Streamlit restart (Ctrl+C and
+run again) -- the browser's Rerun does not pick it up.
 
-then restart Streamlit (Ctrl+C and run it again -- a theme change is not
-picked up by the browser's Rerun). To go back, copy config.teal.toml
-over config.toml.
+IF YOU EVER GO BACK, TWO FILES MOVE TOGETHER. The pipeline stepper is
+the only hand-drawn HTML in the app, and Streamlit does not expose
+resolved theme colours to arbitrary HTML -- so the stepper carries its
+own copy of the palette in app.py (_TRACKER_PALETTE). Restoring the
+teal theme means copying config.teal.toml over config.toml AND moving
+that dict to the values listed in the comment above it. Do one without
+the other and the stepper is a panel from a different design.
 
-ONE THING THE CONFIG FILE DOES NOT COVER. The pipeline stepper is the
-only hand-drawn HTML in the app, and Streamlit does not expose resolved
-theme colours to arbitrary HTML -- so the stepper carries its own copy
-of the palette in app.py (_TRACKER_PALETTE). Swap the config alone and
-the stepper stays teal against navy buttons. The navy values to use are
-written in the comment directly above that dict.
-
-Neither theme changes what any number means. Red still means a file
-needs attention, green still means done, in both.
+The theme changes no meaning. Red still means a file needs attention,
+green still means done.
 
 WHAT IS NOT IN EITHER THEME
 ---------------------------

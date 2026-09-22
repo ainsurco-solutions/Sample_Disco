@@ -1,5 +1,5 @@
-source commit : f144187a2d1cd1f127a0c63c7cf715a3cfb4fcd1
-               fix: show file size in MB, not compact bytes (TASK-0071)
+source commit : d969d018a7922d4c7d419bc1ff5edeedde2c0168
+               feat: publish an MS Amlin navy theme alongside the teal one (TASK-0071)
 files         : 76
 
 WARNING: published from a DIRTY working tree. This copy does not

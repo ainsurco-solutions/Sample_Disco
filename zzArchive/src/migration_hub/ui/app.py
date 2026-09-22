@@ -61,12 +61,12 @@ def _batch_display_state(
 _TRACKER_PALETTE = {
     "light": {
         "surface": "#FFFFFF",
-        "line_strong": "#C3CDD5",
-        "ink": "#0F1720",
-        "faint": "#8695A1",
+        "line_strong": "#D8D9DB",
+        "ink": "#1a1a1a",
+        "faint": "#6B6C70",
         "ok": "#2E7D5B",
-        "accent": "#0E7C86",
-        "accent_wash": "#E3F1F1",
+        "accent": "#1B1464",
+        "accent_wash": "#E8E7F2",
     },
     "dark": {
         "surface": "#11161C",
@@ -74,8 +74,8 @@ _TRACKER_PALETTE = {
         "ink": "#E7ECEF",
         "faint": "#5D6C77",
         "ok": "#57B98A",
-        "accent": "#35C6C1",
-        "accent_wash": "#102B2A",
+        "accent": "#00E6F0",
+        "accent_wash": "#0E2A2D",
     },
 }
 

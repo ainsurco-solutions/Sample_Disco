@@ -1,0 +1,107 @@
+# Migration Hub theme -- teal variant. NOT ACTIVE.
+#
+# The original palette, kept for reference after the operator chose the MS
+# Amlin web colours on 2026-09-21 (now config.toml). Streamlit does not read
+# this file. Restoring it also means moving _TRACKER_PALETTE in ui/app.py --
+# the pipeline stepper is hand-drawn HTML and does not follow the config.
+#
+# Palette and type direction agreed with the operator from a mockup (see the
+# repo's design discussion): cool blue-slate neutrals, a single signal-teal
+# accent, IBM Plex Sans/Mono. Both light and dark variants are defined so the
+# viewer can still toggle in the app settings menu.
+#
+# Semantic colors are deliberately distinct from primaryColor: primaryColor
+# drives buttons/active-widget accents, while green/red/blue/gray drive state
+# badges (:green-badge[Completed], :red-badge[Failed], ...). Blue is pinned
+# close to the accent on purpose -- "in progress" reads as "the same system
+# that's the brand," not a second unrelated hue.
+
+[theme]
+# Mode-agnostic only: these three options aren't valid inside [theme.light] /
+# [theme.dark] in this Streamlit version (confirmed against the installed
+# streamlit/config.py -- they're registered under "theme" only, not per-mode).
+baseFontSize = 14
+baseFontWeight = 400
+showSidebarBorder = true
+
+[theme.light]
+primaryColor = "#0E7C86"
+backgroundColor = "#F3F6F8"
+secondaryBackgroundColor = "#EBEFF2"
+textColor = "#0F1720"
+borderColor = "#DBE3E9"
+linkColor = "#0E7C86"
+codeBackgroundColor = "#EBEFF2"
+codeTextColor = "#0F1720"
+
+greenColor = "#2E7D5B"
+greenBackgroundColor = "#E4F3EA"
+greenTextColor = "#1F5B41"
+
+redColor = "#B23A3A"
+redBackgroundColor = "#FBE9E9"
+redTextColor = "#8A2C2C"
+
+orangeColor = "#A6690E"
+orangeBackgroundColor = "#FBF0DF"
+orangeTextColor = "#7A4E0A"
+
+blueColor = "#0E7C86"
+blueBackgroundColor = "#E3F1F1"
+blueTextColor = "#0A5B63"
+
+grayColor = "#5B6B78"
+grayBackgroundColor = "#EBEFF2"
+grayTextColor = "#3F4C57"
+
+dataframeBorderColor = "#DBE3E9"
+dataframeHeaderBackgroundColor = "#EBEFF2"
+
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+
+baseRadius = "10px"
+buttonRadius = "8px"
+showWidgetBorder = true
+linkUnderline = false
+
+[theme.dark]
+primaryColor = "#35C6C1"
+backgroundColor = "#0B0F13"
+secondaryBackgroundColor = "#161D24"
+textColor = "#E7ECEF"
+borderColor = "#232D35"
+linkColor = "#35C6C1"
+codeBackgroundColor = "#161D24"
+codeTextColor = "#E7ECEF"
+
+greenColor = "#57B98A"
+greenBackgroundColor = "#113023"
+greenTextColor = "#8FDBB6"
+
+redColor = "#E2726B"
+redBackgroundColor = "#33191A"
+redTextColor = "#F1A9A4"
+
+orangeColor = "#D9A441"
+orangeBackgroundColor = "#302610"
+orangeTextColor = "#EFC978"
+
+blueColor = "#35C6C1"
+blueBackgroundColor = "#102B2A"
+blueTextColor = "#7FE0DC"
+
+grayColor = "#92A2AC"
+grayBackgroundColor = "#161D24"
+grayTextColor = "#B7C2CA"
+
+dataframeBorderColor = "#232D35"
+dataframeHeaderBackgroundColor = "#161D24"
+
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+
+baseRadius = "10px"
+buttonRadius = "8px"
+showWidgetBorder = true
+linkUnderline = false
