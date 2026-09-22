@@ -110,6 +110,16 @@ def main() -> int:
         "RI-RISKMODELER for import -- itself part of what this run confirms.",
     )
     parser.add_argument(
+        "--allow-duplicate-archive",
+        action="store_true",
+        help="By default, every mode checks searchArchives first and "
+        "skips (upload/import/archive, or just archive for "
+        "--archive-only) if the database already has an archive -- Data "
+        "Vault accepts duplicate archive names silently, so a blind "
+        "retry can otherwise create a second real archive for the same "
+        "database. Pass this to force it anyway.",
+    )
+    parser.add_argument(
         "--retention-date",
         default="",
         help="ISO 8601 expirationDate for the archive call, e.g. "
@@ -316,6 +326,31 @@ def main() -> int:
 
     return 0 if all(rc == 0 for _, _, rc in results) else 1
 
+def _find_existing_archives(session: object, host: str, database: str) -> list[dict]:
+    try:
+        resp = session.get(
+            f"{host}/platform/admindata/v1/archives",
+            params={"filter": f'archiveName="{database}"', "limit": 100, "offset": 0},
+            timeout=30,
+        )
+    except Exception:
+        return []
+    if resp.status_code >= 400:
+        return []
+    try:
+        rows = resp.json()
+    except ValueError:
+        return []
+    return rows if isinstance(rows, list) else []
+
+def _print_existing_archives(rows: list[dict]) -> None:
+    for row in rows:
+        print(
+            f"       archiveId={row.get('archiveId')} "
+            f"archivedAt={row.get('archivedAt')} "
+            f"expirationDate={row.get('expirationDate')}"
+        )
+
 def _migrate_one(
     session: object,
     host: str,
@@ -324,6 +359,26 @@ def _migrate_one(
     bak_path: Path,
     database: str,
 ) -> int:
+    if not args.allow_duplicate_archive:
+        existing = _find_existing_archives(session, host, database)
+        if existing:
+            _ok(
+                f"database {database!r} already has {len(existing)} archive "
+                "row(s) in Data Vault -- skipping upload/import/archive "
+                "entirely, not just the archive call."
+            )
+            _print_existing_archives(existing)
+            print(
+                "    If this is unexpected: a previous run may have "
+                "archived this database successfully but then reported "
+                "FAILED only because polling/verification hit a transient "
+                "error afterward (see databridge-api-contract.md §5 and "
+                "§7 -- archiving moves a database off Data Bridge, so a "
+                "blind retry's import no longer 409s and can re-archive). "
+                "Pass --allow-duplicate-archive to force a re-run anyway."
+            )
+            return 0
+
     size_mb = bak_path.stat().st_size / (1024 * 1024)
     if bak_path.stat().st_size >= LARGE_FILE_THRESHOLD_BYTES:
         _fail(
@@ -437,6 +492,19 @@ def _migrate_one(
     return _archive_and_verify(session, host, args, database)
 
 def _archive_and_verify(session: object, host: str, args: argparse.Namespace, database: str) -> int:
+    if not args.allow_duplicate_archive:
+        existing = _find_existing_archives(session, host, database)
+        if existing:
+            _ok(
+                f"database {database!r} already has {len(existing)} archive "
+                "row(s) in Data Vault -- skipping the archive call (Data "
+                "Vault accepts duplicates silently, so this check exists to "
+                "stop one being created)."
+            )
+            _print_existing_archives(existing)
+            print("    Pass --allow-duplicate-archive to force it anyway.")
+            return 0
+
     _step("6", "GET .../databases (confirm database landed)")
     resp = session.get(f"{host}/databridge/v1/sql-instances/{args.instance}/databases", timeout=30)
     print(f"    status: {resp.status_code}")
