@@ -1,3 +1,3 @@
-source commit : d7b8adedca7a3f7660c6017564e8def75133b503
-               docs: carry TASK-0076's remaining spike questions and links into TASK-0094
-files         : 88
+source commit : 32705e292c447b4f8c12c88caa88c07af0a4f740
+               feat: job-queue spike -- documentation findings and a read-only live probe (TASK-0094)
+files         : 89

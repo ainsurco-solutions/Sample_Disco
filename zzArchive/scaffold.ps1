@@ -88,6 +88,7 @@ $Files = @(
     '.streamlit/config.teal.toml'
     'scripts/amigo.bat'
     'scripts/check_credentials.py'
+    'scripts/probe_job_queue.py'
     'scripts/check_copy.py'
     'scaffold.ps1'
     'VM-SETUP.txt'

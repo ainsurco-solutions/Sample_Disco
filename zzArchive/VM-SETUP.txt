@@ -513,6 +513,23 @@ need. The URL itself is stored with its signature removed (TASK-0087),
 so the output is safe to share.
 
 
+-----------------------------------------------------------------------
+PROBE THE JOB QUEUE (TASK-0094) -- read-only, about 10 seconds
+-----------------------------------------------------------------------
+Which Moody's API can tell us how many import/archive jobs are queued or
+running? The documentation does not say, so this asks the live tenant.
+It makes at most five GET calls, one second apart, uploads nothing, and
+prints only counts and status codes -- never a response body or the key.
+It needs at least one real import in the registry to compare against.
+
+From the tree root, in the (.venv) window:
+
+  python scripts\probe_job_queue.py
+
+It prints a VERDICT per candidate and saves the same summary under
+results\probe_job_queue_<time>.json. Send that file to the devs.
+
+
 =======================================================================
 HISTORIC -- TROUBLESHOOTING ALREADY DONE
 =======================================================================
