@@ -197,6 +197,7 @@ def start_run_subprocess(
     env = os.environ.copy()
     if environment is not None:
         env["MIGRATION_HUB_ENV"] = environment
+    env["PYTHONUNBUFFERED"] = "1"
 
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -225,6 +226,7 @@ def start_archive_subprocess(
     env = os.environ.copy()
     if environment is not None:
         env["MIGRATION_HUB_ENV"] = environment
+    env["PYTHONUNBUFFERED"] = "1"
 
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -321,9 +323,7 @@ def place_by_location(
             **({"archive_attempts": 0} if reset_attempts else {}),
         )
         return FileState.BRIDGED
-    fields: dict[str, object] = (
-        {"attempts": 0, "archive_attempts": 0} if reset_attempts else {}
-    )
+    fields: dict[str, object] = {"attempts": 0, "archive_attempts": 0} if reset_attempts else {}
     registry.transition(
         file_id=file_id,
         to_state=FileState.VALIDATED,
@@ -445,6 +445,7 @@ def _launch_cli(cli_args: list[str], log_stem: str, environment: str | None) -> 
     env = os.environ.copy()
     if environment is not None:
         env["MIGRATION_HUB_ENV"] = environment
+    env["PYTHONUNBUFFERED"] = "1"
 
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)

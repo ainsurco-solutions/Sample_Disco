@@ -11,6 +11,7 @@ from migration_hub.core.registry import Registry
 from migration_hub.core.retry import FailureAction, classify
 from migration_hub.core.routing import resolve_instance
 from migration_hub.core.states import FileState
+from migration_hub.observability.logging import Heartbeat, get_logger
 
 class SourceChangedSinceDiscoveryError(RuntimeError):
 
@@ -141,6 +142,7 @@ class MigrationWorker:
 
     def _poll(self, file_id: int, *, job_id: str) -> None:
         deadline = time.monotonic() + self._max_poll_minutes * 60
+        heartbeat = Heartbeat(get_logger(__name__, file_id=file_id))
 
         while True:
             with self._adapter.bound_to_file(file_id):
@@ -148,6 +150,16 @@ class MigrationWorker:
 
             if status.is_terminal:
                 break
+            raw = status.raw_status or "running"
+
+            def still_waiting(minutes: float, raw: str = raw) -> str:
+                return (
+                    f"import job {job_id} still {raw}, "
+                    f"{minutes:.0f} min elapsed of {self._max_poll_minutes:.0f}, "
+                    f"checking every {self._poll_interval_seconds:.0f} s"
+                )
+
+            heartbeat.beat(still_waiting)
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"job {job_id} for file_id={file_id} did not reach a terminal "
@@ -190,7 +202,10 @@ class MigrationWorker:
                     file_id=file_id,
                     to_state=FileState.VALIDATED,
                     actor=self._worker_id,
-                    detail=classification.reason,
+                    detail=(
+                        f"{classification.reason} -- attempt {file.attempts}/"
+                        f"{self._max_attempts}, retrying with a fresh upload target"
+                    ),
                 )
                 return FileState.VALIDATED
 

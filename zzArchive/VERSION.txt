@@ -1,3 +1,3 @@
-source commit : 78ea23d67e6e54dfb5e1a92c03c7b7b6b39d695b
-               fix: a restage spends the retry budget -- a repeated 403 no longer loops (TASK-0071)
-files         : 86
+source commit : 90b716f940876b422b6f28a5eedff1465b687397
+               feat: operator run log -- one line per step and per vendor call (TASK-0090)
+files         : 87

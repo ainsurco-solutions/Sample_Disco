@@ -439,6 +439,21 @@ upload 24 times in 15 minutes. The API calls panel on the dashboard is
 what shows it: the call count keeps climbing while the pipeline step
 does not advance.
 
+--- watch it live (from the publish of TASK-0090) ----------------------
+A run started from the dashboard writes to logs\ in the tree root, and
+the Start migration dialog shows the exact command. For the newest log:
+
+  Get-Content (Get-ChildItem logs\*.log | Sort-Object LastWriteTime | Select-Object -Last 1).FullName -Wait -Tail 40
+
+One line per step and per vendor call. A refused call is a WARNING line
+ending in the storage service's reason, e.g.
+
+  18:02:12 WARNING file 7  PUT (presigned storage upload)  403  180 ms  AccessDenied
+
+so the log usually answers "why" without the query further down. The
+Streamlit window never shows any of this -- the migration runs as its
+own process. Ctrl+C stops the watching, not the migration.
+
 --- stop it first ------------------------------------------------------
 Click Pause -- in the Start migration dialog, or in the batch's action
 bar. The worker finishes the attempt it is on, claims nothing more, and
@@ -473,7 +488,11 @@ storage PUT the reply is XML whose <Code> says why:
 
   SignatureDoesNotMatch   the request sent is not the one the URL was
                           signed for (a header or the body length) --
-                          our side, send it to the devs
+                          our side. This was the 2026-09-23 loop: small
+                          uploads did not send Content-Type, fixed in the
+                          same publish. Seen again after that, send it
+                          to the devs; it now fails the file at once
+                          rather than retrying.
   AccessDenied            the URL or its credentials are not allowed to
                           write there -- Moody's side
   RequestTimeTooSkewed    this machine's clock is wrong; fix the clock

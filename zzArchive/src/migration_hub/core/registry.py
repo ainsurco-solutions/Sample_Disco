@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import PureWindowsPath
 from uuid import UUID
 
 from sqlalchemy import bindparam, case, func, select, text
@@ -25,6 +27,33 @@ from migration_hub.core.states import (
     FileState,
     assert_transition,
 )
+
+_log = logging.getLogger(__name__)
+
+_LEVEL_BY_STATE: dict[FileState, int] = {
+    FileState.ABANDONED: logging.ERROR,
+    FileState.FAILED: logging.WARNING,
+    FileState.ARCHIVE_FAILED: logging.WARNING,
+    FileState.REJECTED: logging.WARNING,
+}
+
+def _describe(file: MigrationFile) -> str:
+    name = PureWindowsPath(file.source_path).name
+    size = f"{file.size_bytes / 1024**2:,.1f} MB" if file.size_bytes else "size unknown"
+    return f"{file.batch_id} file {file.file_id} ({name}, {size})"
+
+def _log_claim(
+    claimed: MigrationFile | None, *, from_state: FileState, to_state: FileState
+) -> MigrationFile | None:
+    if claimed is not None:
+        _log.info(
+            "%s  %s -> %s  attempt %d",
+            _describe(claimed),
+            from_state,
+            to_state,
+            claimed.attempts,
+        )
+    return claimed
 
 class Registry:
 
@@ -117,12 +146,16 @@ class Registry:
         assert_transition(from_state, to_state)
 
         if self._engine.dialect.name == "sqlite":
-            return self._claim_next_sqlite(
-                batch_id=batch_id,
+            return _log_claim(
+                self._claim_next_sqlite(
+                    batch_id=batch_id,
+                    from_state=from_state,
+                    to_state=to_state,
+                    worker_id=worker_id,
+                    exclude_file_ids=exclude_file_ids,
+                ),
                 from_state=from_state,
                 to_state=to_state,
-                worker_id=worker_id,
-                exclude_file_ids=exclude_file_ids,
             )
 
         exclude_clause = "AND file_id NOT IN :exclude_file_ids" if exclude_file_ids else ""
@@ -178,7 +211,7 @@ class Registry:
             claimed = session.get(MigrationFile, file_id)
             session.flush()
             session.expunge(claimed)
-            return claimed
+        return _log_claim(claimed, from_state=from_state, to_state=to_state)
 
     def _claim_next_sqlite(
         self,
@@ -320,6 +353,18 @@ class Registry:
                     detail=detail,
                 )
             )
+            summary = _describe(file)
+
+        restaged = from_state is FileState.UPLOADING and to_state is FileState.VALIDATED
+        level = logging.WARNING if restaged else _LEVEL_BY_STATE.get(to_state, logging.INFO)
+        _log.log(
+            level,
+            "%s  %s -> %s%s",
+            summary,
+            from_state,
+            to_state,
+            f": {detail}" if detail else "",
+        )
 
     def record_failure(
         self,

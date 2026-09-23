@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -12,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from migration_hub.core.models import ApiTransaction, MigrationFile
 from migration_hub.core.scrub import scrub_credentials
+from migration_hub.observability.endpoints import endpoint_key
 from migration_hub.observability.redaction import redact_mapping, redact_text
 
 def _serialize(body: object | None) -> str | None:
@@ -80,6 +83,57 @@ def audited_call(
             duration_ms=duration_ms,
             correlation_id=record.correlation_id,
         )
+        _log_call(
+            file_id=file_id,
+            method=method,
+            url=url,
+            status_code=record.status_code,
+            duration_ms=duration_ms,
+            response_body=record.response_body,
+            error=record._error,
+        )
+
+_log = logging.getLogger(__name__)
+
+_XML_CODE = re.compile(r"<Code>([^<]{1,80})</Code>")
+
+_REASON_KEYS = ("code", "errorCode", "title", "message", "detail", "error")
+
+def _reason(response_body: object) -> str:
+    if isinstance(response_body, str):
+        match = _XML_CODE.search(response_body)
+        return match.group(1) if match else response_body.strip()[:120]
+    if isinstance(response_body, dict):
+        for key in _REASON_KEYS:
+            value = response_body.get(key)
+            if isinstance(value, str | int) and str(value):
+                return str(value)[:120]
+    return ""
+
+def _log_call(
+    *,
+    file_id: int | None,
+    method: str,
+    url: str,
+    status_code: int | None,
+    duration_ms: int,
+    response_body: object,
+    error: str | None,
+) -> None:
+    who = f"file {file_id}" if file_id is not None else "no file"
+    status = str(status_code) if status_code is not None else "no response"
+    failed = error is not None or status_code is None or status_code >= 400
+    reason = (error or _reason(response_body)) if failed else ""
+    _log.log(
+        logging.WARNING if failed else logging.INFO,
+        "%s  %s %s  %s  %d ms%s",
+        who,
+        method,
+        endpoint_key(url),
+        status,
+        duration_ms,
+        f"  {reason}" if reason else "",
+    )
 
 @contextmanager
 def maybe_audited_call(

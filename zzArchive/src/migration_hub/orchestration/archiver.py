@@ -11,6 +11,7 @@ from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.retry import HaltError, RetryableError
 from migration_hub.core.states import FileState
+from migration_hub.observability.logging import Heartbeat, get_logger
 
 RETENTION_YEARS = 5
 
@@ -133,9 +134,26 @@ def _archive_one(
     database_name = file.database_name
     deadline = clock() + max_wait_minutes * 60
 
-    def _until[T](check: Callable[[], T | None]) -> T | None:
+    def _until[T](check: Callable[[], T | None], waiting_for: str) -> T | None:
+        heartbeat = Heartbeat(get_logger(__name__, file_id=file.file_id), clock=clock)
+
+        def check_and_beat() -> T | None:
+            result = check()
+            if result is None:
+                heartbeat.beat(
+                    lambda minutes: (
+                        f"still waiting for {waiting_for}, {minutes:.0f} min elapsed of "
+                        f"{max_wait_minutes:.0f}, checking every {poll_interval_seconds:.0f} s"
+                    )
+                )
+            return result
+
         return _poll_until(
-            check, deadline=deadline, interval=poll_interval_seconds, sleep=sleep, clock=clock
+            check_and_beat,
+            deadline=deadline,
+            interval=poll_interval_seconds,
+            sleep=sleep,
+            clock=clock,
         )
 
     def _terminal(job_id: str) -> DatabridgeJobStatus | None:
@@ -144,7 +162,7 @@ def _archive_one(
                 polled = adapter.poll_job(job_id=job_id)
             return polled if polled.is_terminal else None
 
-        return _until(check)
+        return _until(check, f"archive job {job_id}")
 
     def _in_vault() -> bool:
         with adapter.bound_to_file(file.file_id):
@@ -212,7 +230,7 @@ def _archive_one(
             _fail(registry, file.file_id, actor, reason, limit=limit)
             return False
 
-    if not _until(lambda: True if _in_vault() else None):
+    if not _until(lambda: True if _in_vault() else None, f"{database_name} in Data Vault"):
         _fail(
             registry,
             file.file_id,

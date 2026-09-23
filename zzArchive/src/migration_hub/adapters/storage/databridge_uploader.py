@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO
@@ -19,12 +20,27 @@ from migration_hub.observability.audit import maybe_audited_call
 
 _UPLOAD_TIMEOUT_SECONDS = 3600.0
 
+_PUT_HEADERS: dict[str, str] = {"Content-Type": "application/octet-stream"}
+
+_REQUEST_FAULT_CODES = frozenset({"SignatureDoesNotMatch"})
+
+_XML_CODE = re.compile(r"<Code>([^<]{1,80})</Code>")
+
 def upload_via_presigned_url(
     *, source: Path, url: str, engine: Engine | None = None, file_id: int | None = None
 ) -> None:
     size = source.stat().st_size
     with source.open("rb") as handle:
-        _put(url, handle, source=source, part=None, size=size, engine=engine, file_id=file_id)
+        _put(
+            url,
+            handle,
+            source=source,
+            part=None,
+            size=size,
+            engine=engine,
+            file_id=file_id,
+            headers=_PUT_HEADERS,
+        )
 
 def upload_multipart(
     *,
@@ -53,7 +69,7 @@ def upload_multipart(
                 size=len(data),
                 engine=engine,
                 file_id=file_id,
-                headers={"Content-Type": "application/octet-stream"},
+                headers=_PUT_HEADERS,
             )
             etag = response.headers.get("ETag", "").strip('"')
             if not etag:
@@ -94,12 +110,22 @@ def _put(
 
 def _raise_for_upload_status(response: httpx.Response, *, label: str) -> None:
     status = response.status_code
+    if status < 400:
+        return
+    match = _XML_CODE.search(response.text)
+    code = match.group(1) if match else None
+    said = f" ({code})" if code else ""
+    if status == 403 and code in _REQUEST_FAULT_CODES:
+        raise UploadRejectedError(
+            f"Presigned PUT for {label} returned 403{said} -- the request does not "
+            "match what the URL was signed for (a header or the body). A fresh URL "
+            "would be refused the same way; this is a fault in the upload code."
+        )
     if status == 403:
         raise UploadCredentialsExpiredError(
-            f"Presigned PUT for {label} returned 403 -- the URL most likely "
+            f"Presigned PUT for {label} returned 403{said} -- the URL most likely "
             "expired. Request a fresh upload target rather than retrying."
         )
     if status >= 500:
-        raise UploadServerError(f"Presigned PUT for {label} returned {status}")
-    if status >= 400:
-        raise UploadRejectedError(f"Presigned PUT for {label} returned {status}")
+        raise UploadServerError(f"Presigned PUT for {label} returned {status}{said}")
+    raise UploadRejectedError(f"Presigned PUT for {label} returned {status}{said}")

@@ -4,11 +4,12 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from urllib.parse import urlsplit
 
 from migration_hub.core.models import ApiTransaction
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import FileState
+from migration_hub.observability.endpoints import STORAGE_UPLOAD_KEY as STORAGE_UPLOAD_KEY
+from migration_hub.observability.endpoints import endpoint_key as endpoint_key
 
 MIN_COMPLETIONS_FOR_ETA = 3
 
@@ -152,32 +153,3 @@ def status_family(status_code: int | None) -> str:
     if status_code is None:
         return "unknown"
     return f"{status_code // 100}xx"
-
-_ID_SEGMENTS: dict[str, tuple[str, ...]] = {
-    "sql-instances": ("{instance}",),
-    "databases": ("{database}",),
-    "jobs": ("{job}",),
-    "upload-part": ("{upload}", "{part}"),
-    "entitlements": ("{entitlement}",),
-}
-
-_VENDOR_ROOTS = frozenset({"databridge", "platform"})
-
-STORAGE_UPLOAD_KEY = "(presigned storage upload)"
-
-def endpoint_key(url: str) -> str:
-    parts = [part for part in urlsplit(url).path.split("/") if part]
-    if not parts or parts[0].lower() not in _VENDOR_ROOTS:
-        return STORAGE_UPLOAD_KEY
-
-    templated: list[str] = []
-    i = 0
-    while i < len(parts):
-        templated.append(parts[i])
-        for placeholder in _ID_SEGMENTS.get(parts[i].lower(), ()):
-            if i + 1 >= len(parts):
-                break
-            templated.append(placeholder)
-            i += 1
-        i += 1
-    return "/" + "/".join(templated)

@@ -15,6 +15,7 @@ from migration_hub.core.engine import create_registry_engine
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import audit_export, controls
+from migration_hub.observability import logging as hub_logging
 from migration_hub.orchestration import archiver, batches, reaper, reconciliation, scheduler
 from migration_hub.orchestration.auto_migrate import (
     SourceFolderError,
@@ -26,6 +27,10 @@ from migration_hub.producers import scanner, validator
 load_dotenv()
 
 app = typer.Typer(help=__doc__)
+
+@app.callback()
+def _configure_logging() -> None:
+    hub_logging.configure(level=os.environ.get("MIGRATION_HUB_LOG_LEVEL", "INFO"))
 
 def _load_settings() -> Settings:
     environment = os.environ.get("MIGRATION_HUB_ENV", "dev")
@@ -109,9 +114,9 @@ def run(
     finally:
         adapter.close()
 
-    if (
-        max_files is None or sum(outcomes.values()) < max_files
-    ) and batches.state_of(registry=registry, batch_id=batch) is BatchState.PAUSED:
+    if (max_files is None or sum(outcomes.values()) < max_files) and batches.state_of(
+        registry=registry, batch_id=batch
+    ) is BatchState.PAUSED:
         typer.echo(f"batch {batch!r} is PAUSED -- stopping before the next claim")
 
     processed = sum(outcomes.values())
@@ -309,7 +314,8 @@ def _echo_retry(outcome: batches.RetryOutcome) -> None:
     if outcome.workers:
         logs = ", ".join(str(w.log_path) for w in outcome.workers)
         started = (
-            "the migrate pipeline (upload, archive, close)" if outcome.pipeline_started
+            "the migrate pipeline (upload, archive, close)"
+            if outcome.pipeline_started
             else "the archive"
         )
         typer.echo(f"{started} started in the background; output: {logs}")

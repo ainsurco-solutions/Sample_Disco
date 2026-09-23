@@ -729,6 +729,11 @@ def _render_start_migration_handoff(wiz: _AddBatchWizard) -> None:
     st.write(f"Source folder: `{summary.get('source_root', '-')}`")
     st.write(f"Process id: `{summary.get('pid', '-')}`")
     st.write(f"Output: `{summary.get('log_path', '-')}`")
+    st.caption(
+        "To watch it live -- one line per step and per vendor call, with the reason "
+        "when something is refused -- run this in PowerShell from the tree root:"
+    )
+    st.code(f"Get-Content \"{summary.get('log_path', '-')}\" -Wait -Tail 40", language="powershell")
     if st.button("Close", type="primary", width="stretch"):
         _close_add_batch()
         st.rerun()
