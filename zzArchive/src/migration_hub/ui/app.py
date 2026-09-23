@@ -469,7 +469,7 @@ def _add_batch_dialog(registry: Registry, settings: Settings) -> None:
     if step == "select":
         _render_add_batch_select(registry, settings, wiz)
     elif step == "running":
-        _render_add_batch_running(registry, wiz)
+        _render_add_batch_running(registry, settings, wiz)
     elif step == "handoff":
         _render_start_migration_handoff(wiz)
     else:
@@ -660,11 +660,15 @@ def _start_add_batch(
     wiz["step"] = "running"
     st.session_state["selected_batch"] = batch_id
 
-def _render_add_batch_running(registry: Registry, wiz: _AddBatchWizard) -> None:
-    _add_batch_progress(registry, str(wiz["batch_id"]), wiz)
+def _render_add_batch_running(
+    registry: Registry, settings: Settings, wiz: _AddBatchWizard
+) -> None:
+    _add_batch_progress(registry, settings, str(wiz["batch_id"]), wiz)
 
 @st.fragment(run_every="3s")
-def _add_batch_progress(registry: Registry, batch_id: str, wiz: _AddBatchWizard) -> None:
+def _add_batch_progress(
+    registry: Registry, settings: Settings, batch_id: str, wiz: _AddBatchWizard
+) -> None:
     state = batch_ops.state_of(registry=registry, batch_id=batch_id)
     counts = batch_ops.progress(registry=registry, batch_id=batch_id)
     total = sum(counts.values())
@@ -685,6 +689,13 @@ def _add_batch_progress(registry: Registry, batch_id: str, wiz: _AddBatchWizard)
         if state is BatchState.PAUSED:
             if st.button("Resume", icon=":material/play_circle:"):
                 batch_ops.resume(registry=registry, batch_id=batch_id)
+                batch_ops.start_run_subprocesses(
+                    registry=registry,
+                    batch_id=batch_id,
+                    count=max(1, settings.max_concurrent_uploads),
+                    max_files=None,
+                    environment=settings.environment,
+                )
         else:
             if st.button("Pause", icon=":material/pause_circle:"):
                 batch_ops.pause(registry=registry, batch_id=batch_id)
@@ -970,6 +981,27 @@ def _render_archive_action(
                 label="Handed off to the archiver", state="complete", expanded=False
             )
 
+_IDLE_MINUTES = 5
+
+def _minutes_since_activity(registry: Registry, batch: str) -> float:
+    stamps = [e.occurred_at for e in registry.recent_events(batch_id=batch, limit=1)]
+    stamps += [t.occurred_at for t in registry.recent_transactions(batch_id=batch, limit=1)]
+    if not stamps:
+        return float("inf")
+    newest = max(stamps)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    return (now - newest).total_seconds() / 60
+
+def _launch_continue(settings: Settings, batch: str) -> None:
+    with st.status("Starting workers", expanded=True) as status:
+        handle = batch_ops.start_migrate_subprocess(
+            batch_id=batch, environment=settings.environment
+        )
+        st.write(f"`migration-hub migrate --batch {batch}` started (pid `{handle.pid}`).")
+        st.write("Watch it live in PowerShell from the tree root:")
+        st.code(f'Get-Content "{handle.log_path}" -Wait -Tail 40', language="powershell")
+        status.update(label="Workers started", state="complete", expanded=True)
+
 def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str) -> None:
     counts = registry.counts_by_state(batch_id=batch)
     total = sum(counts.values())
@@ -994,15 +1026,27 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                 f"{len(pending_archives)} pending archive, {issues} issue(s)"
             )
 
+        idle = outstanding > 0 and _minutes_since_activity(registry, batch) >= _IDLE_MINUTES
         with st.container(horizontal=True):
             if state is BatchState.PAUSED:
                 if st.button("Resume", icon=":material/play_circle:", key=f"resume_{batch}"):
                     batch_ops.resume(registry=registry, batch_id=batch)
-                    st.rerun()
+                    _launch_continue(settings, batch)
             else:
                 if st.button("Pause", icon=":material/pause_circle:", key=f"pause_{batch}"):
                     batch_ops.pause(registry=registry, batch_id=batch)
                     st.rerun()
+                if idle and st.button(
+                    f"Continue {outstanding} outstanding",
+                    icon=":material/play_circle:",
+                    key=f"continue_{batch}",
+                    help=(
+                        f"No worker activity for {_IDLE_MINUTES}+ minutes, so nothing is "
+                        "working on this batch -- e.g. it was resumed after its workers "
+                        "exited. Starts `migrate --batch` for it."
+                    ),
+                ):
+                    _launch_continue(settings, batch)
 
             archive_label = f"Archive {len(pending_archives)} into Data Vault"
             if st.button(

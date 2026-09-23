@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: fa9491648a92eacfd2ba5e45467dcaa3ea67ea0e
+# source commit: 1926c02a0ef231710216fd120c54a0c0552725d3
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -86,5 +86,5 @@ code	1617	49	533b8c387935cab51297f95635fe5a872eec75656300bab71ec29edc6914bf3b	sr
 code	1306	43	4ac8b295ebb93eef97be718a44cfc11f8ea924b08816253a9f534ba6770c4062	src/migration_hub/producers/target_list.py
 code	3157	93	8e572d63c62dcec6acecee26e3250e3fa5adcd23cc25560572983a8837da0869	src/migration_hub/producers/validator.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/ui/__init__.py
-code	51424	1268	58b6403a938a5a1760f960fdee81395ea1e8f82e64b2351af43e197016797cd2	src/migration_hub/ui/app.py
+code	53498	1312	22e5b67c54556adcfd3524b1e8e292e6e45eb5193a6027374b75f404b6973a46	src/migration_hub/ui/app.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/ui/pages/__init__.py

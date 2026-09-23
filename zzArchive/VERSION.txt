@@ -1,3 +1,3 @@
-source commit : fa9491648a92eacfd2ba5e45467dcaa3ea67ea0e
-               chore: scaffold manifest picks up observability/endpoints.py (TASK-0090)
+source commit : 1926c02a0ef231710216fd120c54a0c0552725d3
+               fix: Resume starts workers; Continue for a batch left with none (TASK-0071)
 files         : 87
