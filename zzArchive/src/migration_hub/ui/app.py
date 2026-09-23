@@ -141,6 +141,7 @@ def render() -> None:
 
     st.subheader(f"Batch {selected}")
     _render_batch_action_bar(registry, settings, selected)
+    _render_live_log(registry, selected)
     st.space("small")
     _render_tabs(registry, settings, selected)
 
@@ -742,7 +743,8 @@ def _render_start_migration_handoff(wiz: _AddBatchWizard) -> None:
     st.write(f"Output: `{summary.get('log_path', '-')}`")
     st.caption(
         "To watch it live -- one line per step and per vendor call, with the reason "
-        "when something is refused -- run this in PowerShell from the tree root:"
+        "when something is refused -- close this and turn on **Live log** under the "
+        "batch. Or, outside the browser, in PowerShell from the tree root:"
     )
     st.code(f"Get-Content \"{summary.get('log_path', '-')}\" -Wait -Tail 40", language="powershell")
     if st.button("Close", type="primary", width="stretch"):
@@ -983,6 +985,68 @@ def _render_archive_action(
 
 _IDLE_MINUTES = 5
 
+_LIVE_LOG_LINES = 200
+
+def _render_live_log(registry: Registry, batch: str) -> None:
+    if not st.toggle(
+        "Live log",
+        key=f"live_log_{batch}",
+        help="Follow this batch's run log as it is written -- refreshes every 2 seconds.",
+    ):
+        return
+    _live_log_panel(registry, batch)
+
+@st.fragment(run_every="2s")
+def _live_log_panel(registry: Registry, batch: str) -> None:
+    logs = batch_ops.logs_for_batch(batch)
+    if not logs:
+        st.info(
+            "No log for this batch yet. Logs are written by runs started from this "
+            "dashboard (Start migration, Resume, Continue, Retry, Archive); a run "
+            "started from a terminal prints in that terminal instead."
+        )
+        return
+
+    with st.container(horizontal=True, vertical_alignment="center"):
+        chosen = st.selectbox(
+            "Log",
+            logs,
+            format_func=lambda p: p.name,
+            key=f"live_log_file_{batch}",
+            label_visibility="collapsed",
+        )
+        problems_only = st.checkbox("Problems only", key=f"live_log_problems_{batch}")
+    if chosen is None or not chosen.is_file():
+        return
+
+    lines = batch_ops.tail_lines(chosen, lines=_LIVE_LOG_LINES)
+    problems = [ln for ln in lines if " WARNING " in ln or " ERROR " in ln]
+    quiet_minutes = (datetime.now().timestamp() - chosen.stat().st_mtime) / 60
+    outstanding = len(registry.outstanding(batch_id=batch))
+
+    caption = (
+        f"{chosen.name} -- last written {_ago(quiet_minutes)}, "
+        f"{len(problems)} warning/error line(s) in view"
+    )
+    if outstanding and quiet_minutes >= _IDLE_MINUTES:
+        st.warning(
+            f"{caption}. {outstanding} file(s) are outstanding but this log has been "
+            f"quiet for {quiet_minutes:.0f} min -- the run may have ended or stalled."
+        )
+    else:
+        st.caption(caption)
+
+    shown = problems if problems_only else lines
+    with st.container(height=420):
+        st.code("\n".join(shown) or "(nothing yet)", language=None)
+
+def _ago(minutes: float) -> str:
+    if minutes < 1:
+        return f"{minutes * 60:.0f} s ago"
+    if minutes < 90:
+        return f"{minutes:.0f} min ago"
+    return f"{minutes / 60:.1f} h ago"
+
 def _minutes_since_activity(registry: Registry, batch: str) -> float:
     stamps = [e.occurred_at for e in registry.recent_events(batch_id=batch, limit=1)]
     stamps += [t.occurred_at for t in registry.recent_transactions(batch_id=batch, limit=1)]
@@ -998,7 +1062,9 @@ def _launch_continue(settings: Settings, batch: str) -> None:
             batch_id=batch, environment=settings.environment
         )
         st.write(f"`migration-hub migrate --batch {batch}` started (pid `{handle.pid}`).")
-        st.write("Watch it live in PowerShell from the tree root:")
+        st.write(
+            "Watch it with **Live log** below, or in PowerShell from the tree root:"
+        )
         st.code(f'Get-Content "{handle.log_path}" -Wait -Tail 40', language="powershell")
         status.update(label="Workers started", state="complete", expanded=True)
 

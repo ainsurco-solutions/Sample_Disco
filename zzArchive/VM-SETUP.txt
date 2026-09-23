@@ -440,7 +440,12 @@ what shows it: the call count keeps climbing while the pipeline step
 does not advance.
 
 --- watch it live (from the publish of TASK-0090) ----------------------
-A run started from the dashboard writes to logs\ in the tree root, and
+EASIEST: on the dashboard, select the batch and turn on Live log under
+its action bar. It follows the batch's newest run log, refreshing every
+2 seconds, with a Problems only filter, and warns when the log has gone
+quiet while files are still outstanding.
+
+OUTSIDE THE BROWSER: a run started from the dashboard writes to logs\ in the tree root, and
 the Start migration dialog shows the exact command. For the newest log:
 
   Get-Content (Get-ChildItem logs\*.log | Sort-Object LastWriteTime | Select-Object -Last 1).FullName -Wait -Tail 40

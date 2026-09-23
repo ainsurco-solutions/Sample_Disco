@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -439,6 +440,30 @@ def start_migrate_source_subprocess(
     return _launch_cli(
         ["migrate", "--source", str(source_root)], f"migrate-{batch_id}", environment
     )
+
+_LOG_KINDS = ("run", "migrate", "archive", "retry")
+
+_TAIL_BYTES = 128 * 1024
+
+def logs_for_batch(batch_id: str, *, log_dir: Path = Path("logs")) -> list[Path]:
+    pattern = re.compile(
+        rf"^(?:{'|'.join(_LOG_KINDS)})-{re.escape(batch_id)}-\d{{8}}-\d{{6}}.*\.log$"
+    )
+    if not log_dir.is_dir():
+        return []
+    found = [p for p in log_dir.iterdir() if p.is_file() and pattern.match(p.name)]
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+def tail_lines(path: Path, *, lines: int = 200) -> list[str]:
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - _TAIL_BYTES))
+        chunk = handle.read()
+    text = chunk.decode("utf-8", errors="replace").splitlines()
+    if size > _TAIL_BYTES and text:
+        text = text[1:]
+    return text[-lines:]
 
 def _launch_cli(cli_args: list[str], log_stem: str, environment: str | None) -> WorkerHandle:
     args = [sys.executable, "-m", "migration_hub.cli", *cli_args]
