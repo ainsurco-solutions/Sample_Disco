@@ -52,6 +52,12 @@ _STATE_PROGRESS = {
     FileState.ABANDONED: 0,
 }
 
+def _progress(state: str) -> int:
+    try:
+        return _STATE_PROGRESS[FileState(state)]
+    except ValueError:
+        return 0
+
 _BATCH_STATE_COLOR: dict[BatchState, _BadgeColor] = {
     BatchState.PLANNED: "gray",
     BatchState.RUNNING: "blue",
@@ -1010,7 +1016,7 @@ def _render_retry_action(
     registry: Registry, settings: Settings, batch: str, files: Sequence[MigrationFile]
 ) -> None:
     retryable = [
-        f for f in files if FileState(f.state) in (FileState.FAILED, FileState.ABANDONED)
+        f for f in files if f.state in (FileState.FAILED, FileState.ABANDONED)
     ]
     if not retryable:
         return
@@ -1304,7 +1310,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                         "source_database": f.source_database,
                         "target_exposure_name": f.target_exposure_name,
                         "state": f.state,
-                        "progress": _STATE_PROGRESS[FileState(f.state)],
+                        "progress": _progress(f.state),
                         "size_mb": round(f.size_bytes / (1024 * 1024), 1),
                         "attempts": f.attempts,
                         "started_at": f.created_at,
@@ -1371,8 +1377,7 @@ def _activity_tree(
     for e in events:
         if since is not None and e.occurred_at < since:
             continue
-        to_state = FileState(e.to_state)
-        restaged = e.from_state == FileState.UPLOADING and to_state is FileState.VALIDATED
+        restaged = e.from_state == FileState.UPLOADING and e.to_state == FileState.VALIDATED
         rows_by_file.setdefault(e.file_id, []).append(
             {
                 "when": e.occurred_at,
@@ -1381,7 +1386,7 @@ def _activity_tree(
                 "result": e.to_state,
                 "ms": None,
                 "detail": e.detail or "",
-                "problem": to_state in _PROBLEM_STATES or restaged,
+                "problem": e.to_state in _PROBLEM_STATES or restaged,
             }
         )
 
@@ -1407,7 +1412,7 @@ def _activity_tree(
         rows = sorted(rows_by_file.get(f.file_id, []), key=lambda r: str(r["when"]))
         if problems_only:
             rows = [r for r in rows if r["problem"]]
-            if not rows and FileState(f.state) not in _PROBLEM_STATES:
+            if not rows and f.state not in _PROBLEM_STATES:
                 continue
         elif since is not None and not rows:
             continue
@@ -1456,11 +1461,11 @@ def _render_activity_tab(registry: Registry, batch: str) -> None:
         )
 
     for f, rows in tree[:_ACTIVITY_MAX_FILES]:
-        state = FileState(f.state)
+        state = f.state
         problems = sum(1 for r in rows if r["problem"])
         if state in _PROBLEM_STATES or problems:
             icon = ":material/error:"
-        elif state is FileState.COMPLETED:
+        elif state == FileState.COMPLETED:
             icon = ":material/check_circle:"
         else:
             icon = ":material/pending:"
