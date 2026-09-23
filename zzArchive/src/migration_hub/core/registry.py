@@ -360,8 +360,24 @@ class Registry:
         counts = dict.fromkeys(FileState, 0)
         with Session(self._engine) as session:
             for state, count in session.execute(stmt):
-                counts[FileState(state)] = count
+                try:
+                    counts[FileState(state)] = count
+                except ValueError:
+                    continue
         return counts
+
+    def unknown_states(self, *, batch_id: str | None = None) -> dict[str, int]:
+        stmt = select(MigrationFile.state, func.count()).group_by(MigrationFile.state)
+        if batch_id is not None:
+            stmt = stmt.where(MigrationFile.batch_id == batch_id)
+
+        known = {str(s) for s in FileState}
+        with Session(self._engine) as session:
+            return {
+                state: count
+                for state, count in session.execute(stmt)
+                if state not in known
+            }
 
     def outstanding(self, *, batch_id: str | None = None) -> Sequence[MigrationFile]:
         stmt = select(MigrationFile).where(

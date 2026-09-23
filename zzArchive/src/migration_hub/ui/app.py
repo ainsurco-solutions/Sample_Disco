@@ -135,9 +135,23 @@ def render() -> None:
 
 @st.fragment(run_every="8s")
 def _render_overview(registry: Registry) -> None:
+    _render_unknown_states(registry)
     _kpi_strip_global(registry)
     st.space("small")
     _render_batch_log(registry)
+
+def _render_unknown_states(registry: Registry) -> None:
+    unknown = registry.unknown_states()
+    if not unknown:
+        return
+    listed = ", ".join(f"`{s}` ({n})" for s, n in sorted(unknown.items()))
+    st.warning(
+        f"**This registry holds file states this build does not know: "
+        f"{listed}.** They are left out of the counts below, so those will "
+        "not sum to the total number of files. A state retired by a code "
+        "change leaves its rows behind; run `python -m alembic upgrade head` "
+        "to move them."
+    )
 
 def _kpi_strip_global(registry: Registry) -> None:
     counts = registry.counts_by_state(batch_id=None)
@@ -580,6 +594,37 @@ def _render_retry_action(
             )
         st.rerun()
 
+def _render_archive_action(
+    registry: Registry, settings: Settings, batch: str
+) -> None:
+    pending = registry.pending_archives(batch_id=batch)
+    if not pending:
+        return
+
+    st.warning(
+        f"**{len(pending)} file(s) reached Data Bridge but are not in the "
+        "Data Vault.** Data Bridge is the route in; the Vault is the "
+        "destination. These are not migrated until they are archived."
+    )
+    if st.button(
+        f"Archive {len(pending)} file(s) into Data Vault",
+        icon=":material/inventory_2:",
+    ):
+        with st.status("Archiving", expanded=True) as status:
+            handle = batch_ops.start_archive_subprocess(
+                batch_id=batch, environment=settings.environment
+            )
+            st.write(f"Archiver started (pid `{handle.pid}`).")
+            st.write(f"Output: `{handle.log_path}`")
+            st.write(
+                "Runs in the background -- this count falls as files are "
+                "archived. Safe to press again: a file already archived is "
+                "skipped."
+            )
+            status.update(
+                label="Handed off to the archiver", state="complete", expanded=False
+            )
+
 def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
     files_tab, activity_tab = st.tabs(["Files", "Activity"])
 
@@ -588,6 +633,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
         if not files:
             st.caption("No files registered in this batch yet.")
         else:
+            _render_archive_action(registry, settings, batch)
             _render_retry_action(registry, settings, batch, files)
             terminal_times = registry.file_terminal_times(batch_id=batch)
             st.dataframe(

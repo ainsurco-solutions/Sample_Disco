@@ -24,14 +24,11 @@
   "databridge_instance_name": "REPLACE_WITH_SQL_INSTANCE_NAME",
 
   "max_concurrent_uploads": 1,
-  "max_concurrent_imports": 1,
   "poll_interval_seconds": 60,
   "max_poll_minutes": 360,
 
   "max_attempts": 3,
   "claim_timeout_minutes": 420,
-  "backoff_base_seconds": 2.0,
-  "backoff_max_seconds": 300.0,
 
   "compute_checksums": false,
   "dry_run": true

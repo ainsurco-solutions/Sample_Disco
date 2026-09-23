@@ -1,3 +1,3 @@
-source commit : 5c0e9fc8bcb016d48cf8b09a9781b2e665ad275b
-               docs: VM-SETUP follows the post-TASK-0075 pipeline (TASK-0071)
-files         : 79
+source commit : 03e55893218f096fbf437ea437060445aff15984
+               Merge origin/main -- renumber my TASK-0077 to TASK-0079
+files         : 80

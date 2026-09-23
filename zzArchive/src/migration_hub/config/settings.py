@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,12 @@ from pydantic import BaseModel, ConfigDict, model_validator
 _CREDENTIAL_LIKE_SUBSTRINGS = ("key", "secret", "password", "token", "credential")
 
 _ENV_ONLY_FIELDS = frozenset({"database_url"})
+
+RETIRED_FIELDS = frozenset(
+    {"max_concurrent_imports", "backoff_base_seconds", "backoff_max_seconds"}
+)
+
+_LOG = logging.getLogger(__name__)
 
 class ConfigCredentialError(RuntimeError):
     pass
@@ -29,14 +36,11 @@ class Settings(BaseModel):
     databridge_instance_name: str | None = None
 
     max_concurrent_uploads: int = 1
-    max_concurrent_imports: int = 1
     poll_interval_seconds: int = 60
     max_poll_minutes: int = 360
 
     max_attempts: int = 3
     claim_timeout_minutes: int = 420
-    backoff_base_seconds: float = 2.0
-    backoff_max_seconds: float = 300.0
 
     scheduler_poll_interval_seconds: float = 60.0
     scheduler_reap_interval_seconds: float = 300.0
@@ -56,6 +60,17 @@ class Settings(BaseModel):
         raw: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
         raw.pop("$comment", None)
         _reject_credential_like_keys(raw, source=config_path)
+
+        retired = sorted(RETIRED_FIELDS & raw.keys())
+        if retired:
+            for field in retired:
+                raw.pop(field)
+            _LOG.warning(
+                "%s sets %s, which no longer exist and were never read -- ignored. "
+                "Remove them from the file.",
+                config_path,
+                ", ".join(retired),
+            )
 
         for field in _ENV_ONLY_FIELDS:
             if field in raw:

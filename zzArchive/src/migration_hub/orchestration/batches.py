@@ -171,6 +171,35 @@ def start_run_subprocess(
     log_file.close()
     return WorkerHandle(process=process, log_path=log_path)
 
+def start_archive_subprocess(
+    *, batch_id: str | None = None, environment: str | None = None
+) -> WorkerHandle:
+    args = [sys.executable, "-m", "migration_hub.cli", "archive"]
+    if batch_id is not None:
+        args += ["--batch", batch_id]
+
+    env = os.environ.copy()
+    if environment is not None:
+        env["MIGRATION_HUB_ENV"] = environment
+
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"
+    log_path = log_dir / f"archive-{batch_id or 'all'}-{stamp}.log"
+    log_file = log_path.open("w", encoding="utf-8")
+
+    process = subprocess.Popen(
+        args,
+        env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        creationflags=_WINDOWS_DETACH_FLAGS,
+        close_fds=True,
+        start_new_session=sys.platform != "win32",
+    )
+    log_file.close()
+    return WorkerHandle(process=process, log_path=log_path)
+
 def start_run_subprocesses(
     *,
     registry: Registry,

@@ -187,6 +187,8 @@ def archive(batch: str | None = typer.Option(None, "--batch")) -> None:
             adapter=adapter,
             batch_id=batch,
             resource_group_id=session.resource_group_id,
+            max_wait_minutes=settings.max_poll_minutes,
+            poll_interval_seconds=settings.poll_interval_seconds,
         )
     finally:
         adapter.close()

@@ -359,8 +359,10 @@ VERIFYING -> COMPLETED. (It was STAGED -> UPLOADING before 2026-09-22;
 that state is gone.) The import is polled, so IMPORTING can sit for a while:
 poll_interval_seconds is 60 and max_poll_minutes is 360.
 
-Leave max_concurrent_uploads and max_concurrent_imports at 1. Three devs
-against this tenant at 1 each is already three concurrent uploads.
+Leave max_concurrent_uploads at 1. It is the number of worker threads,
+and each thread carries one file through upload and import, so it caps
+both. Three devs against this tenant at 1 each is already three
+concurrent uploads.
 
 --- 2d. Archive it into Data Vault -------------------------------------
 migration-hub archive --batch SMOKE01
@@ -370,6 +372,11 @@ until it is archived in Data Vault -- the bridge is the route in, the
 vault is the destination, and archiving is a separate explicit step
 (see the GLOSSARY). Five years' retention from the upload date is
 applied automatically.
+
+It waits for the archive job to finish (checking every
+poll_interval_seconds, up to max_poll_minutes) and then for the archive
+to appear in Data Vault, so when it prints "archived 1 file(s)" the
+database is confirmed there. migrate --source does this step itself.
 
 Re-running is safe: a database that already has an archive row is
 skipped rather than archived twice.

@@ -100,8 +100,15 @@ def run_automated_migration(
         archived = archiver.archive_pending(
             registry=registry, adapter=coordinator, batch_id=batch_id,
             resource_group_id=session.resource_group_id,
+            max_wait_minutes=max_poll_minutes, poll_interval_seconds=poll_interval_seconds,
         )
         _log(f"archived {archived} file(s)")
+        not_archived = registry.pending_archives(batch_id=batch_id)
+        if not_archived:
+            _log(
+                f"{len(not_archived)} file(s) not confirmed in Data Vault -- "
+                "the run cannot close CLEAN; see each file's last_error"
+            )
 
         _log("closing the control record...")
         record = controls.open_run(
@@ -132,4 +139,6 @@ def run_automated_migration(
 
 def _reconcile(*, registry: Registry, adapter: DatabridgeAdapter, batch_id: str) -> tuple[int, int]:
     from migration_hub.orchestration.reconciliation import reconcile_target_count
-    return reconcile_target_count(registry=registry, adapter=adapter, batch_id=batch_id)
+    return reconcile_target_count(
+        registry=registry, adapter=adapter, batch_id=batch_id, require_archived=True
+    )
