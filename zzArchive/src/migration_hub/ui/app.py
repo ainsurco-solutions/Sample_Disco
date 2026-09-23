@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import html
+import json
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -51,12 +52,6 @@ _STATE_PROGRESS = {
     FileState.FAILED: 45,
     FileState.ABANDONED: 0,
 }
-
-def _progress(state: str) -> int:
-    try:
-        return _STATE_PROGRESS[FileState(state)]
-    except ValueError:
-        return 0
 
 _BATCH_STATE_COLOR: dict[BatchState, _BadgeColor] = {
     BatchState.PLANNED: "gray",
@@ -1012,11 +1007,69 @@ def _format_bytes(value: float | int) -> str:
         amount /= 1024
     return f"{amount:.1f} TB"
 
+def _known_file_state(raw: str) -> FileState | None:
+    try:
+        return FileState(raw)
+    except ValueError:
+        return None
+
+def _file_progress(raw: str) -> int:
+    state = _known_file_state(raw)
+    return _STATE_PROGRESS[state] if state is not None else 0
+
+def _file_state_color(raw: str) -> _BadgeColor:
+    state = _known_file_state(raw)
+    if state is None:
+        return "gray"
+    if state in _PROBLEM_STATES:
+        return "red"
+    if state is FileState.COMPLETED:
+        return "green"
+    if state in (FileState.BRIDGED, FileState.ARCHIVING):
+        return "violet"
+    return "blue"
+
+def _file_table_rows(
+    files: Sequence[MigrationFile], terminal_times: dict[int, datetime]
+) -> list[dict[str, object]]:
+    return [
+        {
+            "file_id": f.file_id,
+            "source_database": f.source_database,
+            "target_exposure_name": f.target_exposure_name,
+            "state": f.state,
+            "progress": _file_progress(f.state),
+            "size_mb": round(f.size_bytes / (1024 * 1024), 1),
+            "attempts": f.attempts,
+            "started_at": f.created_at,
+            "ended_at": terminal_times.get(f.file_id),
+            "duration": _format_duration(f.created_at, terminal_times.get(f.file_id)),
+            "last_error": f.last_error,
+        }
+        for f in files
+    ]
+
+def _support_bundle_filename(file: MigrationFile) -> str:
+    safe_name = "".join(
+        ch if ch.isalnum() or ch in ("-", "_") else "_"
+        for ch in file.source_database
+    ).strip("_")
+    return f"file_{file.file_id}_{safe_name or 'source'}.json"
+
+def _support_bundle_json(settings: Settings, file_id: int) -> str:
+    bundle = audit.export_for_support(
+        engine=_engine(settings.database_url),
+        file_id=file_id,
+    )
+    return json.dumps(bundle, indent=2, sort_keys=True)
+
 def _render_retry_action(
     registry: Registry, settings: Settings, batch: str, files: Sequence[MigrationFile]
 ) -> None:
     retryable = [
-        f for f in files if f.state in (FileState.FAILED, FileState.ABANDONED)
+        f
+        for f in files
+        if _known_file_state(f.state) in (FileState.FAILED, FileState.ABANDONED)
     ]
     if not retryable:
         return
@@ -1296,30 +1349,21 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
     )
 
     with files_tab:
-        files = registry.files_in_states(states=list(FileState), batch_id=batch)
+        files = registry.batch_files(batch_id=batch)
         if not files:
             st.caption("No files registered in this batch yet.")
         else:
             _render_archive_action(registry, settings, batch)
             _render_retry_action(registry, settings, batch, files)
             terminal_times = registry.file_terminal_times(batch_id=batch)
-            st.dataframe(
-                [
-                    {
-                        "file_id": f.file_id,
-                        "source_database": f.source_database,
-                        "target_exposure_name": f.target_exposure_name,
-                        "state": f.state,
-                        "progress": _progress(f.state),
-                        "size_mb": round(f.size_bytes / (1024 * 1024), 1),
-                        "attempts": f.attempts,
-                        "started_at": f.created_at,
-                        "ended_at": terminal_times.get(f.file_id),
-                        "duration": _format_duration(f.created_at, terminal_times.get(f.file_id)),
-                        "last_error": f.last_error,
-                    }
-                    for f in files
-                ],
+            rows = _file_table_rows(files, terminal_times)
+            selected_key = f"selected_file_{batch}"
+            file_by_id = {f.file_id: f for f in files}
+            if st.session_state.get(selected_key) not in file_by_id:
+                st.session_state.pop(selected_key, None)
+
+            event = st.dataframe(
+                rows,
                 column_config={
                     "file_id": st.column_config.NumberColumn("ID", pinned=True),
                     "source_database": st.column_config.TextColumn("Source EDM"),
@@ -1336,7 +1380,20 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                     "last_error": st.column_config.TextColumn("Last error"),
                 },
                 hide_index=True,
+                key=f"files_table_{batch}",
+                on_select="rerun",
+                selection_mode="single-row",
             )
+            selected_rows = _selected_rows(event)
+            if selected_rows:
+                st.session_state[selected_key] = rows[selected_rows[0]]["file_id"]
+
+            selected_file_id = st.session_state.get(selected_key)
+            selected_file = (
+                file_by_id.get(selected_file_id) if isinstance(selected_file_id, int) else None
+            )
+            if selected_file is not None:
+                _render_file_detail_panel(registry, settings, selected_file)
 
     with activity_tab:
         _render_activity_tab(registry, batch)
@@ -1346,6 +1403,186 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
 
     with diagnostics_tab:
         _render_diagnostics_tab(registry, batch)
+
+def _display_value(value: object) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    return str(value)
+
+def _render_file_detail_panel(
+    registry: Registry, settings: Settings, file: MigrationFile
+) -> None:
+    st.divider()
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.subheader("Selected file")
+            st.badge(file.state, color=_file_state_color(file.state))
+            st.caption(f"ID {file.file_id}")
+
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Size", _format_bytes(file.size_bytes))
+        metric_cols[1].metric("Attempts", str(file.attempts))
+        metric_cols[2].metric("Archive attempts", str(file.archive_attempts))
+
+        detail_rows = [
+            ("Source database", file.source_database),
+            ("Source path", file.source_path),
+            ("Target exposure", file.target_exposure_name),
+            ("Instance name", file.instance_name),
+            ("Database name", file.database_name),
+            ("Job id", file.job_id),
+            ("Archive job id", file.archive_job_id),
+            ("Uploaded at", file.uploaded_at),
+            ("Archived at", file.archived_at),
+            ("Archive expiration", file.archive_expiration_date),
+            ("Last error", file.last_error),
+        ]
+        st.dataframe(
+            [{"field": label, "value": _display_value(value)} for label, value in detail_rows],
+            column_config={
+                "field": st.column_config.TextColumn("Field"),
+                "value": st.column_config.TextColumn("Value"),
+            },
+            hide_index=True,
+            width="stretch",
+        )
+
+        state_tab, calls_tab, support_tab = st.tabs(["State history", "Vendor calls", "Support"])
+        with state_tab:
+            events = registry.recent_events(file_id=file.file_id, limit=500)
+            if not events:
+                st.caption("No state history recorded for this file.")
+            else:
+                st.dataframe(
+                    [
+                        {
+                            "occurred_at": e.occurred_at,
+                            "from_state": e.from_state or "-",
+                            "to_state": e.to_state,
+                            "actor": e.actor,
+                            "detail": e.detail,
+                        }
+                        for e in events
+                    ],
+                    column_config={
+                        "occurred_at": st.column_config.DatetimeColumn(
+                            "Occurred", format="YYYY-MM-DD HH:mm:ss"
+                        ),
+                        "from_state": st.column_config.TextColumn("From"),
+                        "to_state": st.column_config.TextColumn("To"),
+                        "actor": st.column_config.TextColumn("Actor"),
+                        "detail": st.column_config.TextColumn("Detail"),
+                    },
+                    hide_index=True,
+                    width="stretch",
+                )
+
+        with calls_tab:
+            transactions = registry.recent_transactions(file_id=file.file_id, limit=500)
+            if not transactions:
+                st.caption("No vendor calls recorded for this file.")
+            else:
+                st.dataframe(
+                    [
+                        {
+                            "occurred_at": t.occurred_at,
+                            "method": t.method,
+                            "endpoint": metrics.endpoint_key(t.url),
+                            "status": t.status_code,
+                            "duration_ms": t.duration_ms,
+                            "correlation_id": t.correlation_id,
+                            "url": t.url,
+                        }
+                        for t in transactions
+                    ],
+                    column_config={
+                        "occurred_at": st.column_config.DatetimeColumn(
+                            "Occurred", format="YYYY-MM-DD HH:mm:ss"
+                        ),
+                        "method": st.column_config.TextColumn("Method"),
+                        "endpoint": st.column_config.TextColumn("Endpoint"),
+                        "status": st.column_config.NumberColumn("Status"),
+                        "duration_ms": st.column_config.NumberColumn("Duration (ms)"),
+                        "correlation_id": st.column_config.TextColumn("Correlation ID"),
+                        "url": st.column_config.TextColumn("URL"),
+                    },
+                    hide_index=True,
+                    width="stretch",
+                )
+
+        with support_tab:
+            st.dataframe(
+                [
+                    {"identifier": "File id", "value": str(file.file_id)},
+                    {"identifier": "Batch", "value": file.batch_id},
+                    {"identifier": "Source database", "value": file.source_database},
+                    {"identifier": "Target exposure", "value": file.target_exposure_name},
+                    {"identifier": "Job id", "value": file.job_id or "-"},
+                    {"identifier": "Archive job id", "value": file.archive_job_id or "-"},
+                    {
+                        "identifier": "Correlation IDs",
+                        "value": _correlation_ids(registry, file.file_id),
+                    },
+                ],
+                column_config={
+                    "identifier": st.column_config.TextColumn("Identifier"),
+                    "value": st.column_config.TextColumn("Value"),
+                },
+                hide_index=True,
+                width="stretch",
+            )
+
+            state = _known_file_state(file.state)
+            retryable = state in (
+                FileState.FAILED,
+                FileState.ABANDONED,
+                FileState.ARCHIVE_FAILED,
+            )
+            action_cols = st.columns(2)
+            with action_cols[0]:
+                if st.button(
+                    "Retry file",
+                    icon=":material/replay:",
+                    disabled=not retryable,
+                    key=f"retry_file_{file.file_id}",
+                ):
+                    with st.status("Retrying file", expanded=True) as status:
+                        handle = batch_ops.start_retry_subprocess(
+                            file_id=file.file_id,
+                            environment=settings.environment,
+                        )
+                        st.write(f"Retry started (pid `{handle.pid}`).")
+                        st.write(f"Output: `{handle.log_path}`")
+                        _note_launch(file.batch_id, f"Retry file {file.file_id}", handle)
+                        status.update(
+                            label="Handed off to the retry",
+                            state="complete",
+                            expanded=False,
+                        )
+            with action_cols[1]:
+                try:
+                    support_json = _support_bundle_json(settings, file.file_id)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.download_button(
+                        "Export support bundle",
+                        data=support_json,
+                        file_name=_support_bundle_filename(file),
+                        mime="application/json",
+                        icon=":material/download:",
+                        key=f"support_bundle_{file.file_id}",
+                    )
+
+def _correlation_ids(registry: Registry, file_id: int) -> str:
+    ids = [
+        str(t.correlation_id)
+        for t in registry.recent_transactions(file_id=file_id, limit=500)
+        if t.correlation_id
+    ]
+    return ", ".join(dict.fromkeys(ids)) or "-"
 
 _PROBLEM_STATES = frozenset(
     {FileState.FAILED, FileState.ABANDONED, FileState.REJECTED, FileState.ARCHIVE_FAILED}
