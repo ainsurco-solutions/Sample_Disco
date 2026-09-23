@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,26 @@ from migration_hub.orchestration.batches import place_by_location, platform_loca
 from migration_hub.orchestration.reconciliation import reconcile_targets
 from migration_hub.orchestration.worker_pool import run_worker_pool
 from migration_hub.producers import scanner, validator
+
+class SourceFolderError(ValueError):
+    pass
+
+_STRIPPED_WINDOWS_PATH = re.compile(r"^[A-Za-z]:[^\\/]")
+
+def check_source_folder(source_root: Path) -> None:
+    if source_root.is_dir():
+        return
+    message = (
+        f'source path is not a folder: "{source_root}"'
+        if source_root.exists()
+        else f'source folder does not exist: "{source_root}"'
+    )
+    if _STRIPPED_WINDOWS_PATH.match(str(source_root)):
+        message += (
+            " -- it looks like the shell removed its backslashes (Git Bash does). "
+            'Use forward slashes, e.g. "C:/MigrationHub/src", or run from PowerShell.'
+        )
+    raise SourceFolderError(message)
 
 AUTO_SIGN_OFF_ACTOR = "migration-hub-auto"
 
@@ -56,6 +77,7 @@ def run_automated_migration(
         raise ValueError("specify exactly one of source_root or batch_id")
 
     if source_root is not None:
+        check_source_folder(source_root)
         batch_id = derive_batch_id(source_root)
         _log(f"batch: {batch_id!r} (derived from {source_root})")
         registry.ensure_batch(batch_id=batch_id, max_concurrency=thread_count)
@@ -79,16 +101,26 @@ def run_automated_migration(
     rejected = sum(1 for r in validation_results.values() if not r.ok)
     _log(f"validated {len(validation_results)} file(s), {rejected} rejected")
 
+    attempts_at_start = {
+        f.file_id: f.archive_attempts for f in registry.batch_files(batch_id=batch_id)
+    }
+
     passes = 0
     while True:
         passes += 1
-        _log("migrating (threaded)...")
+        _log(
+            "migrating (threaded; each worker archives its file once it is on Data Bridge)..."
+            if not dry_run
+            else "migrating (threaded)..."
+        )
         run_worker_pool(
             registry=registry, adapter_factory=adapter_factory, batch_id=batch_id,
             thread_count=thread_count, dry_run=dry_run, max_attempts=max_attempts,
             poll_interval_seconds=poll_interval_seconds, max_poll_minutes=max_poll_minutes,
             instance_name=instance_name,
             instances=instances,
+            archive_after_bridge=not dry_run,
+            max_archive_attempts=max_archive_attempts,
         )
 
         failed_now = list(registry.files_in_states(states=[FileState.FAILED], batch_id=batch_id))
@@ -106,15 +138,26 @@ def run_automated_migration(
             signed_off=False, signed_off_by=None, run_id="", passes=passes,
         )
 
-    _log("archiving...")
     coordinator = adapter_factory()
     try:
         session = coordinator.open_session()
-        archived = 0
+        def under_run_limit(file: MigrationFile) -> bool:
+            used = file.archive_attempts - attempts_at_start.get(file.file_id, 0)
+            return used < max(1, max_attempts)
+
+        archived = sum(
+            1
+            for f in registry.completed_files(batch_id=batch_id)
+            if f.archive_attempts > attempts_at_start.get(f.file_id, 0)
+        )
+        if [f for f in registry.pending_archives(batch_id=batch_id) if under_run_limit(f)]:
+            _log("archiving what is left (retrying failed archives)...")
         for archive_pass in range(1, max(1, max_attempts) + 1):
+            if not [f for f in registry.pending_archives(batch_id=batch_id) if under_run_limit(f)]:
+                break
             archived += archiver.archive_pending(
                 registry=registry, adapter=coordinator, batch_id=batch_id,
-                resource_group_id=session.resource_group_id,
+                resource_group_id=session.resource_group_id, only=under_run_limit,
                 max_wait_minutes=max_poll_minutes, poll_interval_seconds=poll_interval_seconds,
                 max_archive_attempts=max_archive_attempts,
             )

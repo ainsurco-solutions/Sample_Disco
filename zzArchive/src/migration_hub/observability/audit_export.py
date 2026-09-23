@@ -15,13 +15,6 @@ from migration_hub.core.registry import Registry
 from migration_hub.core.scrub import scrub_credentials, scrub_optional
 from migration_hub.observability.redaction import redact_text
 
-KNOWN_GAPS = (
-    "Upload PUTs are recorded from TASK-0087 on (file, part, bytes, status, duration, "
-    "ETag; URL without its signature); uploads made before that have no PUT rows.",
-    "The per-file session check (resource-group lookup) uses its own client and is not recorded.",
-    "Each developer's registry holds only what that developer migrated (TASK-0073).",
-)
-
 _FILE_COLUMNS = (
     "file_id",
     "batch_id",
@@ -175,7 +168,6 @@ def export_batch_audit(
             "runs.csv": len(runs),
         },
         "sha256": {name: hashlib.sha256(data).hexdigest() for name, data in members.items()},
-        "known_gaps": list(KNOWN_GAPS),
     }
     members["manifest.json"] = json.dumps(manifest, indent=2).encode("utf-8")
 

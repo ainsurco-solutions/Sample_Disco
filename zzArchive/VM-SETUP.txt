@@ -54,10 +54,11 @@ Create the folder first if it is not there:
 
   mkdir src\migration_hub\ui
 
-__init__.py must NOT be 0 bytes. The published file is a single
-newline: 1 byte with LF, 2 with CRLF, and check_copy accepts either
-because it normalises line endings. A 0-byte file fails verification --
-that is what an older run of the scaffolder produced, fixed 2026-09-21.
+__init__.py can be left empty. The published file is a single newline,
+and check_copy accepts that as 0, 1 (LF) or 2 (CRLF) bytes -- an empty
+file is the newline without its newline. Before 2026-09-23 it reported
+the empty file as EMPTY; copy the current scripts\check_copy.py if yours
+still does.
 
 NOTHING ELSE TO INSTALL
 -----------------------
@@ -428,6 +429,60 @@ WORTH KNOWING:
   - A run that closes EXCEPTIONS stops for a human to review:
 
       migration-hub controls history --batch <id>
+
+
+-----------------------------------------------------------------------
+IF THE DASHBOARD SAYS "Runaway risk" OR A FILE WILL NOT MOVE
+-----------------------------------------------------------------------
+Added 2026-09-23, after one file on this VM went upload -> 403 ->
+upload 24 times in 15 minutes. The API calls panel on the dashboard is
+what shows it: the call count keeps climbing while the pipeline step
+does not advance.
+
+--- stop it first ------------------------------------------------------
+Click Pause -- in the Start migration dialog, or in the batch's action
+bar. The worker finishes the attempt it is on, claims nothing more, and
+exits. Check a minute later that the call count has stopped rising.
+
+Only if it keeps rising, end the migration workers (the dashboard is
+left running):
+
+  Get-CimInstance Win32_Process -Filter "name='python.exe'" | Where-Object CommandLine -match 'migration_hub.cli' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+From the publish carrying the fix, a refused upload stops by itself
+after max_attempts (3) and the file lands ABANDONED with the reason in
+last_error. Before it, a 403 on the upload restaged forever.
+
+--- then read what the vendor said -------------------------------------
+Every call is in the registry, and a failed upload keeps the first 2000
+characters of the storage service's reply. Run from the tree root, in
+the (.venv) PowerShell window:
+
+@'
+import os, sqlite3
+from dotenv import load_dotenv
+load_dotenv(".env")
+path = os.environ["MIGRATION_HUB_DATABASE_URL"].split(":///", 1)[1]
+db = sqlite3.connect(path)
+for row in db.execute("select occurred_at, method, status_code, substr(response_body, 1, 800) from api_transaction where status_code >= 400 order by transaction_id desc limit 3"):
+    print(row, "\n")
+'@ | python -
+
+It prints the three most recent failed calls, newest first. For a
+storage PUT the reply is XML whose <Code> says why:
+
+  SignatureDoesNotMatch   the request sent is not the one the URL was
+                          signed for (a header or the body length) --
+                          our side, send it to the devs
+  AccessDenied            the URL or its credentials are not allowed to
+                          write there -- Moody's side
+  RequestTimeTooSkewed    this machine's clock is wrong; fix the clock
+  ExpiredToken /          the URL really had expired -- only plausible
+  Request has expired     if the upload started long after it was issued
+
+Paste the output to the devs either way -- the Code line is what they
+need. The URL itself is stored with its signature removed (TASK-0087),
+so the output is safe to share.
 
 
 =======================================================================

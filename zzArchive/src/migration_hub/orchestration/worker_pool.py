@@ -20,10 +20,19 @@ def run_worker_pool(
     max_poll_minutes: float,
     instance_name: str | None,
     instances: dict[str, str] | None = None,
+    archive_after_bridge: bool = False,
+    max_archive_attempts: int | None = None,
 ) -> dict[FileState, int]:
     results: list[dict[FileState, int]] = [{} for _ in range(thread_count)]
+    errors: list[BaseException] = []
 
     def _run(index: int, worker_id: str) -> None:
+        try:
+            _run_worker(index, worker_id)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def _run_worker(index: int, worker_id: str) -> None:
         adapter = adapter_factory()
         try:
             results[index] = batches.run_worker_loop(
@@ -37,6 +46,8 @@ def run_worker_pool(
                 max_poll_minutes=max_poll_minutes,
                 instance_name=instance_name,
                 instances=instances,
+                archive_after_bridge=archive_after_bridge,
+                max_archive_attempts=max_archive_attempts,
             )
         finally:
             adapter.close()
@@ -49,6 +60,8 @@ def run_worker_pool(
         t.start()
     for t in threads:
         t.join()
+    if errors:
+        raise errors[0]
 
     merged: dict[FileState, int] = {}
     for outcomes in results:

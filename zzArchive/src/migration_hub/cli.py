@@ -16,7 +16,11 @@ from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import audit_export, controls
 from migration_hub.orchestration import archiver, batches, reaper, reconciliation, scheduler
-from migration_hub.orchestration.auto_migrate import run_automated_migration
+from migration_hub.orchestration.auto_migrate import (
+    SourceFolderError,
+    check_source_folder,
+    run_automated_migration,
+)
 from migration_hub.producers import scanner, validator
 
 load_dotenv()
@@ -128,11 +132,22 @@ def migrate(
     ),
     max_files: int | None = typer.Option(None, "--max-files"),
 ) -> None:
-    if (source is None) == (batch is None):
-        typer.echo("specify exactly one of --source or --batch", err=True)
+    if source is not None and batch is not None:
+        typer.echo("specify --source or --batch, not both", err=True)
         raise typer.Exit(1)
 
     settings = _load_settings()
+    if source is None and batch is None:
+        source = settings.source_root
+        typer.echo(f"source: {source} (source_root from config/{settings.environment}.json)")
+
+    if source is not None:
+        try:
+            check_source_folder(source)
+        except SourceFolderError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+
     registry = _registry(settings)
 
     result = run_automated_migration(

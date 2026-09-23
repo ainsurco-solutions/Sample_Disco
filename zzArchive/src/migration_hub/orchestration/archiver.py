@@ -22,6 +22,7 @@ def archive_pending(
     resource_group_id: str | None = None,
     actor: str = "archiver",
     include_failed: bool = True,
+    only: Callable[[MigrationFile], bool] | None = None,
     max_archive_attempts: int | None = None,
     max_wait_minutes: float = 0.0,
     poll_interval_seconds: float = 60.0,
@@ -31,33 +32,87 @@ def archive_pending(
     pending = registry.pending_archives(batch_id=batch_id, include_failed=include_failed)
     archived = 0
     for file in pending:
-        try:
-            done = _archive_one(
-                registry=registry,
-                adapter=adapter,
-                file=file,
-                resource_group_id=resource_group_id,
-                actor=actor,
-                limit=max_archive_attempts,
-                max_wait_minutes=max_wait_minutes,
-                poll_interval_seconds=poll_interval_seconds,
-                sleep=sleep,
-                clock=clock,
-            )
-        except HaltError:
-            raise
-        except Exception as exc:
-            _fail(
-                registry,
-                file.file_id,
-                actor,
-                f"archive failed: {type(exc).__name__}: {exc}",
-                limit=max_archive_attempts,
-            )
-            done = False
-        if done:
+        if only is not None and not only(file):
+            continue
+        if _archive_guarded(
+            registry=registry,
+            adapter=adapter,
+            file=file,
+            resource_group_id=resource_group_id,
+            actor=actor,
+            limit=max_archive_attempts,
+            max_wait_minutes=max_wait_minutes,
+            poll_interval_seconds=poll_interval_seconds,
+            sleep=sleep,
+            clock=clock,
+        ):
             archived += 1
     return archived
+
+def archive_one_file(
+    *,
+    registry: Registry,
+    adapter: DatabridgeAdapter,
+    file_id: int,
+    resource_group_id: str | None,
+    actor: str,
+    max_archive_attempts: int | None = None,
+    max_wait_minutes: float = 0.0,
+    poll_interval_seconds: float = 60.0,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> FileState:
+    file = registry.get(file_id)
+    if file is None:
+        raise ValueError(f"No migration_file with file_id={file_id}")
+    _archive_guarded(
+        registry=registry,
+        adapter=adapter,
+        file=file,
+        resource_group_id=resource_group_id,
+        actor=actor,
+        limit=max_archive_attempts,
+        max_wait_minutes=max_wait_minutes,
+        poll_interval_seconds=poll_interval_seconds,
+        sleep=sleep,
+        clock=clock,
+    )
+    final = registry.get(file_id)
+    assert final is not None
+    return FileState(final.state)
+
+def _archive_guarded(
+    *,
+    registry: Registry,
+    adapter: DatabridgeAdapter,
+    file: MigrationFile,
+    resource_group_id: str | None,
+    actor: str,
+    limit: int | None,
+    max_wait_minutes: float,
+    poll_interval_seconds: float,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> bool:
+    try:
+        return _archive_one(
+            registry=registry,
+            adapter=adapter,
+            file=file,
+            resource_group_id=resource_group_id,
+            actor=actor,
+            limit=limit,
+            max_wait_minutes=max_wait_minutes,
+            poll_interval_seconds=poll_interval_seconds,
+            sleep=sleep,
+            clock=clock,
+        )
+    except HaltError:
+        raise
+    except Exception as exc:
+        reason = f"archive failed: {type(exc).__name__}: {exc}"
+        _fail(registry, file.file_id, actor, reason, limit=limit)
+        return False
 
 def _archive_one(
     *,

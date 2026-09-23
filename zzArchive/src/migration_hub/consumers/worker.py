@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -33,8 +34,10 @@ class MigrationWorker:
         max_poll_minutes: float = 30.0,
         instance_name: str | None = None,
         instances: dict[str, str] | None = None,
+        archive: Callable[[int, str | None], FileState] | None = None,
     ) -> None:
         self._registry = registry
+        self._archive = archive
         self._adapter = adapter
         self._worker_id = worker_id
         self._dry_run = dry_run
@@ -67,7 +70,7 @@ class MigrationWorker:
             return FileState.VALIDATED
 
         try:
-            self._adapter.open_session()
+            session = self._adapter.open_session()
 
             job_id = self._upload_and_import(
                 file.file_id,
@@ -83,7 +86,11 @@ class MigrationWorker:
             )
         except BaseException as exc:
             return self._handle_failure(file.file_id, exc)
-        return FileState.BRIDGED
+
+        if self._archive is None:
+            return FileState.BRIDGED
+        with self._adapter.bound_to_file(file.file_id):
+            return self._archive(file.file_id, session.resource_group_id)
 
     def _resolve_instance(self, source_path: str) -> str:
         if self._instances:
@@ -177,15 +184,17 @@ class MigrationWorker:
         classification = classify(exc)
 
         if classification.action is FailureAction.RESTAGE:
-            self._registry.transition(
-                file_id=file_id,
-                to_state=FileState.VALIDATED,
-                actor=self._worker_id,
-                detail=classification.reason,
-            )
-            return FileState.VALIDATED
+            file = self._registry.get(file_id)
+            if file is not None and file.attempts < self._max_attempts:
+                self._registry.transition(
+                    file_id=file_id,
+                    to_state=FileState.VALIDATED,
+                    actor=self._worker_id,
+                    detail=classification.reason,
+                )
+                return FileState.VALIDATED
 
-        retryable = classification.action is FailureAction.RETRY
+        retryable = classification.action in (FailureAction.RETRY, FailureAction.RESTAGE)
         resulting_state = self._registry.record_failure(
             file_id=file_id,
             error=classification.reason,

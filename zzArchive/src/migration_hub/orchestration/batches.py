@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
@@ -15,6 +16,7 @@ from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
+from migration_hub.orchestration import archiver
 from migration_hub.orchestration.batch_identity import derive_batch_id
 
 _WINDOWS_DETACH_FLAGS = (
@@ -57,6 +59,8 @@ def run_worker_loop(
     on_outcome: Callable[[FileState, int], None] | None = None,
     instance_name: str | None = None,
     instances: dict[str, str] | None = None,
+    archive_after_bridge: bool = False,
+    max_archive_attempts: int | None = None,
 ) -> dict[FileState, int]:
     worker = MigrationWorker(
         registry=registry,
@@ -68,6 +72,19 @@ def run_worker_loop(
         max_poll_minutes=max_poll_minutes,
         instance_name=instance_name,
         instances=instances,
+        archive=(
+            partial(
+                _archive_bridged_file,
+                registry=registry,
+                adapter=adapter,
+                actor=worker_id,
+                max_archive_attempts=max_archive_attempts,
+                max_wait_minutes=max_poll_minutes,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+            if archive_after_bridge
+            else None
+        ),
     )
 
     outcomes: dict[FileState, int] = {}
@@ -81,6 +98,28 @@ def run_worker_loop(
         if on_outcome is not None:
             on_outcome(outcome, sum(outcomes.values()))
     return outcomes
+
+def _archive_bridged_file(
+    file_id: int,
+    resource_group_id: str | None,
+    *,
+    registry: Registry,
+    adapter: DatabridgeAdapter,
+    actor: str,
+    max_archive_attempts: int | None,
+    max_wait_minutes: float,
+    poll_interval_seconds: float,
+) -> FileState:
+    return archiver.archive_one_file(
+        registry=registry,
+        adapter=adapter,
+        file_id=file_id,
+        resource_group_id=resource_group_id,
+        actor=actor,
+        max_archive_attempts=max_archive_attempts,
+        max_wait_minutes=max_wait_minutes,
+        poll_interval_seconds=poll_interval_seconds,
+    )
 
 def state_of(*, registry: Registry, batch_id: str) -> BatchState:
     batch = registry.get_batch(batch_id)
