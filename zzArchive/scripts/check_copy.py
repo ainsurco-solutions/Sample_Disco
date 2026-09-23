@@ -51,7 +51,7 @@ def _digest(path: Path) -> tuple[str, int, int]:
     raw = path.read_bytes()
     normalised = raw.replace(b"\r\n", b"\n")
     text = normalised.decode("utf-8", errors="replace")
-    canonical = normalised if (not normalised or normalised.endswith(b"\n")) else normalised + b"\n"
+    canonical = normalised if normalised.endswith(b"\n") else normalised + b"\n"
     return hashlib.sha256(canonical).hexdigest(), len(normalised), len(text.splitlines())
 
 def main() -> int:
@@ -106,13 +106,13 @@ def main() -> int:
         checked += 1
         digest, size, lines = _digest(local)
 
-        if size == 0 and entry.size > 0:
-            empty.append(entry.path)
-            continue
-
         if digest == entry.digest:
             if not args.quiet:
                 print(f"{_OK} {entry.path}")
+            continue
+
+        if size == 0:
+            empty.append(entry.path)
             continue
 
         differs.append((entry, size, lines))
