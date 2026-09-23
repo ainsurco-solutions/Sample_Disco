@@ -668,6 +668,11 @@ class Registry:
                 select(func.min(MigrationFile.created_at)).where(MigrationFile.batch_id == batch_id)
             )
 
+    def known_job_ids(self) -> set[str]:
+        with Session(self._engine) as session:
+            rows = session.execute(select(MigrationFile.job_id, MigrationFile.archive_job_id)).all()
+        return {str(value).lower() for row in rows for value in row if value}
+
     def completed_exposure_names(self, *, batch_id: str | None = None) -> Sequence[str]:
         stmt = select(MigrationFile.target_exposure_name).where(
             MigrationFile.state == str(FileState.COMPLETED)

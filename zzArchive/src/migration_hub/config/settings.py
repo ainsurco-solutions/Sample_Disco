@@ -47,6 +47,11 @@ class Settings(BaseModel):
     scheduler_poll_interval_seconds: float = 60.0
     scheduler_reap_interval_seconds: float = 300.0
 
+    queue_snapshot_path: Path = Path("var/databridge-queue.json")
+    queue_check_ttl_minutes: int = Field(default=5, ge=1)
+    queue_hold_active_imports: int = Field(default=10, ge=1)
+    queue_investigate_failures_24h: int = Field(default=5, ge=1)
+
     compute_checksums: bool = False
     dry_run: bool = True
     environment: str

@@ -16,7 +16,14 @@ from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import audit_export, controls
 from migration_hub.observability import logging as hub_logging
-from migration_hub.orchestration import archiver, batches, reaper, reconciliation, scheduler
+from migration_hub.orchestration import (
+    archiver,
+    batches,
+    queue_check,
+    reaper,
+    reconciliation,
+    scheduler,
+)
 from migration_hub.orchestration.auto_migrate import (
     SourceFolderError,
     check_source_folder,
@@ -344,6 +351,90 @@ def status(batch: str | None = typer.Option(None, "--batch")) -> None:
         for file in stuck:
             typer.echo(f"  [{file.file_id}] {file.source_database} -- {file.state}")
             typer.echo(f"      {file.last_error or '(no error recorded)'}")
+
+def configured_instances(settings: Settings) -> list[str]:
+    names = list(dict.fromkeys(settings.databridge_instances.values()))
+    if settings.databridge_instance_name and settings.databridge_instance_name not in names:
+        names.append(settings.databridge_instance_name)
+    return names
+
+_RECOMMENDATION_COLOURS = {
+    queue_check.Recommendation.PUSH: typer.colors.GREEN,
+    queue_check.Recommendation.HOLD: typer.colors.YELLOW,
+    queue_check.Recommendation.INVESTIGATE: typer.colors.RED,
+    queue_check.Recommendation.UNKNOWN: typer.colors.MAGENTA,
+}
+
+def _by_group(counts: dict[str, int]) -> str:
+    return (
+        f"{sum(counts.values())} (import {counts.get('import', 0)}, "
+        f"archive {counts.get('archive', 0)}, other {counts.get('other', 0)})"
+    )
+
+def _echo_queue(snapshot: queue_check.Snapshot) -> None:
+    for q in snapshot.instances:
+        typer.secho(
+            f"{q.instance}: {q.recommendation}",
+            fg=_RECOMMENDATION_COLOURS[q.recommendation],
+            bold=True,
+        )
+        if q.read_ok:
+            oldest = (
+                "none active"
+                if q.oldest_active_minutes is None
+                else f"{q.oldest_active_minutes} min"
+            )
+            typer.echo(f"  queued  {_by_group(q.queued)}")
+            typer.echo(f"  running {_by_group(q.running)}")
+            typer.echo(
+                f"  ours active {q.ours_active}; oldest active {oldest}; "
+                f"failed in 24 h {q.failed_last_24h}; {q.total_jobs:,} job(s) in the list"
+            )
+        for reason in q.reasons:
+            typer.echo(f"  - {reason}")
+    typer.echo(
+        f"read at {snapshot.written_at:%Y-%m-%d %H:%M:%S} UTC; next read allowed from "
+        f"{snapshot.fresh_until():%H:%M:%S} UTC"
+    )
+
+@app.command()
+def queue() -> None:
+    settings = _load_settings()
+    instances = configured_instances(settings)
+    if not instances:
+        typer.echo("no Data Bridge instance configured -- nothing to check", err=True)
+        raise typer.Exit(1)
+    if settings.dry_run:
+        typer.echo("dry_run is on -- no vendor calls, so no queue read")
+        last = queue_check.read_snapshot(settings.queue_snapshot_path)
+        if last is not None:
+            typer.echo("last result:")
+            _echo_queue(last)
+        return
+
+    registry = _registry(settings)
+    adapter = _adapter(settings)
+    try:
+        snapshot = queue_check.run_check(
+            instances=instances,
+            fetch=lambda name: adapter.list_instance_jobs(instance_name=name),
+            our_job_ids=registry.known_job_ids(),
+            snapshot_path=settings.queue_snapshot_path,
+            now=datetime.now(UTC),
+            ttl_minutes=settings.queue_check_ttl_minutes,
+            thresholds=queue_check.Thresholds(
+                hold_active_imports=settings.queue_hold_active_imports,
+                investigate_after_minutes=settings.max_poll_minutes,
+                investigate_failures_24h=settings.queue_investigate_failures_24h,
+            ),
+        )
+    except queue_check.TooSoonError as exc:
+        typer.echo(f"not read again: {exc}")
+        typer.echo("last result:")
+        snapshot = exc.snapshot
+    finally:
+        adapter.close()
+    _echo_queue(snapshot)
 
 controls_app = typer.Typer(help="Open, close and inspect per-run batch-controls records.")
 app.add_typer(controls_app, name="controls")

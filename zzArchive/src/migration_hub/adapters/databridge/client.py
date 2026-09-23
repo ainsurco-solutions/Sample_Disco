@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -43,6 +44,18 @@ class DatabridgeJobStatus:
     raw_status: str
     is_terminal: bool
     is_success: bool
+
+@dataclass(frozen=True, slots=True)
+class DatabridgeJob:
+
+    id: str
+    type: str
+    status: str
+    resource_name: str
+    create_time: datetime | None
+    end_time: datetime | None
+    owner: str
+    resource_type: str
 
 class DatabridgeAdapter:
 
@@ -197,6 +210,17 @@ class DatabridgeAdapter:
             is_success=status in _SUCCESS_STATUSES,
         )
 
+    def list_instance_jobs(self, *, instance_name: str) -> list[DatabridgeJob]:
+        response = self._request(
+            "GET", f"/databridge/v1/sql-instances/{instance_name}/Jobs", store_body=False
+        )
+        body = response.json()
+        if not isinstance(body, list):
+            raise DatabridgeError(
+                f"job list for {instance_name!r} is not a list: {type(body).__name__}"
+            )
+        return [_job_from_item(item) for item in body if isinstance(item, dict)]
+
     def database_exists(self, *, instance_name: str, database_name: str) -> bool:
         response = self._request("GET", f"/databridge/v1/sql-instances/{instance_name}/databases")
         return any(item.get("name") == database_name for item in response.json())
@@ -246,7 +270,9 @@ class DatabridgeAdapter:
             call.response_body = _safe_json(response)
         return response
 
-    def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+    def _request(
+        self, method: str, path: str, *, store_body: bool = True, **kwargs: object
+    ) -> httpx.Response:
         url = str(self._client.base_url.join(path))
         if self._engine is not None:
             with audited_call(
@@ -255,7 +281,10 @@ class DatabridgeAdapter:
                 call.request_body = kwargs.get("json")
                 response = self._client.request(method, path, **kwargs)
                 call.status_code = response.status_code
-                call.response_body = _safe_json(response)
+                if store_body or response.status_code >= 400:
+                    call.response_body = _safe_json(response)
+                else:
+                    call.response_body = f"({len(response.content):,} bytes, body not stored)"
         else:
             response = self._client.request(method, path, **kwargs)
 
@@ -267,6 +296,34 @@ def _safe_json(response: httpx.Response) -> object:
         return response.json()
     except ValueError:
         return response.text
+
+def _parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+def _job_from_item(item: dict[str, object]) -> DatabridgeJob:
+    def text(key: str) -> str:
+        value = item.get(key)
+        return "" if value is None else str(value)
+
+    return DatabridgeJob(
+        id=text("id"),
+        type=text("type"),
+        status=text("status"),
+        resource_name=text("resourceName"),
+        create_time=_parse_time(item.get("createTime")),
+        end_time=_parse_time(item.get("endTime")),
+        owner=text("owner"),
+        resource_type=text("resourceType"),
+    )
 
 def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code == 401:

@@ -537,6 +537,28 @@ It prints a VERDICT per candidate and saves the same summary under
 results\probe_job_queue_<time>.json. Send that file to the devs.
 
 
+CHECK THE DATA BRIDGE QUEUE (TASK-0096) -- read-only
+-----------------------------------------------------------------------
+Before starting a batch: is Data Bridge already busy? From the tree root,
+in the (.venv) window:
+
+  migration-hub queue
+
+Per Data Bridge instance it prints PUSH, HOLD, INVESTIGATE or UNKNOWN, the
+queued and running jobs (imports, archives, other), how many are ours, and
+the age of the oldest active job.
+
+  PUSH         fewer than 10 imports queued or running -- go ahead
+  HOLD         10 or more -- wait
+  INVESTIGATE  a job older than max_poll_minutes, 5+ failures in 24 h, or
+               a status nobody has classified -- look at the Jobs page
+  UNKNOWN      the list could not be read -- this is NOT an empty queue
+
+Each read downloads the instance's whole job history (several MB), so it
+reads at most once every 5 minutes; run it again sooner and it shows the
+last result instead. Needs dry_run false in config\prod.json.
+
+
 =======================================================================
 HISTORIC -- TROUBLESHOOTING ALREADY DONE
 =======================================================================

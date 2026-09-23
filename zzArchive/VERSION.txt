@@ -1,3 +1,3 @@
-source commit : 20ccd5fa32fd506cb855b2381cfcdde09adf79da
-               fix: probe_job_queue --filters crashed on the stripped copy (__doc__ is None) (TASK-0094)
-files         : 89
+source commit : 773ca795fc1d0686e32cb546593f9e8ed0747898
+               feat: Data Bridge queue check -- adapter read, summary, Push/Hold signal, `queue` command (TASK-0096)
+files         : 90
