@@ -140,10 +140,20 @@ def render() -> None:
         return
 
     st.subheader(f"Batch {selected}")
-    _render_batch_action_bar(registry, settings, selected)
+    _live_batch_action_bar(registry, settings, selected)
     _render_live_log(registry, selected)
     st.space("small")
-    _render_tabs(registry, settings, selected)
+    _live_batch_tabs(registry, settings, selected)
+
+_BATCH_REFRESH = "8s"
+
+@st.fragment(run_every=_BATCH_REFRESH)
+def _live_batch_action_bar(registry: Registry, settings: Settings, batch: str) -> None:
+    _render_batch_action_bar(registry, settings, batch)
+
+@st.fragment(run_every=_BATCH_REFRESH)
+def _live_batch_tabs(registry: Registry, settings: Settings, batch: str) -> None:
+    _render_tabs(registry, settings, batch)
 
 @st.fragment(run_every="8s")
 def _render_overview(registry: Registry) -> None:
