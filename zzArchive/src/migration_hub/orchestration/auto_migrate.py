@@ -37,6 +37,7 @@ def run_automated_migration(
     poll_interval_seconds: float,
     max_poll_minutes: float,
     instance_name: str | None,
+    instances: dict[str, str] | None = None,
     compute_checksum: bool = False,
     on_progress: Callable[[str], None] | None = None,
 ) -> AutoMigrationResult:
@@ -71,6 +72,7 @@ def run_automated_migration(
             thread_count=thread_count, dry_run=dry_run, max_attempts=max_attempts,
             poll_interval_seconds=poll_interval_seconds, max_poll_minutes=max_poll_minutes,
             instance_name=instance_name,
+            instances=instances,
         )
         for state, count in pass_outcomes.items():
             outcomes[state] = outcomes.get(state, 0) + count

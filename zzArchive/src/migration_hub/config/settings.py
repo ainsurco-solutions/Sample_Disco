@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _CREDENTIAL_LIKE_SUBSTRINGS = ("key", "secret", "password", "token", "credential")
 
@@ -34,6 +34,7 @@ class Settings(BaseModel):
     api_key_env_var: str
 
     databridge_instance_name: str | None = None
+    databridge_instances: dict[str, str] = Field(default_factory=dict)
 
     max_concurrent_uploads: int = 1
     poll_interval_seconds: int = 60

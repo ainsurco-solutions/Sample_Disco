@@ -25,7 +25,17 @@
     "uploads against the same tenant.",
     "",
     "Files upload directly from source_root, the share RatCat wrote the",
-    "backups to -- no local staging copy, no extra writes."
+    "backups to -- no local staging copy, no extra writes.",
+    "",
+    "databridge_instances maps SOURCE SERVER to destination Data Bridge.",
+    "MS Amlin's rule: Direct (SRISKPD0101) goes to Data Bridge 1, RI",
+    "(SRISKPD0001) to Data Bridge 2. A file whose server is not listed is",
+    "REJECTED, not sent somewhere -- a misrouted import SUCCEEDS, so a",
+    "fallback would be silent. Names must match the API exactly; run",
+    "scripts/check_credentials.py to list them (they are hyphenated).",
+    "",
+    "databridge_instance_name is the older single-destination form, still",
+    "accepted for a batch whose files all come from one server."
   ],
 
   "environment": "prod",
@@ -35,7 +45,10 @@
 
   "api_host": "REPLACE_WITH_MOODYS_HOST",
   "api_key_env_var": "MOODYS_API_KEY",
-  "databridge_instance_name": "REPLACE_WITH_SQL_INSTANCE_NAME",
+  "databridge_instances": {
+    "sriskpd0101": "databridge-1",
+    "sriskpd0001": "databridge-2"
+  },
 
   "max_concurrent_uploads": 1,
   "poll_interval_seconds": 60,

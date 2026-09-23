@@ -53,6 +53,7 @@ def run_worker_loop(
     max_files: int | None = None,
     on_outcome: Callable[[FileState, int], None] | None = None,
     instance_name: str | None = None,
+    instances: dict[str, str] | None = None,
 ) -> dict[FileState, int]:
     worker = MigrationWorker(
         registry=registry,
@@ -63,6 +64,7 @@ def run_worker_loop(
         poll_interval_seconds=poll_interval_seconds,
         max_poll_minutes=max_poll_minutes,
         instance_name=instance_name,
+        instances=instances,
     )
 
     outcomes: dict[FileState, int] = {}

@@ -19,6 +19,7 @@ def run_worker_pool(
     poll_interval_seconds: float,
     max_poll_minutes: float,
     instance_name: str | None,
+    instances: dict[str, str] | None = None,
 ) -> dict[FileState, int]:
     results: list[dict[FileState, int]] = [{} for _ in range(thread_count)]
 
@@ -35,6 +36,7 @@ def run_worker_pool(
                 poll_interval_seconds=poll_interval_seconds,
                 max_poll_minutes=max_poll_minutes,
                 instance_name=instance_name,
+                instances=instances,
             )
         finally:
             adapter.close()

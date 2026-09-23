@@ -46,6 +46,7 @@ def process_next(batch_id: str) -> bool:
             poll_interval_seconds=settings.poll_interval_seconds,
             max_poll_minutes=settings.max_poll_minutes,
             instance_name=settings.databridge_instance_name,
+            instances=settings.databridge_instances,
         )
         try:
             outcome = worker.run_once(batch_id=batch_id)

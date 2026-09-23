@@ -8,6 +8,7 @@ from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.adapters.databridge.errors import ImportJobFailedError
 from migration_hub.core.registry import Registry
 from migration_hub.core.retry import FailureAction, classify
+from migration_hub.core.routing import resolve_instance
 from migration_hub.core.states import FileState
 
 class SourceChangedSinceDiscoveryError(RuntimeError):
@@ -31,6 +32,7 @@ class MigrationWorker:
         poll_interval_seconds: float = 5.0,
         max_poll_minutes: float = 30.0,
         instance_name: str | None = None,
+        instances: dict[str, str] | None = None,
     ) -> None:
         self._registry = registry
         self._adapter = adapter
@@ -40,6 +42,7 @@ class MigrationWorker:
         self._poll_interval_seconds = poll_interval_seconds
         self._max_poll_minutes = max_poll_minutes
         self._instance_name = instance_name
+        self._instances = dict(instances or {})
         self._dry_run_seen: set[int] = set()
 
     def run_once(self, *, batch_id: str) -> FileState | None:
@@ -73,16 +76,29 @@ class MigrationWorker:
                 expected_size_bytes=file.size_bytes,
             )
             self._poll(file.file_id, job_id=job_id)
-            self._verify(file.file_id, database_name=file.source_database)
+            self._verify(
+                file.file_id,
+                database_name=file.source_database,
+                source_path=file.source_path,
+            )
         except BaseException as exc:
             return self._handle_failure(file.file_id, exc)
         return FileState.COMPLETED
 
+    def _resolve_instance(self, source_path: str) -> str:
+        if self._instances:
+            return resolve_instance(source_path=source_path, mapping=self._instances)
+        if not self._instance_name:
+            raise ValueError(
+                "no Data Bridge configured: set databridge_instances (server -> "
+                "instance) or databridge_instance_name"
+            )
+        return self._instance_name
+
     def _upload_and_import(
         self, file_id: int, *, source_path: str, database_name: str, expected_size_bytes: int
     ) -> str:
-        if not self._instance_name:
-            raise ValueError("instance_name is required to upload and import a file")
+        instance_name = self._resolve_instance(source_path)
 
         current_size = Path(source_path).stat().st_size
         if current_size != expected_size_bytes:
@@ -93,13 +109,13 @@ class MigrationWorker:
         self._registry.record_identifiers(
             file_id=file_id,
             actor=self._worker_id,
-            instance_name=self._instance_name,
+            instance_name=instance_name,
             database_name=database_name,
         )
 
         with self._adapter.bound_to_file(file_id):
             job_id = self._adapter.upload_and_import(
-                instance_name=self._instance_name,
+                instance_name=instance_name,
                 database_name=database_name,
                 file_extension="bak",
                 source=Path(source_path),
@@ -139,10 +155,12 @@ class MigrationWorker:
             file_id=file_id, to_state=FileState.VERIFYING, actor=self._worker_id
         )
 
-    def _verify(self, file_id: int, *, database_name: str) -> None:
+    def _verify(self, file_id: int, *, database_name: str, source_path: str) -> None:
+        instance_name = self._resolve_instance(source_path)
+
         with self._adapter.bound_to_file(file_id):
             exists = self._adapter.database_exists(
-                instance_name=self._instance_name, database_name=database_name
+                instance_name=instance_name, database_name=database_name
             )
 
         if not exists:

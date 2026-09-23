@@ -99,6 +99,7 @@ def run(
                 f"file -> {outcome} (running total: {total})"
             ),
             instance_name=settings.databridge_instance_name,
+            instances=settings.databridge_instances,
         )
     finally:
         adapter.close()
@@ -138,6 +139,7 @@ def migrate(
         poll_interval_seconds=settings.poll_interval_seconds,
         max_poll_minutes=settings.max_poll_minutes,
         instance_name=settings.databridge_instance_name,
+        instances=settings.databridge_instances,
         compute_checksum=settings.compute_checksums,
         on_progress=lambda message: typer.echo(message),
     )
