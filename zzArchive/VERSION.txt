@@ -1,7 +1,3 @@
-source commit : 03e55893218f096fbf437ea437060445aff15984
-               Merge origin/main -- renumber my TASK-0077 to TASK-0079
+source commit : 45a904db83a56fd3cc165940c7a54a168a33ac5c
+               chore: rename New-AmigoScaffold.ps1 to scaffold.ps1
 files         : 80
-
-WARNING: published from a DIRTY working tree. This copy does not
-         correspond to any commit. Re-publish from a clean checkout
-         before mirroring it to SharePoint.
