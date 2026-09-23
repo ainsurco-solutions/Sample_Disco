@@ -254,6 +254,10 @@ BEFORE THE FIRST RUN, MIGRATE THE REGISTRY:
 
   python -m alembic upgrade head
 
+or double-click scripts\upgrade_db.bat, which snapshots the registry
+first and shows the schema revision before and after. Run it again
+after any transfer that carries a file under migrations\versions\.
+
 Three migrations are pending on any registry created before 2026-09-22
 (databridge columns, dropping the IRP-only ones, dropping staged_path).
 Skip this and the first command fails with "table migration_file has no

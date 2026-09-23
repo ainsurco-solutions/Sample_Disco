@@ -493,6 +493,22 @@ class Registry:
             session.expunge_all()
             return results
 
+    def transactions_since(
+        self, *, since: datetime, batch_id: str | None = None
+    ) -> Sequence[ApiTransaction]:
+        stmt = (
+            select(ApiTransaction)
+            .where(ApiTransaction.occurred_at >= since)
+            .order_by(ApiTransaction.transaction_id.desc())
+        )
+        if batch_id is not None:
+            stmt = stmt.join(MigrationFile).where(MigrationFile.batch_id == batch_id)
+
+        with Session(self._engine) as session:
+            results = list(session.scalars(stmt))
+            session.expunge_all()
+            return results
+
     def batch_files(self, *, batch_id: str) -> Sequence[MigrationFile]:
         stmt = (
             select(MigrationFile)
@@ -545,6 +561,31 @@ class Registry:
         with Session(self._engine) as session:
             return session.scalar(stmt) or 0
 
+    def completed_transition_metrics_since(
+        self, *, batch_id: str | None, since: datetime
+    ) -> dict[str, int]:
+        stmt = (
+            select(
+                func.count(MigrationEvent.event_id),
+                func.coalesce(func.sum(MigrationFile.size_bytes), 0),
+            )
+            .select_from(MigrationEvent)
+            .join(MigrationFile)
+            .where(
+                MigrationEvent.to_state == str(FileState.COMPLETED),
+                MigrationEvent.occurred_at >= since,
+            )
+        )
+        if batch_id is not None:
+            stmt = stmt.where(MigrationFile.batch_id == batch_id)
+
+        with Session(self._engine) as session:
+            files_completed, bytes_transferred = session.execute(stmt).one()
+        return {
+            "files_completed": int(files_completed),
+            "bytes_transferred": int(bytes_transferred),
+        }
+
     def file_terminal_times(self, *, batch_id: str) -> dict[int, datetime]:
         stmt = (
             select(MigrationEvent.file_id, MigrationEvent.occurred_at)
@@ -573,7 +614,7 @@ class Registry:
         with Session(self._engine) as session:
             return list(session.scalars(stmt))
 
-    def file_metrics(self, *, batch_id: str) -> dict[str, int]:
+    def file_metrics(self, *, batch_id: str | None) -> dict[str, int]:
         stmt = select(
             func.count(),
             func.coalesce(func.sum(MigrationFile.size_bytes), 0),
@@ -588,7 +629,9 @@ class Registry:
             ),
             func.coalesce(func.sum(MigrationFile.attempts), 0),
             func.coalesce(func.sum(case((MigrationFile.attempts >= 1, 1), else_=0)), 0),
-        ).where(MigrationFile.batch_id == batch_id)
+        )
+        if batch_id is not None:
+            stmt = stmt.where(MigrationFile.batch_id == batch_id)
 
         with Session(self._engine) as session:
             total_count, total_bytes, completed_bytes, attempts_sum, attempted_count = (

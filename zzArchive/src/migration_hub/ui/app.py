@@ -16,7 +16,7 @@ from migration_hub.config.settings import Settings
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import SETTLED_STATES, BatchState, FileState
-from migration_hub.observability import controls
+from migration_hub.observability import controls, metrics
 from migration_hub.orchestration import batches as batch_ops
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
@@ -149,6 +149,8 @@ def _render_overview(registry: Registry) -> None:
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
     st.space("small")
+    _render_operational_observability(registry, batch_id=None)
+    st.space("small")
     _render_needs_action_queue(registry)
     st.space("small")
     _render_batch_log(registry)
@@ -214,6 +216,115 @@ def _kpi_strip_global(registry: Registry) -> None:
             with st.container(border=True):
                 st.metric(f":{swatch}[■] {label}", value)
                 st.caption(sub)
+
+def _render_operational_observability(registry: Registry, *, batch_id: str | None) -> None:
+    left, right = st.columns(2)
+    with left:
+        _render_throughput_panel(registry, batch_id=batch_id)
+    with right:
+        _render_api_call_panel(registry, batch_id=batch_id)
+
+def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> None:
+    snapshot = metrics.throughput(registry=registry, batch_id=batch_id, window_hours=24)
+    file_metrics = registry.file_metrics(batch_id=batch_id)
+    remaining_bytes = max(0, file_metrics["total_bytes"] - file_metrics["completed_bytes"])
+    eta = metrics.projected_completion(remaining_bytes=remaining_bytes, snapshot=snapshot)
+    failure_rate = metrics.failure_rate(registry=registry, batch_id=batch_id)
+
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.subheader("Throughput / ETA")
+            st.badge("Registry measured", color="green", icon=":material/speed:")
+        cols = st.columns(4)
+        with cols[0]:
+            st.metric("Speed", f"{_format_bytes(snapshot.bytes_per_second)}/s")
+            st.caption(f"{snapshot.files_completed} completed in 24h")
+        with cols[1]:
+            st.metric("Completed", _format_bytes(file_metrics["completed_bytes"]))
+            st.caption(f"{file_metrics['total_count']} file(s) in scope")
+        with cols[2]:
+            st.metric("Remaining", _format_bytes(remaining_bytes))
+            st.caption("by registered file size")
+        with cols[3]:
+            eta_text = _format_timedelta(eta) if eta is not None else "Insufficient measurement"
+            st.metric("ETA", eta_text)
+            if eta is None:
+                st.caption(
+                    f"needs {metrics.MIN_COMPLETIONS_FOR_ETA}+ completions in 24h -- "
+                    f"failure rate {failure_rate:.1%}"
+                )
+            else:
+                st.caption(f"projection, not a commitment -- failure rate {failure_rate:.1%}")
+
+def _render_api_call_panel(registry: Registry, *, batch_id: str | None) -> None:
+    summary = metrics.api_call_summary(registry=registry, batch_id=batch_id, window_minutes=15)
+    risk_color: dict[str, _BadgeColor] = {
+        "normal": "green",
+        "watch": "orange",
+        "investigate": "red",
+    }
+
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.subheader("API calls")
+            st.badge(
+                f"Runaway risk: {summary.risk}",
+                color=risk_color[summary.risk],
+                icon=":material/network_check:",
+            )
+        cols = st.columns(4)
+        with cols[0]:
+            st.metric("Calls / min", f"{summary.calls_per_minute:.1f}")
+            st.caption(f"{summary.calls} calls in 15m")
+        with cols[1]:
+            st.metric("Errors", summary.errors)
+            st.caption(f"{summary.error_rate:.1%} error rate")
+        with cols[2]:
+            st.metric("Slow calls", summary.slow_calls)
+            st.caption(f">= {summary.slow_threshold_ms // 1000}s")
+        with cols[3]:
+            top_endpoint = summary.top_endpoints[0] if summary.top_endpoints else None
+            st.metric("Top endpoint", top_endpoint.calls if top_endpoint else 0)
+            st.caption(top_endpoint.endpoint if top_endpoint else "none")
+
+        if summary.risk == "investigate":
+            st.error("Call pattern is abnormal. Pause new work and inspect the Vendor calls tab.")
+        elif summary.risk == "watch":
+            st.warning("Call pattern is elevated. Watch for repeated 4xx/5xx responses.")
+
+        _render_api_summary_tables(summary)
+
+def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
+    endpoint_rows = [
+        {"endpoint": item.endpoint, "calls": item.calls, "errors": item.errors}
+        for item in summary.top_endpoints
+    ]
+    status_rows = [
+        {"status": family, "calls": count}
+        for family, count in sorted(summary.status_families.items())
+    ]
+    left, right = st.columns(2)
+    with left:
+        st.dataframe(
+            endpoint_rows,
+            column_config={
+                "endpoint": st.column_config.TextColumn("Endpoint"),
+                "calls": st.column_config.NumberColumn("Calls"),
+                "errors": st.column_config.NumberColumn("Errors"),
+            },
+            hide_index=True,
+            height=180,
+        )
+    with right:
+        st.dataframe(
+            status_rows,
+            column_config={
+                "status": st.column_config.TextColumn("Status"),
+                "calls": st.column_config.NumberColumn("Calls"),
+            },
+            hide_index=True,
+            height=180,
+        )
 
 def _render_needs_action_queue(registry: Registry) -> None:
     rows: list[dict[str, str | int]] = []
@@ -769,6 +880,29 @@ def _format_duration(start: datetime | None, end: datetime | None = None) -> str
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
 
+def _format_timedelta(delta: timedelta | None) -> str:
+    if delta is None:
+        return "Insufficient measurement"
+    seconds = max(0, int(delta.total_seconds()))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+def _format_bytes(value: float | int) -> str:
+    amount = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(amount) < 1024 or unit == "TB":
+            return f"{amount:.1f} {unit}" if unit != "B" else f"{amount:.0f} B"
+        amount /= 1024
+    return f"{amount:.1f} TB"
+
 def _render_retry_action(
     registry: Registry, settings: Settings, batch: str, files: Sequence[MigrationFile]
 ) -> None:
@@ -959,7 +1093,38 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
 
         with calls_view:
             st.caption("Bodies are already redacted at rest -- safe to display.")
-            transactions = registry.recent_transactions(batch_id=batch, limit=30)
+            window_minutes = st.selectbox(
+                "Time window",
+                [15, 60, 360, 1440],
+                index=1,
+                format_func=lambda m: "15 minutes"
+                if m == 15
+                else ("1 hour" if m == 60 else ("6 hours" if m == 360 else "24 hours")),
+                key=f"calls_window_{batch}",
+            )
+            status_filter = st.selectbox(
+                "Status",
+                ["All", "2xx", "3xx", "4xx", "5xx", "unknown"],
+                key=f"calls_status_{batch}",
+            )
+            endpoint_filter = st.text_input(
+                "Endpoint contains", value="", key=f"calls_endpoint_{batch}"
+            ).strip()
+            since = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=window_minutes)
+            transactions = list(registry.transactions_since(batch_id=batch, since=since))
+            if status_filter != "All":
+                transactions = [
+                    transaction
+                    for transaction in transactions
+                    if metrics.status_family(transaction.status_code) == status_filter
+                ]
+            if endpoint_filter:
+                needle = endpoint_filter.lower()
+                transactions = [
+                    transaction
+                    for transaction in transactions
+                    if needle in transaction.url.lower()
+                ]
             if not transactions:
                 st.caption("No vendor calls recorded yet.")
             else:
@@ -969,6 +1134,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                             "occurred_at": t.occurred_at,
                             "file_id": t.file_id,
                             "method": t.method,
+                            "endpoint": metrics.endpoint_key(t.url),
                             "url": t.url,
                             "status_code": t.status_code,
                             "duration_ms": t.duration_ms,
@@ -977,6 +1143,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                     ],
                     column_config={
                         "occurred_at": st.column_config.DatetimeColumn("When", format="HH:mm:ss"),
+                        "endpoint": st.column_config.TextColumn("Endpoint"),
                         "status_code": st.column_config.NumberColumn("Status"),
                         "duration_ms": st.column_config.NumberColumn("Duration", format="%d ms"),
                     },
@@ -1057,12 +1224,7 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
         + counts[FileState.ARCHIVE_FAILED]
         + counts[FileState.REJECTED]
     )
-    recent_transactions = registry.recent_transactions(batch_id=batch, limit=50)
-    recent_errors = sum(
-        1
-        for transaction in recent_transactions
-        if transaction.status_code is not None and transaction.status_code >= 400
-    )
+    call_summary = metrics.api_call_summary(registry=registry, batch_id=batch, window_minutes=15)
 
     with st.container(horizontal=True, vertical_alignment="center"):
         st.badge("Target workflow", color="green", icon=":material/troubleshoot:")
@@ -1073,12 +1235,16 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
         ("Outstanding", outstanding, "not in a settled state"),
         ("Pending archive", pending_archive, "on Data Bridge, not in Vault"),
         ("Failures / rejected", failures, "needs review or disposition"),
-        ("Recent vendor errors", recent_errors, "HTTP 4xx/5xx in recent calls"),
+        ("API calls / min", f"{call_summary.calls_per_minute:.1f}", "last 15 minutes"),
     ]
     for col, (label, value, caption) in zip(cols, tiles, strict=True):
         with col, st.container(border=True):
-            st.metric(label, value)
+            st.metric(label, str(value))
             st.caption(caption)
+
+    st.space("small")
+    _render_operational_observability(registry, batch_id=batch)
+    st.space("small")
 
     st.dataframe(
         [

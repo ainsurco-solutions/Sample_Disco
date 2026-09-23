@@ -93,9 +93,12 @@ $Files = @(
     'src/migration_hub/core/models.py'
     'src/migration_hub/core/registry.py'
     'src/migration_hub/core/retry.py'
+    'src/migration_hub/core/routing.py'
+    'src/migration_hub/core/scrub.py'
     'src/migration_hub/core/states.py'
     'src/migration_hub/observability/__init__.py'
     'src/migration_hub/observability/audit.py'
+    'src/migration_hub/observability/audit_export.py'
     'src/migration_hub/observability/controls.py'
     'src/migration_hub/observability/logging.py'
     'src/migration_hub/observability/metrics.py'
@@ -117,6 +120,7 @@ $Files = @(
     'src/migration_hub/ui/__init__.py'
     'src/migration_hub/ui/app.py'
     'src/migration_hub/ui/pages/__init__.py'
+    'src/migration_hub/ui/pages/ui_ux_mockup.py'
     'migrations/env.py'
     'migrations/README.md'
     'migrations/script.py.mako'
@@ -126,6 +130,8 @@ $Files = @(
     'migrations/versions/4b8c1d5e9a02_move_staged_rows_to_validated.py'
     'migrations/versions/7c3f1a9e2b4d_add_databridge_and_archive_columns.py'
     'migrations/versions/9d2e6f4a1c8b_drop_irp_only_columns.py'
+    'migrations/versions/c5a7e3d91f20_archive_states.py'
+    'migrations/versions/e8b2f4a6c1d3_scrub_presigned_signatures.py'
     'alembic.ini'
     'requirements.txt'
     'pyproject.toml'
@@ -142,6 +148,7 @@ $Files = @(
     'scripts/check_copy.bat'
     'scripts/backup_registry.bat'
     'scripts/_backup_registry.py'
+    'scripts/upgrade_db.bat'
 )
 # --- END GENERATED MANIFEST -------------------------------------------------
 
