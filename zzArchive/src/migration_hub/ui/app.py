@@ -16,7 +16,9 @@ from migration_hub.config.settings import Settings
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import SETTLED_STATES, BatchState, FileState
+from migration_hub.observability import controls, metrics
 from migration_hub.orchestration import batches as batch_ops
+from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
 
 load_dotenv()
@@ -111,7 +113,7 @@ def render() -> None:
         st.title("Migration Hub")
     with action_col:
         if st.button(
-            "Add batch", type="primary", icon=":material/add:", width="stretch"
+            "Start migration", type="primary", icon=":material/rocket_launch:", width="stretch"
         ):
             st.session_state["add_batch_open"] = True
             st.session_state["add_batch_wizard"] = {"step": "select"}
@@ -134,16 +136,20 @@ def render() -> None:
 
     selected = st.session_state.get("selected_batch")
     if not selected:
-        st.info("No batches yet. Click **+ Add batch** above to start one.")
+        st.info("No batches yet. Click **Start migration** above to start one.")
         return
 
     st.subheader(f"Batch {selected}")
+    _render_batch_action_bar(registry, settings, selected)
+    st.space("small")
     _render_tabs(registry, settings, selected)
 
 @st.fragment(run_every="8s")
 def _render_overview(registry: Registry) -> None:
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
+    st.space("small")
+    _render_needs_action_queue(registry)
     st.space("small")
     _render_batch_log(registry)
 
@@ -172,6 +178,7 @@ def _kpi_strip_global(registry: Registry) -> None:
     issues = (
         counts[FileState.FAILED] + counts[FileState.ABANDONED] + counts[FileState.ARCHIVE_FAILED]
     )
+    pending_archives = len(registry.pending_archives(batch_id=None))
     completed_recently = registry.count_transitions_since(
         batch_id=None,
         to_state=FileState.COMPLETED,
@@ -190,6 +197,12 @@ def _kpi_strip_global(registry: Registry) -> None:
             else "none in the last hour",
         ),
         (
+            "orange",
+            "Pending archive",
+            pending_archives,
+            "on Data Bridge, not in Vault" if pending_archives else "none",
+        ),
+        (
             "red",
             "Failed / abandoned",
             issues,
@@ -202,10 +215,74 @@ def _kpi_strip_global(registry: Registry) -> None:
                 st.metric(f":{swatch}[■] {label}", value)
                 st.caption(sub)
 
+def _render_needs_action_queue(registry: Registry) -> None:
+    rows: list[dict[str, str | int]] = []
+    for batch in registry.list_batches():
+        counts = registry.counts_by_state(batch_id=batch.batch_id)
+        pending_archive = len(registry.pending_archives(batch_id=batch.batch_id))
+        failed = (
+            counts[FileState.FAILED]
+            + counts[FileState.ABANDONED]
+            + counts[FileState.ARCHIVE_FAILED]
+        )
+        outstanding = sum(counts.values()) - sum(counts[s] for s in SETTLED_STATES)
+
+        if pending_archive:
+            rows.append(
+                {
+                    "priority": 1,
+                    "batch": batch.batch_id,
+                    "finding": f"{pending_archive} file(s) pending archive",
+                    "next_action": "Archive into Data Vault",
+                }
+            )
+        if failed:
+            rows.append(
+                {
+                    "priority": 2,
+                    "batch": batch.batch_id,
+                    "finding": f"{failed} failed/abandoned/archive issue(s)",
+                    "next_action": "Review and retry",
+                }
+            )
+        if outstanding:
+            rows.append(
+                {
+                    "priority": 3,
+                    "batch": batch.batch_id,
+                    "finding": f"{outstanding} file(s) still in flight",
+                    "next_action": "Monitor progress",
+                }
+            )
+
+    if not rows:
+        with st.container(border=True):
+            st.success("No batches need operator action right now.")
+        return
+
+    rows = sorted(rows, key=lambda r: (int(r["priority"]), str(r["batch"])))[:8]
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.subheader("Needs action")
+            st.badge("Target workflow", color="green", icon=":material/playlist_add_check:")
+        st.caption("Open a batch below to inspect files, actions and controls.")
+        for i, row in enumerate(rows):
+            with st.container(horizontal=True, vertical_alignment="center"):
+                color: _BadgeColor = "orange" if int(row["priority"]) <= 2 else "blue"
+                st.badge(str(row["finding"]), color=color)
+                st.write(f"**{row['batch']}** - {row['next_action']}")
+                if st.button(
+                    "Open",
+                    key=f"needs_action_open_{i}_{row['batch']}",
+                    icon=":material/open_in_new:",
+                ):
+                    st.session_state["selected_batch"] = row["batch"]
+                    st.rerun()
+
 def _render_batch_log(registry: Registry) -> None:
     batches = registry.list_batches()
     if not batches:
-        st.caption("No batches yet -- click **+ Add batch** to start one.")
+        st.caption("No batches yet -- click **Start migration** to start one.")
         return
 
     rows = []
@@ -274,7 +351,7 @@ def _close_add_batch() -> None:
     st.session_state["add_batch_open"] = False
     st.session_state.pop("add_batch_wizard", None)
 
-@st.dialog("Add batch", width="large", on_dismiss=_close_add_batch)
+@st.dialog("Start migration", width="large", on_dismiss=_close_add_batch)
 def _add_batch_dialog(registry: Registry, settings: Settings) -> None:
     wiz = st.session_state.setdefault("add_batch_wizard", {"step": "select"})
     step = wiz.get("step", "select")
@@ -282,11 +359,94 @@ def _add_batch_dialog(registry: Registry, settings: Settings) -> None:
         _render_add_batch_select(registry, settings, wiz)
     elif step == "running":
         _render_add_batch_running(registry, wiz)
+    elif step == "handoff":
+        _render_start_migration_handoff(wiz)
     else:
         _render_add_batch_done(wiz)
 
 def _render_add_batch_select(registry: Registry, settings: Settings, wiz: _AddBatchWizard) -> None:
-    st.caption("Pick which discovered files to migrate, then start the run.")
+    mode = st.radio(
+        "Mode",
+        ["Automated folder migration", "Advanced selected-file batch"],
+        horizontal=True,
+        key="start_migration_mode",
+    )
+    if mode == "Automated folder migration":
+        _render_start_migration_automated(registry, settings, wiz)
+        return
+    _render_add_batch_manual_select(registry, settings, wiz)
+
+def _render_start_migration_automated(
+    registry: Registry, settings: Settings, wiz: _AddBatchWizard
+) -> None:
+    st.caption(
+        "Default mode: run the full pipeline for one source folder -- discover, "
+        "validate, upload, import, verify, archive, reconcile and sign off if clean."
+    )
+    source_text = str(
+        st.text_input("Source folder", value=wiz.get("source_root", str(settings.source_root)))
+    )
+    wiz["source_root"] = source_text
+    source_root = Path(source_text)
+    derived_batch = derive_batch_id(source_root)
+
+    preview_count: int | None = None
+    if not source_root.exists():
+        st.warning(f"Folder not found: {source_root}")
+    else:
+        candidates = list(scanner.scan(source_root=source_root, pattern=settings.file_pattern))
+        known = registry.known_source_paths(paths=[c.source_path for c in candidates])
+        preview_count = len([c for c in candidates if c.source_path not in known])
+        hidden = len(candidates) - preview_count
+        if hidden:
+            st.caption(f"{hidden} file(s) already migrated or in progress elsewhere.")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Derived batch", derived_batch)
+    with c2:
+        st.metric("New files", preview_count if preview_count is not None else "-")
+    with c3:
+        st.metric("Workers", max(1, settings.max_concurrent_uploads))
+
+    st.info(
+        "This launches `migration-hub migrate --source <folder>` in the background. "
+        "The dashboard tracks progress from the registry after the CLI creates or "
+        "updates the derived batch."
+    )
+    if st.button(
+        "Start automated migration",
+        type="primary",
+        icon=":material/rocket_launch:",
+        disabled=not source_root.exists(),
+    ):
+        with st.status("Starting automated migration", expanded=True) as status:
+            handle = batch_ops.start_migrate_source_subprocess(
+                source_root=source_root, environment=settings.environment
+            )
+            st.write(f"Started `migration-hub migrate --source` for `{source_root}`.")
+            st.write(f"Derived batch: `{derived_batch}`")
+            st.write(f"Process id: `{handle.pid}`")
+            st.write(f"Output: `{handle.log_path}`")
+            status.update(label="Handed off to migrate", state="complete", expanded=False)
+
+        wiz["step"] = "handoff"
+        wiz["batch_id"] = derived_batch
+        wiz["summary"] = {
+            "pid": handle.pid,
+            "log_path": str(handle.log_path),
+            "source_root": str(source_root),
+        }
+        if registry.get_batch(derived_batch) is not None:
+            st.session_state["selected_batch"] = derived_batch
+        st.rerun()
+
+def _render_add_batch_manual_select(
+    registry: Registry, settings: Settings, wiz: _AddBatchWizard
+) -> None:
+    st.caption(
+        "Advanced/manual mode: pick discovered files to migrate, then start the run."
+    )
 
     batch_id = str(
         st.text_input("Batch id", value=wiz.get("batch_id") or _suggest_batch_id(registry))
@@ -424,23 +584,40 @@ def _add_batch_progress(registry: Registry, batch_id: str, wiz: _AddBatchWizard)
             "total": total,
             "completed": completed,
             "failed": counts[FileState.FAILED] + counts[FileState.ABANDONED],
+            "archive_failed": counts[FileState.ARCHIVE_FAILED],
         }
         st.rerun()
 
 def _render_add_batch_done(wiz: _AddBatchWizard) -> None:
     summary: dict[str, int] = wiz.get("summary") or {}
     failed = summary.get("failed", 0)
+    archive_failed = summary.get("archive_failed", 0)
     total = summary.get("total", 0)
     completed = summary.get("completed", 0)
 
-    if failed:
+    if failed or archive_failed:
         st.warning(
             f"Batch {wiz['batch_id']} finished: **{completed}** completed, "
-            f"**{failed}** failed or abandoned out of {total}."
+            f"**{failed}** failed or abandoned, "
+            f"**{archive_failed}** still need archive attention out of {total}."
         )
     else:
         st.success(f"Batch {wiz['batch_id']} completed -- all **{total}** file(s) migrated.")
 
+    if st.button("Close", type="primary", width="stretch"):
+        _close_add_batch()
+        st.rerun()
+
+def _render_start_migration_handoff(wiz: _AddBatchWizard) -> None:
+    summary: dict[str, object] = wiz.get("summary") or {}
+    st.success(f"Migration handed off for batch `{wiz.get('batch_id')}`.")
+    st.caption(
+        "The CLI process keeps running independently of this dialog. The dashboard "
+        "will show the batch once the registry has rows for it."
+    )
+    st.write(f"Source folder: `{summary.get('source_root', '-')}`")
+    st.write(f"Process id: `{summary.get('pid', '-')}`")
+    st.write(f"Output: `{summary.get('log_path', '-')}`")
     if st.button("Close", type="primary", width="stretch"):
         _close_add_batch()
         st.rerun()
@@ -654,8 +831,76 @@ def _render_archive_action(
                 label="Handed off to the archiver", state="complete", expanded=False
             )
 
+def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str) -> None:
+    counts = registry.counts_by_state(batch_id=batch)
+    total = sum(counts.values())
+    outstanding = total - sum(counts[s] for s in SETTLED_STATES)
+    pending_archives = registry.pending_archives(batch_id=batch)
+    retryable = registry.files_in_states(
+        states=(FileState.FAILED, FileState.ABANDONED), batch_id=batch
+    )
+    issues = (
+        counts[FileState.FAILED]
+        + counts[FileState.ABANDONED]
+        + counts[FileState.ARCHIVE_FAILED]
+    )
+    state = batch_ops.state_of(registry=registry, batch_id=batch)
+    display_state, display_color = _batch_display_state(state, counts)
+
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.badge(display_state, color=display_color)
+            st.caption(
+                f"{total} file(s), {outstanding} outstanding, "
+                f"{len(pending_archives)} pending archive, {issues} issue(s)"
+            )
+
+        with st.container(horizontal=True):
+            if state is BatchState.PAUSED:
+                if st.button("Resume", icon=":material/play_circle:", key=f"resume_{batch}"):
+                    batch_ops.resume(registry=registry, batch_id=batch)
+                    st.rerun()
+            else:
+                if st.button("Pause", icon=":material/pause_circle:", key=f"pause_{batch}"):
+                    batch_ops.pause(registry=registry, batch_id=batch)
+                    st.rerun()
+
+            archive_label = f"Archive {len(pending_archives)} into Data Vault"
+            if st.button(
+                archive_label,
+                icon=":material/inventory_2:",
+                disabled=not pending_archives,
+                key=f"archive_{batch}",
+            ):
+                with st.status("Archiving", expanded=True) as status:
+                    handle = batch_ops.start_archive_subprocess(
+                        batch_id=batch, environment=settings.environment
+                    )
+                    st.write(f"Archiver started (pid `{handle.pid}`).")
+                    st.write(f"Output: `{handle.log_path}`")
+                    status.update(
+                        label="Handed off to the archiver", state="complete", expanded=False
+                    )
+
+            retry_label = f"Retry {len(retryable)} failed/abandoned"
+            if st.button(
+                retry_label,
+                icon=":material/replay:",
+                disabled=not retryable,
+                key=f"retry_{batch}",
+            ):
+                with st.status("Retrying", expanded=True) as status:
+                    handle = batch_ops.start_retry_subprocess(
+                        batch_id=batch, environment=settings.environment
+                    )
+                    st.write(f"Retry started (pid `{handle.pid}`). Output: `{handle.log_path}`")
+                    status.update(label="Handed off to the retry", state="complete", expanded=False)
+                st.rerun()
+
 def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
-    files_tab, activity_tab = st.tabs(["Files", "Activity"])
+    files_tab, activity_tab, controls_tab, diagnostics_tab = st.tabs(
+        ["Files", "Activity", "Controls", "Diagnostics"]
+    )
 
     with files_tab:
         files = registry.files_in_states(states=list(FileState), batch_id=batch)
@@ -737,6 +982,116 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                     },
                     hide_index=True,
                 )
+
+    with controls_tab:
+        _render_controls_tab(registry, batch)
+
+    with diagnostics_tab:
+        _render_diagnostics_tab(registry, batch)
+
+def _render_controls_tab(registry: Registry, batch: str) -> None:
+    runs = registry.list_batch_runs(batch_id=batch)
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.badge("Target workflow", color="green", icon=":material/fact_check:")
+        st.caption("Formal control actions are visible here; wiring them is the next slice.")
+
+    if not runs:
+        st.info("No control records have been opened for this batch yet.")
+        return
+
+    rows = []
+    for run in runs:
+        live = (
+            controls.derive(registry=registry, run_id=run.run_id)
+            if run.status == str(controls.RunStatus.RUNNING)
+            else None
+        )
+        rows.append(
+            {
+                "run_seq": run.run_seq,
+                "trigger": run.trigger,
+                "status": run.status + (" (live)" if live else ""),
+                "initiated_by": run.initiated_by,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+                "source_count": run.source_count,
+                "target_count": live.target_count if live else run.target_count,
+                "completed": live.completed_count if live else run.completed_count,
+                "abandoned": live.abandoned_count if live else run.abandoned_count,
+                "rejected": live.rejected_count if live else run.rejected_count,
+                "archive_failed": live.archive_failed_count if live else run.archive_failed_count,
+                "retry_count": live.retry_count if live else run.retry_count,
+                "evidence": run.evidence_uri,
+                "signed_off_by": run.signed_off_by,
+            }
+        )
+
+    st.dataframe(
+        rows,
+        column_config={
+            "run_seq": st.column_config.NumberColumn("Run"),
+            "started_at": st.column_config.DatetimeColumn("Started", format="YYYY-MM-DD HH:mm"),
+            "finished_at": st.column_config.DatetimeColumn("Finished", format="YYYY-MM-DD HH:mm"),
+            "source_count": st.column_config.NumberColumn("Source"),
+            "target_count": st.column_config.NumberColumn("Target"),
+            "retry_count": st.column_config.NumberColumn("Retries"),
+            "signed_off_by": st.column_config.TextColumn("Signed off by"),
+        },
+        hide_index=True,
+    )
+
+    with st.container(horizontal=True):
+        st.button("Close run", icon=":material/check_circle:", disabled=True)
+        st.button("Export evidence", icon=":material/download:", disabled=True)
+        st.button("Verify", icon=":material/fact_check:", disabled=True)
+        st.button("Sign off", icon=":material/approval:", disabled=True)
+        st.button("Abort with reason", icon=":material/cancel:", disabled=True)
+
+def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
+    counts = registry.counts_by_state(batch_id=batch)
+    pending_archive = len(registry.pending_archives(batch_id=batch))
+    outstanding = len(registry.outstanding(batch_id=batch))
+    failures = (
+        counts[FileState.FAILED]
+        + counts[FileState.ABANDONED]
+        + counts[FileState.ARCHIVE_FAILED]
+        + counts[FileState.REJECTED]
+    )
+    recent_transactions = registry.recent_transactions(batch_id=batch, limit=50)
+    recent_errors = sum(
+        1
+        for transaction in recent_transactions
+        if transaction.status_code is not None and transaction.status_code >= 400
+    )
+
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.badge("Target workflow", color="green", icon=":material/troubleshoot:")
+        st.caption("Registry-only diagnostics for common runbook triage checks.")
+
+    cols = st.columns(4)
+    tiles = [
+        ("Outstanding", outstanding, "not in a settled state"),
+        ("Pending archive", pending_archive, "on Data Bridge, not in Vault"),
+        ("Failures / rejected", failures, "needs review or disposition"),
+        ("Recent vendor errors", recent_errors, "HTTP 4xx/5xx in recent calls"),
+    ]
+    for col, (label, value, caption) in zip(cols, tiles, strict=True):
+        with col, st.container(border=True):
+            st.metric(label, value)
+            st.caption(caption)
+
+    st.dataframe(
+        [
+            {"state": state.value, "count": counts[state]}
+            for state in FileState
+            if counts[state]
+        ],
+        column_config={
+            "state": st.column_config.TextColumn("State"),
+            "count": st.column_config.NumberColumn("Count"),
+        },
+        hide_index=True,
+    )
 
 if __name__ == "__main__":
     render()

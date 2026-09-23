@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -13,7 +14,7 @@ from migration_hub.config.settings import Settings
 from migration_hub.core.engine import create_registry_engine
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
-from migration_hub.observability import controls
+from migration_hub.observability import audit_export, controls
 from migration_hub.orchestration import archiver, batches, reaper, reconciliation, scheduler
 from migration_hub.orchestration.auto_migrate import run_automated_migration
 from migration_hub.producers import scanner, validator
@@ -325,6 +326,38 @@ def status(batch: str | None = typer.Option(None, "--batch")) -> None:
 
 controls_app = typer.Typer(help="Open, close and inspect per-run batch-controls records.")
 app.add_typer(controls_app, name="controls")
+
+audit_app = typer.Typer(help="Export a batch's complete audit trail.")
+app.add_typer(audit_app, name="audit")
+
+@audit_app.command("export")
+def audit_export_command(
+    batch: str = typer.Option(..., "--batch"),
+    output: Path | None = typer.Option(
+        None, "--output", help="Zip to write. Defaults to exports/audit-<batch>-<UTC time>.zip."
+    ),
+    by: str | None = typer.Option(None, "--by", help="Defaults to the current OS user."),
+) -> None:
+    settings = _load_settings()
+    registry = _registry(settings)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = output or Path("exports") / f"audit-{batch}-{stamp}.zip"
+    try:
+        result = audit_export.export_batch_audit(
+            registry=registry,
+            batch_id=batch,
+            output_path=path,
+            generated_by=by or getpass.getuser(),
+            environment=settings.environment,
+        )
+    except audit_export.UnknownBatchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        f"wrote {result.path}: {result.files} file(s), {result.events} event(s), "
+        f"{result.api_calls} API call(s), {result.runs} run record(s)"
+    )
+    typer.echo(f"sha256={result.sha256} (also in {result.path.name}.sha256)")
 
 def _echo_record(
     record: controls.ControlRecord, *, totals: controls.ControlTotals | None = None

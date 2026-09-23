@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from migration_hub.core.models import ApiTransaction, MigrationFile
+from migration_hub.core.scrub import scrub_credentials
 from migration_hub.observability.redaction import redact_mapping, redact_text
 
 def _serialize(body: object | None) -> str | None:
@@ -37,7 +38,7 @@ def record_call(
             ApiTransaction(
                 file_id=file_id,
                 method=method,
-                url=url,
+                url=scrub_credentials(url),
                 status_code=status_code,
                 duration_ms=duration_ms,
                 request_body=_serialize(request_body),
@@ -79,6 +80,16 @@ def audited_call(
             duration_ms=duration_ms,
             correlation_id=record.correlation_id,
         )
+
+@contextmanager
+def maybe_audited_call(
+    *, engine: Engine | None, file_id: int | None, method: str, url: str
+) -> Iterator[_CallRecord]:
+    if engine is None:
+        yield _CallRecord()
+        return
+    with audited_call(engine=engine, file_id=file_id, method=method, url=url) as call:
+        yield call
 
 def export_for_support(*, engine: Engine, file_id: int) -> dict[str, object]:
     with Session(engine) as session:

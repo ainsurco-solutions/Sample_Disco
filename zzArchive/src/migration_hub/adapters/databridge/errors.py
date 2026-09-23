@@ -17,6 +17,15 @@ class RateLimitedError(DatabridgeError, RetryableError):
 class UploadCredentialsExpiredError(DatabridgeError, RestageError):
     pass
 
+class UploadServerError(DatabridgeError, RetryableError):
+    pass
+
+class UploadInterruptedError(DatabridgeError, RetryableError):
+    pass
+
+class UploadRejectedError(DatabridgeError, AbandonError):
+    pass
+
 class MissingPartETagError(DatabridgeError, AbandonError):
 
     def __init__(self, part_number: int) -> None:

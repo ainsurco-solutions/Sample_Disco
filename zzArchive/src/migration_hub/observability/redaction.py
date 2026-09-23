@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any, Final
 
+from migration_hub.core.scrub import scrub_credentials
+
 SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
     {
         "accesskeyid",
@@ -66,5 +68,6 @@ def redact_text(body: str) -> str:
     try:
         parsed = json.loads(body)
     except (json.JSONDecodeError, TypeError):
-        return _SENSITIVE_FIELD_PATTERN.sub(lambda m: f'"{m.group(1)}": "{REDACTED}"', body)
+        text = _SENSITIVE_FIELD_PATTERN.sub(lambda m: f'"{m.group(1)}": "{REDACTED}"', body)
+        return scrub_credentials(text)
     return json.dumps(redact_mapping(parsed))

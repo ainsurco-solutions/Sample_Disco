@@ -123,7 +123,9 @@ class DatabridgeAdapter:
         upload_url = body.get("backupUri") or body.get("mdfUri")
         if not upload_url:
             raise MissingUploadUriError(sorted(body))
-        databridge_uploader.upload_via_presigned_url(source=source, url=upload_url)
+        databridge_uploader.upload_via_presigned_url(
+            source=source, url=upload_url, engine=self._engine, file_id=self._current_file_id
+        )
 
     def _upload_large(
         self, *, instance_name: str, database_name: str, file_extension: str, source: Path
@@ -140,7 +142,12 @@ class DatabridgeAdapter:
             part_response = self._request("GET", f"{base}/upload-part/{upload_id}/{part_number}")
             return str(part_response.json())
 
-        etags = databridge_uploader.upload_multipart(source=source, get_part_url=get_part_url)
+        etags = databridge_uploader.upload_multipart(
+            source=source,
+            get_part_url=get_part_url,
+            engine=self._engine,
+            file_id=self._current_file_id,
+        )
 
         self._request(
             "POST",

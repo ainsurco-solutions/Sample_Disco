@@ -15,6 +15,7 @@ from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
+from migration_hub.orchestration.batch_identity import derive_batch_id
 
 _WINDOWS_DETACH_FLAGS = (
     subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
@@ -391,6 +392,14 @@ def retry_files(
 
 def start_migrate_subprocess(*, batch_id: str, environment: str | None = None) -> WorkerHandle:
     return _launch_cli(["migrate", "--batch", batch_id], f"migrate-{batch_id}", environment)
+
+def start_migrate_source_subprocess(
+    *, source_root: Path, environment: str | None = None
+) -> WorkerHandle:
+    batch_id = derive_batch_id(source_root)
+    return _launch_cli(
+        ["migrate", "--source", str(source_root)], f"migrate-{batch_id}", environment
+    )
 
 def _launch_cli(cli_args: list[str], log_stem: str, environment: str | None) -> WorkerHandle:
     args = [sys.executable, "-m", "migration_hub.cli", *cli_args]
