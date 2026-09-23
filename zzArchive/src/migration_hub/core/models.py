@@ -61,7 +61,6 @@ class MigrationFile(Base):
 
     source_database: Mapped[str] = mapped_column(String(256), nullable=False)
     source_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
-    staged_path: Mapped[str | None] = mapped_column(String(1024), default=None)
     target_exposure_name: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
 
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -73,11 +72,14 @@ class MigrationFile(Base):
     claimed_by: Mapped[str | None] = mapped_column(String(128), default=None)
     claimed_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
 
-    folder_id: Mapped[str | None] = mapped_column(String(128), default=None)
-    exposure_set_id: Mapped[str | None] = mapped_column(String(128), default=None)
-    exposure_set_uri: Mapped[str | None] = mapped_column(String(512), default=None)
     job_id: Mapped[str | None] = mapped_column(String(128), default=None)
-    server_id: Mapped[int | None] = mapped_column(default=None)
+    instance_name: Mapped[str | None] = mapped_column(String(256), default=None)
+    database_name: Mapped[str | None] = mapped_column(String(256), default=None)
+
+    uploaded_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
+    archive_job_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    archived_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
+    archive_expiration_date: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
 
     last_error: Mapped[str | None] = mapped_column(String(None), default=None)
     created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, server_default=UTC_NOW)

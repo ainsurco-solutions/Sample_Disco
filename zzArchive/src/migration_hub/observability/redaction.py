@@ -19,6 +19,18 @@ SENSITIVE_KEYS: Final[frozenset[str]] = frozenset(
     }
 )
 
+_PRESIGNED_URL_MARKERS: Final[tuple[str, ...]] = (
+    "X-Amz-Signature=",
+    "X-Amz-Credential=",
+    "Signature=",
+    "AWSAccessKeyId=",
+)
+
+def _looks_presigned(value: str) -> bool:
+    return value.startswith(("http://", "https://")) and any(
+        marker in value for marker in _PRESIGNED_URL_MARKERS
+    )
+
 SENSITIVE_HEADERS: Final[frozenset[str]] = frozenset(
     {"authorization", "x-api-key", "cookie", "set-cookie"}
 )
@@ -26,6 +38,8 @@ SENSITIVE_HEADERS: Final[frozenset[str]] = frozenset(
 REDACTED: Final[str] = "<redacted>"
 
 def redact_mapping(payload: Any) -> Any:
+    if isinstance(payload, str):
+        return REDACTED if _looks_presigned(payload) else payload
     if isinstance(payload, dict):
         return {
             key: REDACTED if key.lower() in SENSITIVE_KEYS else redact_mapping(value)
@@ -47,6 +61,8 @@ _SENSITIVE_FIELD_PATTERN = re.compile(
 )
 
 def redact_text(body: str) -> str:
+    if _looks_presigned(body):
+        return REDACTED
     try:
         parsed = json.loads(body)
     except (json.JSONDecodeError, TypeError):

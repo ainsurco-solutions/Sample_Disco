@@ -387,6 +387,21 @@ class Registry:
             session.expunge_all()
             return results
 
+    def pending_archives(self, *, batch_id: str | None = None) -> Sequence[MigrationFile]:
+        stmt = select(MigrationFile).where(
+            MigrationFile.state == str(FileState.COMPLETED),
+            MigrationFile.archived_at.is_(None),
+            MigrationFile.instance_name.is_not(None),
+        )
+        if batch_id is not None:
+            stmt = stmt.where(MigrationFile.batch_id == batch_id)
+        stmt = stmt.order_by(MigrationFile.file_id)
+
+        with Session(self._engine) as session:
+            results = list(session.scalars(stmt))
+            session.expunge_all()
+            return results
+
     def get_batch(self, batch_id: str) -> Batch | None:
         with Session(self._engine) as session:
             batch = session.get(Batch, batch_id)

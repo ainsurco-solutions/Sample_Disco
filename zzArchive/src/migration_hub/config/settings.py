@@ -19,14 +19,14 @@ class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     source_root: Path
-    staging_root: Path
     file_pattern: str = "*.bak"
 
     database_url: str
 
     api_host: str
     api_key_env_var: str
-    entitlement: str
+
+    databridge_instance_name: str | None = None
 
     max_concurrent_uploads: int = 1
     max_concurrent_imports: int = 1
@@ -41,7 +41,6 @@ class Settings(BaseModel):
     scheduler_poll_interval_seconds: float = 60.0
     scheduler_reap_interval_seconds: float = 300.0
 
-    stage_locally: bool = False
     compute_checksums: bool = False
     dry_run: bool = True
     environment: str

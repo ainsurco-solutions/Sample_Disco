@@ -8,10 +8,13 @@ from pathlib import Path
 import httpx
 from sqlalchemy.engine import Engine
 
+from migration_hub.adapters.base import PlatformSession
+from migration_hub.adapters.databridge import session as session_module
 from migration_hub.adapters.databridge.errors import (
     AuthenticationError,
     DatabridgeError,
     MissingJobIdError,
+    MissingUploadUriError,
     RateLimitedError,
     UnknownJobStatusError,
 )
@@ -44,12 +47,17 @@ class DatabridgeJobStatus:
 class DatabridgeAdapter:
 
     def __init__(self, *, host: str, api_key: str, engine: Engine | None = None) -> None:
+        self._host = host
+        self._api_key = api_key
         self._engine = engine
         self._current_file_id: int | None = None
         self._client = httpx.Client(base_url=host, headers={"Authorization": api_key}, timeout=30.0)
 
     def close(self) -> None:
         self._client.close()
+
+    def open_session(self) -> PlatformSession:
+        return session_module.resolve(host=self._host, api_key=self._api_key)
 
     @contextmanager
     def bound_to_file(self, file_id: int | None) -> Iterator[None]:
@@ -111,7 +119,10 @@ class DatabridgeAdapter:
             f"/databridge/v1/sql-instances/{instance_name}/Databases/{database_name}/import",
             params={"importFrom": format_code},
         )
-        upload_url = response.json()["mdfUri"]
+        body = response.json()
+        upload_url = body.get("backupUri") or body.get("mdfUri")
+        if not upload_url:
+            raise MissingUploadUriError(sorted(body))
         databridge_uploader.upload_via_presigned_url(source=source, url=upload_url)
 
     def _upload_large(
@@ -163,7 +174,10 @@ class DatabridgeAdapter:
 
     def poll_job(self, *, job_id: str) -> DatabridgeJobStatus:
         response = self._request("GET", f"/databridge/v1/Jobs/{job_id}")
-        body = response.json()
+        try:
+            body = response.json()
+        except ValueError:
+            body = response.text.strip()
         raw_status = str(body.get("status") if isinstance(body, dict) else body)
         if raw_status not in _KNOWN_STATUSES:
             raise UnknownJobStatusError(job_id, raw_status)
@@ -178,6 +192,41 @@ class DatabridgeAdapter:
     def database_exists(self, *, instance_name: str, database_name: str) -> bool:
         response = self._request("GET", f"/databridge/v1/sql-instances/{instance_name}/databases")
         return any(item.get("name") == database_name for item in response.json())
+
+    def archive_database(
+        self,
+        *,
+        instance_name: str,
+        database_name: str,
+        resource_group_id: str | None = None,
+        expiration_date: str | None = None,
+    ) -> str:
+        headers = {"content-type": "application/json"}
+        if resource_group_id:
+            headers["x-rms-resource-group-id"] = resource_group_id
+        body: dict[str, str] = {}
+        if expiration_date is not None:
+            body["expirationDate"] = expiration_date
+
+        response = self._request(
+            "POST",
+            f"/databridge/v1/sql-instances/{instance_name}/Databases/{database_name}/archive",
+            headers=headers,
+            json=body,
+        )
+        job_id = response.json().get("jobId")
+        if not job_id:
+            raise MissingJobIdError("Archive trigger returned no jobId body field")
+        return str(job_id)
+
+    def archive_exists(self, *, database_name: str) -> bool:
+        response = self._request(
+            "GET",
+            "/platform/admindata/v1/archives",
+            params={"filter": f'archiveName="{database_name}"', "limit": 100, "offset": 0},
+        )
+        rows = response.json()
+        return isinstance(rows, list) and len(rows) > 0
 
     def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
         url = str(self._client.base_url.join(path))

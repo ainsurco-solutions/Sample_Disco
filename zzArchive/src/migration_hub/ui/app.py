@@ -17,7 +17,7 @@ from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import TERMINAL_STATES, BatchState, FileState
 from migration_hub.orchestration import batches as batch_ops
-from migration_hub.producers import scanner, stager, validator
+from migration_hub.producers import scanner, validator
 
 load_dotenv()
 
@@ -31,7 +31,6 @@ _STATE_PROGRESS = {
     FileState.DISCOVERED: 10,
     FileState.VALIDATED: 25,
     FileState.REJECTED: 0,
-    FileState.STAGED: 40,
     FileState.UPLOADING: 55,
     FileState.UPLOADED: 65,
     FileState.IMPORTING: 78,
@@ -154,7 +153,6 @@ def _kpi_strip_global(registry: Registry) -> None:
 
     tiles = [
         ("gray", "Discovered", counts[FileState.DISCOVERED], "awaiting validation"),
-        ("gray", "Staged", counts[FileState.STAGED], "ready to upload"),
         ("blue", "In flight", in_flight, "uploading · importing · verifying"),
         (
             "green",
@@ -339,22 +337,6 @@ def _start_add_batch(
         ok = sum(1 for r in results.values() if r.ok)
         st.write(f"**{ok}** validated, **{len(results) - ok}** rejected.")
 
-        st.write(":material/inventory_2: Staging...")
-        staging = stager.stage_batch(
-            registry=registry,
-            staging_root=settings.staging_root,
-            batch_id=batch_id,
-            stage_locally=settings.stage_locally,
-            max_attempts=settings.max_attempts,
-        )
-        st.write(f"**{staging.staged}** file(s) staged.")
-        if staging.failures:
-            st.warning(
-                f"**{len(staging.failures)}** file(s) failed staging and are now "
-                "FAILED, retryable below:\n\n"
-                + "\n".join(f"- `{f.name}` — {f.error}" for f in staging.failures)
-            )
-
         if batch_ops.state_of(registry=registry, batch_id=batch_id) is BatchState.PAUSED:
             batch_ops.resume(registry=registry, batch_id=batch_id)
 
@@ -444,7 +426,6 @@ def _pipeline_nodes(counts: dict[FileState, int]) -> list[dict[str, str]]:
             [
                 FileState.VALIDATED,
                 FileState.REJECTED,
-                FileState.STAGED,
                 FileState.UPLOADING,
                 FileState.UPLOADED,
                 FileState.IMPORTING,
@@ -458,19 +439,6 @@ def _pipeline_nodes(counts: dict[FileState, int]) -> list[dict[str, str]]:
             FileState.VALIDATED,
             [
                 FileState.REJECTED,
-                FileState.STAGED,
-                FileState.UPLOADING,
-                FileState.UPLOADED,
-                FileState.IMPORTING,
-                FileState.VERIFYING,
-                FileState.COMPLETED,
-            ],
-        ),
-        (
-            "stage",
-            "Stage",
-            FileState.STAGED,
-            [
                 FileState.UPLOADING,
                 FileState.UPLOADED,
                 FileState.IMPORTING,
@@ -603,7 +571,7 @@ def _render_retry_action(
                 max_files_per_worker=None,
                 environment=settings.environment,
             )
-            st.write(f"Requeued **{len(outcome.requeued_file_ids)}** file(s) to STAGED.")
+            st.write(f"Requeued **{len(outcome.requeued_file_ids)}** file(s) to VALIDATED.")
 
             pids = ", ".join(f"`{h.pid}`" for h in outcome.workers)
             st.write(f"Worker(s) started (pid {pids}).")

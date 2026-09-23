@@ -99,9 +99,10 @@ def export_for_support(*, engine: Engine, file_id: int) -> dict[str, object]:
             "source_database": file.source_database,
             "target_exposure_name": file.target_exposure_name,
             "state": file.state,
-            "folder_id": file.folder_id,
-            "exposure_set_id": file.exposure_set_id,
+            "instance_name": file.instance_name,
+            "database_name": file.database_name,
             "job_id": file.job_id,
+            "archive_job_id": file.archive_job_id,
             "last_error": file.last_error,
             "transactions": [
                 {

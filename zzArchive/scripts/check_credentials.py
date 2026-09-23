@@ -4,7 +4,6 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 _HERE = Path(__file__).resolve().parent
 
@@ -14,8 +13,7 @@ if _SRC.is_dir():
 
 from sqlalchemy import Engine
 
-from migration_hub.adapters.base import UploadTarget
-from migration_hub.adapters.irp.client import IrpAdapter
+from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.config.settings import Settings
 from migration_hub.core.engine import create_registry_engine
 from migration_hub.core.models import Base
@@ -46,13 +44,16 @@ def _step_settings() -> Settings:
     environment = os.environ.get("MIGRATION_HUB_ENV", "dev")
     os.environ.setdefault("MIGRATION_HUB_DATABASE_URL", "sqlite://")
     config_dir = _config_dir()
-    print(f"{_OK} config dir:  {config_dir}")
+    print(f"{_OK} config dir:            {config_dir}")
     settings = Settings.load(environment=environment, config_dir=config_dir)
-    print(f"{_OK} environment: {settings.environment}")
-    print(f"{_OK} api_host:    {settings.api_host}")
-    print(f"{_OK} entitlement: {settings.entitlement}")
+    print(f"{_OK} environment:           {settings.environment}")
+    print(f"{_OK} api_host:              {settings.api_host}")
+    print(f"{_OK} databridge_instance:   {settings.databridge_instance_name}")
     if "REPLACE_WITH" in settings.api_host:
         print(f"{_NO} api_host is still the shipped placeholder -- nothing will work")
+        raise SystemExit(2)
+    if not settings.databridge_instance_name:
+        print(f"{_NO} databridge_instance_name is not set in config/{environment}.json")
         raise SystemExit(2)
     return settings
 
@@ -72,82 +73,60 @@ def _scratch_engine() -> Engine:
     Base.metadata.create_all(engine)
     return engine
 
-def _step_upload_target(settings: Settings, api_key: str) -> UploadTarget:
-    print("\n3. Requesting an upload target (POST /platform/import/v1/folders)")
-    adapter = IrpAdapter(
-        host=settings.api_host,
-        api_key=api_key,
-        entitlement=settings.entitlement,
-        engine=_scratch_engine(),
-    )
-    target = adapter.request_upload_target(file_extension="bak")
-    print(f"{_OK} folder_id:  {target.folder_id}")
-    print(f"{_OK} file_uri:   {target.file_uri}")
-    return target
-
-def _step_credentials(target: UploadTarget) -> None:
-    print("\n4. Checking the decoded S3 credentials")
-    fields = {
-        "access_key_id": target.access_key_id,
-        "secret_access_key": target.secret_access_key,
-        "session_token": target.session_token,
-        "region": target.region,
-        "upload_url": target.upload_url,
-    }
-    missing = [name for name, value in fields.items() if not value]
-    for name, value in fields.items():
-        shown = value if name == "region" and value else _redacted(value)
-        print(f"{_OK if value else _NO} {name}: {shown}")
-
-    if missing:
-        print(f"{_NO} missing: {', '.join(missing)}")
-        print(f"{_NO} a blank value here usually means presignParams was not base64-decoded")
+def _step_sql_instances(adapter: DatabridgeAdapter, settings: Settings) -> None:
+    print("\n3. Listing SQL instances (GET /databridge/v1/sql-instances)")
+    instances = adapter.list_sql_instances()
+    names = [i.name for i in instances]
+    print(f"{_OK} {len(instances)} instance(s): {', '.join(names) or '(none)'}")
+    if settings.databridge_instance_name not in names:
+        print(
+            f"{_NO} configured databridge_instance_name "
+            f"{settings.databridge_instance_name!r} is not among them"
+        )
         raise SystemExit(1)
+    print(f"{_OK} {settings.databridge_instance_name!r} confirmed present")
 
-    _report_url_model(target.upload_url)
+def _step_resource_group(adapter: DatabridgeAdapter) -> None:
+    print(
+        "\n4. Resolving the RI-DATAVAULT resource group "
+        "(GET /platform/tenantdata/v1/entitlements/RI-DATAVAULT/resourcegroups)"
+    )
+    session = adapter.open_session()
+    print(f"{_OK} resourceGroupId: {session.resource_group_id}")
+    print("       needed for the archive call's x-rms-resource-group-id header")
 
-_PRESIGNED_MARKERS = ("X-Amz-Signature", "X-Amz-Credential", "Signature=", "AWSAccessKeyId")
-
-def _report_url_model(upload_url: str) -> None:
-    parsed = urlparse(upload_url)
-    query = parse_qs(parsed.query)
-    found = [
-        marker
-        for marker in _PRESIGNED_MARKERS
-        if marker.rstrip("=") in query or marker in parsed.query
-    ]
-
-    print("\n   S3 auth model (open question 14):")
-    if found:
-        print(f"{_OK} the URL carries a signature ({', '.join(found)})")
-        print("       -> PRESIGNED. A plain HTTP PUT can upload; boto3 is optional")
-        print("       -> record this against open question 14 -- it changes the")
-        print("          minimum client-side dependency set")
-    else:
-        print(f"{_OK} no signature in the URL; separate STS credentials were returned")
-        print("       -> ENDPOINT + CREDENTIALS. Each request is signed at call time,")
-        print("          so boto3 (or an equivalent SigV4 signer) is REQUIRED")
-    if parsed.query:
-        print(f"       query parameters present: {', '.join(sorted(query)) or '(unparsed)'}")
-
-def _step_upload(settings: Settings, api_key: str, target: UploadTarget, source: Path) -> None:
-    print(f"\n5. Uploading {source.name} ({source.stat().st_size} bytes)")
+def _step_upload_and_import(
+    adapter: DatabridgeAdapter, settings: Settings, source: Path, database_name: str
+) -> None:
+    print(f"\n5. Uploading and importing {source.name} as {database_name!r}")
     if not source.is_file():
         print(f"{_NO} not a file: {source}")
         raise SystemExit(2)
 
-    adapter = IrpAdapter(
-        host=settings.api_host,
-        api_key=api_key,
-        entitlement=settings.entitlement,
-        engine=_scratch_engine(),
+    assert settings.databridge_instance_name is not None
+    job_id = adapter.upload_and_import(
+        instance_name=settings.databridge_instance_name,
+        database_name=database_name,
+        file_extension=source.suffix.lstrip(".") or "bak",
+        source=source,
     )
-    adapter.upload(source=source, target=target)
-    print(f"{_OK} upload returned without error")
-    print(
-        "  note: this proves the transfer, not the import. A synthetic .bak will "
-        "upload fine and still fail to import -- see TASK-0020."
+    print(f"{_OK} upload + import trigger returned job_id={job_id}")
+
+    print("   polling GET /databridge/v1/Jobs/{job_id} ...")
+    status = adapter.poll_job(job_id=job_id)
+    while not status.is_terminal:
+        status = adapter.poll_job(job_id=job_id)
+    if not status.is_success:
+        print(f"{_NO} job ended in {status.raw_status!r}")
+        raise SystemExit(1)
+    print(f"{_OK} job succeeded: {status.raw_status!r}")
+
+    exists = adapter.database_exists(
+        instance_name=settings.databridge_instance_name, database_name=database_name
     )
+    print(f"{_OK if exists else _NO} database_exists: {exists}")
+    if not exists:
+        raise SystemExit(1)
 
 _TLS_MARKERS = (
     "certificate_verify_failed",
@@ -171,8 +150,7 @@ def _explain_if_tls(exc: BaseException) -> None:
     print()
     print(f"{_NO} This looks like TLS INSPECTION, not a Moody's problem.")
     print("       A proxy re-signs traffic with an internal CA that Python does")
-    print("       not trust: httpx uses certifi's roots, boto3 uses botocore's,")
-    print("       and both carry public roots only.")
+    print("       not trust: httpx uses certifi's roots only.")
     print()
 
     try:
@@ -190,8 +168,7 @@ def _explain_if_tls(exc: BaseException) -> None:
             print("           pip install truststore")
             print()
             print("       It routes verification through the Windows certificate")
-            print("       store, where the proxy's root already is, and covers both")
-            print("       httpx and boto3.")
+            print("       store, where the proxy's root already is.")
     except ImportError:
         print("       Install truststore and try again:  pip install truststore")
 
@@ -201,23 +178,31 @@ def _explain_if_tls(exc: BaseException) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Read the API key from the host, ask Moody's for AWS credentials."
+        description="Read the API key from the host, ask Moody's Data Bridge for real."
     )
     parser.add_argument(
         "--upload",
         type=Path,
         metavar="PATH",
-        help="also upload this file to the issued target (e.g. the zz.bak set of 1)",
+        help="also upload and import this file (e.g. the zz.bak set of 1)",
+    )
+    parser.add_argument(
+        "--database",
+        metavar="NAME",
+        help="target database_name for --upload (defaults to the file's stem, uppercased)",
     )
     args = parser.parse_args()
 
+    adapter: DatabridgeAdapter | None = None
     try:
         settings = _step_settings()
         api_key = _step_api_key(settings)
-        target = _step_upload_target(settings, api_key)
-        _step_credentials(target)
+        adapter = DatabridgeAdapter(host=settings.api_host, api_key=api_key, engine=_scratch_engine())
+        _step_sql_instances(adapter, settings)
+        _step_resource_group(adapter)
         if args.upload is not None:
-            _step_upload(settings, api_key, target, args.upload)
+            database_name = args.database or args.upload.stem.upper()
+            _step_upload_and_import(adapter, settings, args.upload, database_name)
     except SystemExit:
         raise
     except Exception as exc:
@@ -225,6 +210,9 @@ def main() -> int:
         _explain_if_tls(exc)
         print(f"{_NO} run with PYTHONFAULTHANDLER=1 or use the CLI for a full traceback")
         return 1
+    finally:
+        if adapter is not None:
+            adapter.close()
 
     print("\nAll checks passed.")
     return 0

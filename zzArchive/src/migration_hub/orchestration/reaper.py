@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from migration_hub.adapters.base import MigrationTargetAdapter, PlatformSession
+from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import FileState
 
 def reap_stale_claims(
     *,
     registry: Registry,
-    adapter: MigrationTargetAdapter,
+    adapter: DatabridgeAdapter,
     timeout_minutes: int,
     max_attempts: int,
     actor: str = "reaper",
@@ -16,19 +16,16 @@ def reap_stale_claims(
     if not stale:
         return 0
 
-    session = None
     resolved = 0
     for file in stale:
         if FileState(file.state) is FileState.IMPORTING and file.job_id:
-            if session is None:
-                session = adapter.open_session()
             if reconcile_importing(
                 registry=registry,
                 adapter=adapter,
-                session=session,
                 file_id=file.file_id,
                 job_id=file.job_id,
-                exposure_name=file.target_exposure_name,
+                instance_name=file.instance_name,
+                database_name=file.database_name,
                 max_attempts=max_attempts,
                 actor=actor,
             ):
@@ -49,16 +46,16 @@ def reap_stale_claims(
 def reconcile_importing(
     *,
     registry: Registry,
-    adapter: MigrationTargetAdapter,
-    session: PlatformSession,
+    adapter: DatabridgeAdapter,
     file_id: int,
     job_id: str,
-    exposure_name: str,
+    instance_name: str | None,
+    database_name: str | None,
     max_attempts: int,
     actor: str,
 ) -> bool:
     with adapter.bound_to_file(file_id):
-        status = adapter.poll_import(session=session, job_id=job_id)
+        status = adapter.poll_job(job_id=job_id)
 
     if not status.is_terminal:
         return False
@@ -80,14 +77,14 @@ def reconcile_importing(
     )
 
     with adapter.bound_to_file(file_id):
-        exists = adapter.exposure_exists(exposure_name=exposure_name)
+        exists = adapter.database_exists(instance_name=instance_name, database_name=database_name)
 
     if exists:
         registry.transition(file_id=file_id, to_state=FileState.COMPLETED, actor=actor)
     else:
         registry.record_failure(
             file_id=file_id,
-            error=f"reconciled job {job_id} finished but {exposure_name!r} "
+            error=f"reconciled job {job_id} finished but {database_name!r} "
             "is not visible on the platform",
             retryable=True,
             max_attempts=max_attempts,

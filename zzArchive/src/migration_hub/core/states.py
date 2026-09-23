@@ -7,7 +7,6 @@ class FileState(StrEnum):
     DISCOVERED = "DISCOVERED"
     VALIDATED = "VALIDATED"
     REJECTED = "REJECTED"
-    STAGED = "STAGED"
     UPLOADING = "UPLOADING"
     UPLOADED = "UPLOADED"
     IMPORTING = "IMPORTING"
@@ -24,10 +23,9 @@ CLAIMED_STATES: frozenset[FileState] = frozenset({FileState.UPLOADING, FileState
 
 LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {
     FileState.DISCOVERED: frozenset({FileState.VALIDATED, FileState.REJECTED}),
-    FileState.VALIDATED: frozenset({FileState.STAGED, FileState.FAILED}),
+    FileState.VALIDATED: frozenset({FileState.UPLOADING, FileState.FAILED}),
     FileState.REJECTED: frozenset(),
-    FileState.STAGED: frozenset({FileState.UPLOADING, FileState.FAILED}),
-    FileState.UPLOADING: frozenset({FileState.UPLOADED, FileState.STAGED, FileState.FAILED}),
+    FileState.UPLOADING: frozenset({FileState.UPLOADED, FileState.VALIDATED, FileState.FAILED}),
     FileState.UPLOADED: frozenset({FileState.IMPORTING, FileState.FAILED}),
     FileState.IMPORTING: frozenset({FileState.VERIFYING, FileState.FAILED}),
     FileState.VERIFYING: frozenset({FileState.COMPLETED, FileState.FAILED}),
@@ -35,13 +33,12 @@ LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {
     FileState.FAILED: frozenset(
         {
             FileState.VALIDATED,
-            FileState.STAGED,
             FileState.UPLOADING,
             FileState.IMPORTING,
             FileState.ABANDONED,
         }
     ),
-    FileState.ABANDONED: frozenset({FileState.STAGED, FileState.VALIDATED}),
+    FileState.ABANDONED: frozenset({FileState.VALIDATED}),
 }
 
 class IllegalTransitionError(RuntimeError):

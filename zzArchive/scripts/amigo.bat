@@ -108,8 +108,8 @@ echo.
 echo   --- run a wave ---
 echo     3. Plan      (register files -- read-only, safe to repeat)
 echo     4. Validate  (naming, extension, size)
-echo     5. Stage     (no-op unless stage_locally is true)
-echo     6. Run       (uploads and imports -- CONFIRMS FIRST)
+echo     5. Migrate   (fully automated: upload/import/verify/archive/close/sign-off -- CONFIRMS FIRST)
+echo     6. Run       (uploads and imports one step at a time -- CONFIRMS FIRST)
 echo.
 echo   --- close a wave ---
 echo     7. Open a control record
@@ -131,7 +131,7 @@ if "%CHOICE%"=="1"  goto :status
 if "%CHOICE%"=="2"  goto :history
 if "%CHOICE%"=="3"  goto :plan
 if "%CHOICE%"=="4"  goto :validate
-if "%CHOICE%"=="5"  goto :stage
+if "%CHOICE%"=="5"  goto :migrate
 if "%CHOICE%"=="6"  goto :run
 if "%CHOICE%"=="7"  goto :ctl_open
 if "%CHOICE%"=="8"  goto :ctl_close
@@ -170,9 +170,21 @@ call :ask_batch || goto :pause_menu
 migration-hub validate --batch "!BATCH!"
 goto :pause_menu
 
-:stage
-call :ask_batch || goto :pause_menu
-migration-hub stage --batch "!BATCH!"
+:migrate
+set "SOURCE="
+set /p "SOURCE=Source share (e.g. \\SourceSqlServer\EDM_Backups): "
+if "!SOURCE!"=="" (
+    echo.
+    echo  No source given -- nothing done.
+    goto :pause_menu
+)
+echo.
+echo  This discovers, validates, uploads, imports, verifies, archives and closes
+echo  every file in !SOURCE! in one go -- and signs off automatically if the run
+echo  is CLEAN.
+if defined DRY_RUN_NOTE echo %DRY_RUN_NOTE%
+call :confirm "Start the automated migration" || goto :pause_menu
+migration-hub migrate --source "!SOURCE!"
 goto :pause_menu
 
 :run
@@ -233,9 +245,9 @@ goto :pause_menu
 :retry
 call :ask_batch || goto :pause_menu
 echo.
-echo  This requeues EVERY failed or abandoned file in !BATCH! and starts a
-echo  worker. It is a blind retry -- it does not check whether a file already
-echo  landed on the platform.
+echo  This requeues EVERY failed or abandoned file in !BATCH! back to VALIDATED.
+echo  It is a blind retry -- it does not check whether a file already landed on
+echo  the platform. A subsequent `run` or `migrate` picks the file back up.
 echo.
 echo  If many files failed the same way, STOP and diagnose instead. Retrying
 echo  into a systemic fault multiplies it and destroys the evidence.

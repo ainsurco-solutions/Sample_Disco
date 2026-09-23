@@ -246,14 +246,23 @@ and RSK-0006's Direct figures have already been corrected once.
 -----------------------------------------------------------------------
 STEP 1 -- one file, dry run, no vendor calls
 -----------------------------------------------------------------------
-NOTE (2026-09-21): THIS CANNOT COMPLETE YET. `plan`, `validate` and
-`stage` work on real data. The upload fails, because cli.py still wires
-the superseded IrpAdapter -- TASK-0075, blocked on ADR-0009's review.
-Swagat expects to land the change by COB 2026-09-22. Run steps 1a-1d to
-see the pipeline work; 1e will not upload until then.
+UNBLOCKED 2026-09-22. TASK-0075 is Done, ADR-0009 Accepted, IrpAdapter
+retired -- this sequence now runs end to end. The `stage` step is gone
+with it; see 1d below.
 
-Run these ONE AT A TIME and read each result before the next. Any batch
-id will do; SMOKE01 is used here so it is obvious later what it was for.
+BEFORE THE FIRST RUN, MIGRATE THE REGISTRY:
+
+  python -m alembic upgrade head
+
+Three migrations are pending on any registry created before 2026-09-22
+(databridge columns, dropping the IRP-only ones, dropping staged_path).
+Skip this and the first command fails with "table migration_file has no
+column named instance_name". It is not a code fault and not a bad copy
+-- the database is just older than the code.
+
+Run the steps ONE AT A TIME and read each result before the next. Any
+batch id will do; SMOKE01 is used here so it is obvious later what it
+was for.
 
 --- 1a. See what is actually on the share ------------------------------
 plan registers everything matching *.bak unless capped, and it recurses
@@ -289,14 +298,18 @@ exists, is a file, ends in .bak, is not zero-length, and that the target
 exposure name derived from the filename is valid. A rejection names the
 file and the reason; an unusual filename is the usual cause.
 
---- 1d. stage ----------------------------------------------------------
-migration-hub stage --batch SMOKE01
+--- 1d. THE STAGE STEP NO LONGER EXISTS -------------------------------
+`migration-hub stage` was removed on 2026-09-22 along with the STAGED
+file state. Typing it now gives "No such command".
 
-EXPECT: staged 1 file(s) in place (no copy)
+Nothing is lost. The step had already stopped copying anything -- it
+reported "staged in place (no copy)" because stage_locally was false --
+so it was a state transition and nothing else. Files now go
+DISCOVERED -> VALIDATED -> UPLOADING, and the worker re-checks the
+source file's size immediately before upload, which is the check
+staging used to perform.
 
-"in place" because stage_locally is false -- nothing is copied and the
-upload reads straight from the share. A copy would need somewhere to put
-35 TB.
+Skip straight from 1c to 1e.
 
 --- 1e. run (still a dry run) ------------------------------------------
 migration-hub run --batch SMOKE01 --max-files 1
@@ -304,8 +317,9 @@ migration-hub run --batch SMOKE01 --max-files 1
 EXPECT: a per-file outcome line, then a running total.
 
 With dry_run true this makes NO vendor calls and returns the file to
-STAGED unchanged. It deliberately does not mark the batch RUNNING
-either, so the batch does not read as in-progress forever.
+VALIDATED unchanged (it was STAGED before 2026-09-22). It deliberately
+does not mark the batch RUNNING either, so the batch does not read as
+in-progress forever.
 
 --- 1f. confirm --------------------------------------------------------
 migration-hub status --batch SMOKE01
@@ -325,7 +339,7 @@ a corrupted registry rather than an error. Pause sync for the duration
 of the run.
 
 --- 2b. Back up the registry ------------------------------------------
-scriptsackup_registry.bat
+scripts\backup_registry.bat
 
 Writes a dated VACUUM INTO snapshot -- a consistent copy of a live
 database, which a plain file copy is not. Set MIGRATION_HUB_BACKUP_DIR
@@ -340,16 +354,66 @@ then run ONLY this again:
 
 migration-hub run --batch SMOKE01 --max-files 1
 
-Watch it move STAGED -> UPLOADING -> UPLOADED -> IMPORTING -> VERIFYING
--> COMPLETED. The import is polled, so IMPORTING can sit for a while:
+Watch it move VALIDATED -> UPLOADING -> UPLOADED -> IMPORTING ->
+VERIFYING -> COMPLETED. (It was STAGED -> UPLOADING before 2026-09-22;
+that state is gone.) The import is polled, so IMPORTING can sit for a while:
 poll_interval_seconds is 60 and max_poll_minutes is 360.
 
 Leave max_concurrent_uploads and max_concurrent_imports at 1. Three devs
 against this tenant at 1 each is already three concurrent uploads.
 
---- 2d. Put the safety catch back --------------------------------------
+--- 2d. Archive it into Data Vault -------------------------------------
+migration-hub archive --batch SMOKE01
+
+COMPLETED means the database reached Data Bridge. It is not migrated
+until it is archived in Data Vault -- the bridge is the route in, the
+vault is the destination, and archiving is a separate explicit step
+(see the GLOSSARY). Five years' retention from the upload date is
+applied automatically.
+
+Re-running is safe: a database that already has an archive row is
+skipped rather than archived twice.
+
+--- 2e. Put the safety catch back --------------------------------------
 Set "dry_run": true again in config\prod.json, so the next command is
 not accidentally live. Resume OneDrive sync.
+
+
+-----------------------------------------------------------------------
+THE ONE-COMMAND ALTERNATIVE -- migrate --source
+-----------------------------------------------------------------------
+New on 2026-09-22. Does the whole of 1b-1e and 2d in one invocation:
+discover, validate, upload, import, verify, archive, reconcile, and
+sign off if the run is clean.
+
+  migration-hub migrate --source "\\sriskpd0001\Backup\Silviu" --max-files 1
+
+WHEN TO USE WHICH. The step-by-step sequence above is for the first run
+on a machine, or when something is wrong and you need to see which step
+it goes wrong at. `migrate` is for once that works -- and it is the
+right one for TIMING the POC, because it measures the operation the way
+it will actually be run.
+
+WORTH KNOWING:
+
+  - The batch id is DERIVED from the source path, not supplied. Point
+    at the same folder again and it is the same batch, not a new one.
+
+  - It respects dry_run in config\prod.json. With dry_run true it runs
+    discovery, validation and the upload loop with no vendor calls,
+    then stops before archive/close/sign-off and says so.
+
+  - Concurrency is settings.max_concurrent_uploads as IN-PROCESS
+    THREADS, each with its own vendor adapter -- not separate processes
+    as `run` used to launch. Leave it at 1.
+
+  - A clean run signs itself off, recorded as `migration-hub-auto`.
+    It never records a human's name for an automated sign-off, so the
+    two are always tellable apart in the audit trail.
+
+  - A run that closes EXCEPTIONS stops for a human to review:
+
+      migration-hub controls history --batch <id>
 
 
 =======================================================================
@@ -406,7 +470,7 @@ above.
   Get-Item "\\sriskpd0001\Backup\Silviu\<name>.bak" | Select-Object Length, LastWriteTime
 
 --- once the cause is fixed --------------------------------------------
-ABANDONED files are requeued to STAGED by retry, the same as FAILED:
+ABANDONED files are requeued to VALIDATED by retry, same as FAILED:
 
 migration-hub retry --batch SMOKE01
 

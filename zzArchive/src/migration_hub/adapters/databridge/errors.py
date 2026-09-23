@@ -23,8 +23,19 @@ class MissingPartETagError(DatabridgeError, AbandonError):
         super().__init__(f"Chunk {part_number} PUT returned no ETag header")
         self.part_number = part_number
 
+class MissingUploadUriError(DatabridgeError, AbandonError):
+
+    def __init__(self, keys: object) -> None:
+        super().__init__(f"import response had neither backupUri nor mdfUri (keys: {keys})")
+
 class MissingJobIdError(DatabridgeError, AbandonError):
     pass
+
+class ImportJobFailedError(DatabridgeError, AbandonError):
+
+    def __init__(self, job_id: str, detail: str | None) -> None:
+        super().__init__(f"Import job {job_id} failed: {detail or '(no detail)'}")
+        self.job_id = job_id
 
 class UnknownJobStatusError(DatabridgeError, AbandonError):
 

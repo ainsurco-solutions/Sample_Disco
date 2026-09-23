@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from migration_hub.adapters.base import MigrationTargetAdapter
+from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.consumers.worker import MigrationWorker
-from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
@@ -44,7 +43,7 @@ def resume(*, registry: Registry, batch_id: str) -> None:
 def run_worker_loop(
     *,
     registry: Registry,
-    adapter: MigrationTargetAdapter,
+    adapter: DatabridgeAdapter,
     batch_id: str,
     worker_id: str,
     dry_run: bool,
@@ -53,6 +52,7 @@ def run_worker_loop(
     max_poll_minutes: float,
     max_files: int | None = None,
     on_outcome: Callable[[FileState, int], None] | None = None,
+    instance_name: str | None = None,
 ) -> dict[FileState, int]:
     worker = MigrationWorker(
         registry=registry,
@@ -62,6 +62,7 @@ def run_worker_loop(
         max_attempts=max_attempts,
         poll_interval_seconds=poll_interval_seconds,
         max_poll_minutes=max_poll_minutes,
+        instance_name=instance_name,
     )
 
     outcomes: dict[FileState, int] = {}
@@ -198,11 +199,6 @@ class RetryOutcome:
     requeued_file_ids: list[int]
     workers: list[WorkerHandle]
 
-STAGING_FAILURE_PREFIX = "staging failed: "
-
-def _failed_before_staging(file: MigrationFile) -> bool:
-    return (file.last_error or "").startswith(STAGING_FAILURE_PREFIX)
-
 def retry_files(
     registry: Registry,
     *,
@@ -221,22 +217,9 @@ def retry_files(
         if FileState(file.state) not in (FileState.FAILED, FileState.ABANDONED):
             raise NotRetryableError(file_id, file.state)
 
-    requeued_to: dict[int, FileState] = {}
     for file_id in file_ids:
-        file = registry.get(file_id)
-        assert file is not None
-        target = FileState.VALIDATED if _failed_before_staging(file) else FileState.STAGED
-        requeued_to[file_id] = target
-        registry.transition(file_id=file_id, to_state=target, actor=actor, detail=detail)
+        registry.transition(
+            file_id=file_id, to_state=FileState.VALIDATED, actor=actor, detail=detail
+        )
 
-    if not any(state is FileState.STAGED for state in requeued_to.values()):
-        return RetryOutcome(requeued_file_ids=list(file_ids), workers=[])
-
-    workers = start_run_subprocesses(
-        registry=registry,
-        batch_id=batch_id,
-        count=worker_count,
-        max_files=max_files_per_worker,
-        environment=environment,
-    )
-    return RetryOutcome(requeued_file_ids=list(file_ids), workers=workers)
+    return RetryOutcome(requeued_file_ids=list(file_ids), workers=[])

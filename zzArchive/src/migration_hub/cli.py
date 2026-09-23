@@ -8,14 +8,15 @@ from uuid import UUID
 import typer
 from dotenv import load_dotenv
 
-from migration_hub.adapters.irp.client import IrpAdapter
+from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.config.settings import Settings
 from migration_hub.core.engine import create_registry_engine
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
-from migration_hub.orchestration import batches, reaper, reconciliation, scheduler
-from migration_hub.producers import scanner, stager, validator
+from migration_hub.orchestration import archiver, batches, reaper, reconciliation, scheduler
+from migration_hub.orchestration.auto_migrate import run_automated_migration
+from migration_hub.producers import scanner, validator
 
 load_dotenv()
 
@@ -31,14 +32,9 @@ def _registry(settings: Settings) -> Registry:
     engine = create_registry_engine(settings.database_url)
     return Registry(engine)
 
-def _adapter(settings: Settings) -> IrpAdapter:
+def _adapter(settings: Settings) -> DatabridgeAdapter:
     engine = create_registry_engine(settings.database_url)
-    return IrpAdapter(
-        host=settings.api_host,
-        api_key=settings.api_key(),
-        entitlement=settings.entitlement,
-        engine=engine,
-    )
+    return DatabridgeAdapter(host=settings.api_host, api_key=settings.api_key(), engine=engine)
 
 @app.command()
 def plan(
@@ -73,33 +69,6 @@ def validate(batch: str = typer.Option(..., "--batch")) -> None:
             typer.echo(f"  file_id={file_id}: {'; '.join(result.failures)}")
 
 @app.command()
-def stage(batch: str = typer.Option(..., "--batch")) -> None:
-    settings = _load_settings()
-    registry = _registry(settings)
-    outcome = stager.stage_batch(
-        registry=registry,
-        staging_root=settings.staging_root,
-        batch_id=batch,
-        stage_locally=settings.stage_locally,
-        max_attempts=settings.max_attempts,
-    )
-    where = "into staging" if settings.stage_locally else "in place (no copy)"
-    typer.echo(f"staged {outcome.staged} file(s) {where} for batch {batch!r}")
-
-    if not outcome.failures:
-        return
-
-    typer.echo(f"\n{len(outcome.failures)} file(s) failed staging:", err=True)
-    for failure in outcome.failures:
-        typer.echo(f"  [{failure.file_id}] {failure.name}: {failure.error}", err=True)
-    typer.echo(
-        "\nThese are now FAILED and visible to retry. Fix the cause first -- "
-        "retrying a backup that is still being written will just fail again.",
-        err=True,
-    )
-    raise typer.Exit(1)
-
-@app.command()
 def run(
     batch: str = typer.Option(..., "--batch"),
     max_files: int | None = typer.Option(None, "--max-files"),
@@ -129,6 +98,7 @@ def run(
             on_outcome=lambda outcome, total: typer.echo(
                 f"file -> {outcome} (running total: {total})"
             ),
+            instance_name=settings.databridge_instance_name,
         )
     finally:
         adapter.close()
@@ -150,21 +120,41 @@ def run(
 
 @app.command()
 def migrate(
-    batch: str = typer.Option(..., "--batch"),
-    source: Path | None = typer.Option(None, "--source"),
+    source: Path = typer.Option(..., "--source"),
     max_files: int | None = typer.Option(None, "--max-files"),
 ) -> None:
-    typer.secho(f"[1/4] discovering files for batch {batch!r}", bold=True)
-    plan(batch=batch, source=source, max_files=max_files)
+    settings = _load_settings()
+    registry = _registry(settings)
 
-    typer.secho(f"[2/4] validating batch {batch!r}", bold=True)
-    validate(batch=batch)
+    result = run_automated_migration(
+        registry=registry,
+        adapter_factory=lambda: _adapter(settings),
+        source_root=source,
+        pattern=settings.file_pattern,
+        max_files=max_files,
+        thread_count=max(1, settings.max_concurrent_uploads),
+        dry_run=settings.dry_run,
+        max_attempts=settings.max_attempts,
+        poll_interval_seconds=settings.poll_interval_seconds,
+        max_poll_minutes=settings.max_poll_minutes,
+        instance_name=settings.databridge_instance_name,
+        compute_checksum=settings.compute_checksums,
+        on_progress=lambda message: typer.echo(message),
+    )
 
-    typer.secho(f"[3/4] staging batch {batch!r}", bold=True)
-    stage(batch=batch)
-
-    typer.secho(f"[4/4] running batch {batch!r}", bold=True)
-    run(batch=batch, max_files=max_files)
+    typer.echo("")
+    breakdown = ", ".join(f"{count} {state}" for state, count in sorted(result.outcomes.items()))
+    typer.echo(f"batch {result.batch_id!r}: {breakdown}")
+    typer.echo(f"run {result.run_id} status={result.status}")
+    if result.signed_off:
+        typer.secho(f"signed off automatically as {result.signed_off_by!r}", fg=typer.colors.GREEN)
+    elif result.status != "RUNNING":
+        typer.secho(
+            f"NOT signed off -- run `migration-hub controls history --batch "
+            f"{result.batch_id}` to review, then `migration-hub controls sign-off "
+            f"--run-id {result.run_id}` once dispositioned",
+            fg=typer.colors.YELLOW,
+        )
 
 @app.command()
 def reap() -> None:
@@ -183,6 +173,25 @@ def reap() -> None:
         adapter.close()
 
     typer.echo(f"reaped {resolved} stale claim(s)")
+
+@app.command()
+def archive(batch: str | None = typer.Option(None, "--batch")) -> None:
+    settings = _load_settings()
+    registry = _registry(settings)
+
+    adapter = _adapter(settings)
+    try:
+        session = adapter.open_session()
+        archived = archiver.archive_pending(
+            registry=registry,
+            adapter=adapter,
+            batch_id=batch,
+            resource_group_id=session.resource_group_id,
+        )
+    finally:
+        adapter.close()
+
+    typer.echo(f"archived {archived} file(s)" + (f" in batch {batch!r}" if batch else ""))
 
 @app.command()
 def schedule() -> None:
@@ -229,7 +238,7 @@ def retry(
         except batches.NotRetryableError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(1) from exc
-        typer.echo(f"requeued file {file_id} to STAGED; worker pid={outcome.workers[0].pid}")
+        typer.echo(f"requeued file {file_id} to VALIDATED")
         return
 
     retryable = registry.files_in_states(states=[FileState.FAILED, FileState.ABANDONED], batch_id=batch)
@@ -246,8 +255,7 @@ def retry(
         max_files_per_worker=None,
         environment=settings.environment,
     )
-    pids = ", ".join(str(w.pid) for w in outcome.workers)
-    typer.echo(f"requeued {len(outcome.requeued_file_ids)} file(s) to STAGED; worker(s) pid={pids}")
+    typer.echo(f"requeued {len(outcome.requeued_file_ids)} file(s) to VALIDATED")
 
 @app.command()
 def status(batch: str | None = typer.Option(None, "--batch")) -> None:

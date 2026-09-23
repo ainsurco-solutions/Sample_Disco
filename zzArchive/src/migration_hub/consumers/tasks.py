@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy.engine import Engine
 
-from migration_hub.adapters.irp.client import IrpAdapter
+from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.config.settings import Settings
 from migration_hub.consumers.worker import MigrationWorker
 from migration_hub.core.engine import create_registry_engine
@@ -20,13 +20,8 @@ def _load_settings() -> Settings:
 def _registry(settings: Settings, *, engine: Engine) -> Registry:
     return Registry(engine)
 
-def _adapter(settings: Settings, *, engine: Engine) -> IrpAdapter:
-    return IrpAdapter(
-        host=settings.api_host,
-        api_key=settings.api_key(),
-        entitlement=settings.entitlement,
-        engine=engine,
-    )
+def _adapter(settings: Settings, *, engine: Engine) -> DatabridgeAdapter:
+    return DatabridgeAdapter(host=settings.api_host, api_key=settings.api_key(), engine=engine)
 
 def process_next(batch_id: str) -> bool:
     settings = _load_settings()
@@ -50,6 +45,7 @@ def process_next(batch_id: str) -> bool:
             max_attempts=settings.max_attempts,
             poll_interval_seconds=settings.poll_interval_seconds,
             max_poll_minutes=settings.max_poll_minutes,
+            instance_name=settings.databridge_instance_name,
         )
         try:
             outcome = worker.run_once(batch_id=batch_id)
@@ -76,16 +72,15 @@ def poll_running_imports() -> int:
         adapter = _adapter(settings, engine=engine)
         advanced = 0
         try:
-            session = adapter.open_session()
             for file in importing:
                 assert file.job_id is not None
                 if reaper.reconcile_importing(
                     registry=registry,
                     adapter=adapter,
-                    session=session,
                     file_id=file.file_id,
                     job_id=file.job_id,
-                    exposure_name=file.target_exposure_name,
+                    instance_name=file.instance_name,
+                    database_name=file.database_name,
                     max_attempts=settings.max_attempts,
                     actor="scheduler-poll",
                 ):

@@ -1,6 +1,6 @@
-source commit : d969d018a7922d4c7d419bc1ff5edeedde2c0168
-               feat: publish an MS Amlin navy theme alongside the teal one (TASK-0071)
-files         : 76
+source commit : 97840f7b4a3bf9039700e9eaf17943d63f1a7213
+               Merge pull request #27 from ainsurco-solutions/automated-folder-migration
+files         : 79
 
 WARNING: published from a DIRTY working tree. This copy does not
          correspond to any commit. Re-publish from a clean checkout
