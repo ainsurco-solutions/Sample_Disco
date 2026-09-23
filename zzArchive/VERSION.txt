@@ -1,3 +1,3 @@
-source commit : 41259db747ff8acd002bf1f06cb81238d9f21c71
-               feat: Live log panel -- follow a batch's run log in the dashboard (TASK-0090)
+source commit : a5ad1086b64be6dc6778a6517d1c445cc88ceec3
+               fix: treat the job status Enqueued as in progress (TASK-0071)
 files         : 87

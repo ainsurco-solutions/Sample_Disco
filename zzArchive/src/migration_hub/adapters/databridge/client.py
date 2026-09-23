@@ -25,9 +25,9 @@ LARGE_FILE_THRESHOLD_BYTES = 5 * 1024**3
 
 _FORMAT_CODES = {"mdf": 0, "bak": 1, "dacpac": 2}
 
-_SUCCESS_STATUSES = {"SUCCESS", "Succeeded"}
-_FAILURE_STATUSES = {"FAILED", "Failed", "CANCELLED", "Cancelled"}
-_IN_PROGRESS_STATUSES = {"InProgress", "PENDING", "QUEUED", "RUNNING"}
+_SUCCESS_STATUSES = {"success", "succeeded"}
+_FAILURE_STATUSES = {"failed", "cancelled"}
+_IN_PROGRESS_STATUSES = {"inprogress", "pending", "queued", "enqueued", "running"}
 _KNOWN_STATUSES = _SUCCESS_STATUSES | _FAILURE_STATUSES | _IN_PROGRESS_STATUSES
 
 @dataclass(frozen=True, slots=True)
@@ -186,14 +186,15 @@ class DatabridgeAdapter:
         except ValueError:
             body = response.text.strip()
         raw_status = str(body.get("status") if isinstance(body, dict) else body)
-        if raw_status not in _KNOWN_STATUSES:
+        status = raw_status.strip().lower()
+        if status not in _KNOWN_STATUSES:
             raise UnknownJobStatusError(job_id, raw_status)
 
         return DatabridgeJobStatus(
             job_id=job_id,
             raw_status=raw_status,
-            is_terminal=raw_status in _SUCCESS_STATUSES or raw_status in _FAILURE_STATUSES,
-            is_success=raw_status in _SUCCESS_STATUSES,
+            is_terminal=status in _SUCCESS_STATUSES or status in _FAILURE_STATUSES,
+            is_success=status in _SUCCESS_STATUSES,
         )
 
     def database_exists(self, *, instance_name: str, database_name: str) -> bool:
