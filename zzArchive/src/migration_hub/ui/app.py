@@ -16,7 +16,7 @@ from migration_hub.config.settings import Settings
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import SETTLED_STATES, BatchState, FileState
-from migration_hub.observability import controls, metrics
+from migration_hub.observability import controls
 from migration_hub.orchestration import batches as batch_ops
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
