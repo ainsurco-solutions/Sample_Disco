@@ -362,6 +362,8 @@ def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
 def _render_needs_action_queue(registry: Registry) -> None:
     rows: list[dict[str, str | int]] = []
     for batch in registry.list_batches():
+        if batch.state == BatchState.DONE:
+            continue
         counts = registry.counts_by_state(batch_id=batch.batch_id)
         pending_archive = len(registry.pending_archives(batch_id=batch.batch_id))
         failed = (

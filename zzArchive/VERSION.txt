@@ -1,3 +1,3 @@
-source commit : 98c1a8d7b300ab6694dc719dcbcc6e5df41dd23d
-               fix: keep launch messages visible; controls logs in Live log; retry honours destination; strip scaffold prose (TASK-0091, TASK-0092, TASK-0071)
+source commit : ca0b36bbe435cabb851771c1e8bc465c208a54eb
+               fix: Needs action skips batches that are DONE (TASK-0076)
 files         : 88
