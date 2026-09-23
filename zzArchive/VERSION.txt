@@ -1,3 +1,3 @@
-source commit : e7fc414864aecca661159065874d4a62ac8a095d
-               feat: upgrade_db.bat -- snapshot the registry, then alembic upgrade head (TASK-0071)
-files         : 87
+source commit : 3d48439270085a6e32939e3b3c13273f010a271b
+               chore: remove the Streamlit mockup page from the runtime (TASK-0076)
+files         : 86

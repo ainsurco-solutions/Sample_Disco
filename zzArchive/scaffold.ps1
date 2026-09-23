@@ -120,7 +120,6 @@ $Files = @(
     'src/migration_hub/ui/__init__.py'
     'src/migration_hub/ui/app.py'
     'src/migration_hub/ui/pages/__init__.py'
-    'src/migration_hub/ui/pages/ui_ux_mockup.py'
     'migrations/env.py'
     'migrations/README.md'
     'migrations/script.py.mako'
