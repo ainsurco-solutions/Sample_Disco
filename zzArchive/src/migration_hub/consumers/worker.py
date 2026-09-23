@@ -83,7 +83,7 @@ class MigrationWorker:
             )
         except BaseException as exc:
             return self._handle_failure(file.file_id, exc)
-        return FileState.COMPLETED
+        return FileState.BRIDGED
 
     def _resolve_instance(self, source_path: str) -> str:
         if self._instances:
@@ -170,7 +170,7 @@ class MigrationWorker:
             )
 
         self._registry.transition(
-            file_id=file_id, to_state=FileState.COMPLETED, actor=self._worker_id
+            file_id=file_id, to_state=FileState.BRIDGED, actor=self._worker_id
         )
 
     def _handle_failure(self, file_id: int, exc: BaseException) -> FileState:

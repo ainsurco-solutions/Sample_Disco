@@ -80,6 +80,7 @@ class MigrationFile(Base):
     archive_job_id: Mapped[str | None] = mapped_column(String(128), default=None)
     archived_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     archive_expiration_date: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
+    archive_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
 
     last_error: Mapped[str | None] = mapped_column(String(None), default=None)
     created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, server_default=UTC_NOW)
@@ -156,6 +157,8 @@ class BatchRun(Base):
     rejected_count: Mapped[int] = mapped_column(default=0, server_default="0")
     skipped_count: Mapped[int] = mapped_column(default=0, server_default="0")
     outstanding_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    archive_failed_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    bridge_count: Mapped[int | None] = mapped_column(default=None)
 
     retry_count: Mapped[int] = mapped_column(default=0, server_default="0")
     exception_count: Mapped[int] = mapped_column(default=0, server_default="0")

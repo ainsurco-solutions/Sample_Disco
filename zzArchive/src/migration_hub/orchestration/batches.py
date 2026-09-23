@@ -4,12 +4,14 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.consumers.worker import MigrationWorker
+from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
@@ -217,18 +219,98 @@ def start_run_subprocesses(
         for _ in range(effective_count)
     ]
 
+RETRYABLE_STATES: frozenset[FileState] = frozenset(
+    {FileState.FAILED, FileState.ABANDONED, FileState.ARCHIVE_FAILED}
+)
+
+class Location(StrEnum):
+
+    DATA_VAULT = "DATA_VAULT"
+    DATA_BRIDGE = "DATA_BRIDGE"
+    NEITHER = "NEITHER"
+
+def platform_locator(adapter: DatabridgeAdapter) -> Callable[[MigrationFile], Location]:
+
+    def locate(file: MigrationFile) -> Location:
+        database_name = file.database_name or file.source_database
+        with adapter.bound_to_file(file.file_id):
+            if adapter.archive_exists(database_name=database_name):
+                return Location.DATA_VAULT
+            if file.instance_name is not None and adapter.database_exists(
+                instance_name=file.instance_name, database_name=database_name
+            ):
+                return Location.DATA_BRIDGE
+        return Location.NEITHER
+
+    return locate
+
+IN_FLIGHT_STATES: frozenset[FileState] = frozenset(
+    {
+        FileState.UPLOADING,
+        FileState.UPLOADED,
+        FileState.IMPORTING,
+        FileState.VERIFYING,
+        FileState.ARCHIVING,
+    }
+)
+
+def place_by_location(
+    registry: Registry,
+    *,
+    file_id: int,
+    location: Location,
+    actor: str,
+    detail: str,
+    reset_attempts: bool,
+) -> FileState:
+    if location is Location.DATA_VAULT:
+        registry.transition(
+            file_id=file_id,
+            to_state=FileState.COMPLETED,
+            actor=actor,
+            detail=f"{detail}: already in Data Vault",
+            archived_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+        return FileState.COMPLETED
+    if location is Location.DATA_BRIDGE:
+        registry.transition(
+            file_id=file_id,
+            to_state=FileState.BRIDGED,
+            actor=actor,
+            detail=f"{detail}: already on Data Bridge, archive only",
+            **({"archive_attempts": 0} if reset_attempts else {}),
+        )
+        return FileState.BRIDGED
+    fields: dict[str, object] = (
+        {"attempts": 0, "archive_attempts": 0} if reset_attempts else {}
+    )
+    registry.transition(
+        file_id=file_id,
+        to_state=FileState.VALIDATED,
+        actor=actor,
+        detail=f"{detail}: on neither Data Bridge nor Data Vault, uploading again",
+        **fields,
+    )
+    return FileState.VALIDATED
+
 class NotRetryableError(Exception):
 
     def __init__(self, file_id: int, state: str) -> None:
         self.file_id = file_id
         self.state = state
-        super().__init__(f"file {file_id} is {state}, not FAILED or ABANDONED")
+        super().__init__(f"file {file_id} is {state}, not FAILED, ABANDONED or ARCHIVE_FAILED")
 
 @dataclass(frozen=True, slots=True)
 class RetryOutcome:
 
     requeued_file_ids: list[int]
     workers: list[WorkerHandle]
+    archive_retry_file_ids: list[int] = field(default_factory=list)
+    completed_file_ids: list[int] = field(default_factory=list)
+    bridged_file_ids: list[int] = field(default_factory=list)
+    unchecked: dict[int, str] = field(default_factory=dict)
+    pipeline_started: bool = False
+    not_started_reason: str | None = None
 
 def retry_files(
     registry: Registry,
@@ -236,6 +318,7 @@ def retry_files(
     batch_id: str,
     file_ids: Sequence[int],
     actor: str,
+    locate: Callable[[MigrationFile], Location],
     detail: str | None = None,
     worker_count: int = 1,
     max_files_per_worker: int | None = 1,
@@ -245,12 +328,102 @@ def retry_files(
         file = registry.get(file_id)
         if file is None:
             raise ValueError(f"No migration_file with file_id={file_id}")
-        if FileState(file.state) not in (FileState.FAILED, FileState.ABANDONED):
+        if FileState(file.state) not in RETRYABLE_STATES:
             raise NotRetryableError(file_id, file.state)
 
+    requeue: list[int] = []
+    archive_retry: list[int] = []
+    completed: list[int] = []
+    bridged: list[int] = []
+    unchecked: dict[int, str] = {}
     for file_id in file_ids:
-        registry.transition(
-            file_id=file_id, to_state=FileState.VALIDATED, actor=actor, detail=detail
+        file = registry.get(file_id)
+        assert file is not None
+        if file.state == str(FileState.ARCHIVE_FAILED):
+            archive_retry.append(file_id)
+            continue
+        try:
+            location = locate(file)
+        except Exception as exc:
+            unchecked[file_id] = f"{type(exc).__name__}: {exc}"
+            continue
+        placed = place_by_location(
+            registry,
+            file_id=file_id,
+            location=location,
+            actor=actor,
+            detail=f"retry ({detail})" if detail else "retry",
+            reset_attempts=True,
         )
+        {
+            FileState.COMPLETED: completed,
+            FileState.BRIDGED: bridged,
+            FileState.VALIDATED: requeue,
+        }[placed].append(file_id)
 
-    return RetryOutcome(requeued_file_ids=list(file_ids), workers=[])
+    workers: list[WorkerHandle] = []
+    pipeline_started = False
+    not_started_reason: str | None = None
+    if requeue or bridged or archive_retry:
+        in_flight = registry.files_in_states(states=sorted(IN_FLIGHT_STATES), batch_id=batch_id)
+        if in_flight:
+            not_started_reason = (
+                f"{len(in_flight)} file(s) in batch {batch_id!r} are already in flight -- "
+                "not starting a second pipeline or archiver over them. Once that work "
+                f"finishes, run `migration-hub migrate --batch {batch_id}`."
+            )
+        elif requeue:
+            workers.append(start_migrate_subprocess(batch_id=batch_id, environment=environment))
+            pipeline_started = True
+        else:
+            workers.append(start_archive_subprocess(batch_id=batch_id, environment=environment))
+
+    return RetryOutcome(
+        requeued_file_ids=requeue,
+        workers=workers,
+        archive_retry_file_ids=archive_retry,
+        completed_file_ids=completed,
+        bridged_file_ids=bridged,
+        unchecked=unchecked,
+        pipeline_started=pipeline_started,
+        not_started_reason=not_started_reason,
+    )
+
+def start_migrate_subprocess(*, batch_id: str, environment: str | None = None) -> WorkerHandle:
+    return _launch_cli(["migrate", "--batch", batch_id], f"migrate-{batch_id}", environment)
+
+def _launch_cli(cli_args: list[str], log_stem: str, environment: str | None) -> WorkerHandle:
+    args = [sys.executable, "-m", "migration_hub.cli", *cli_args]
+    env = os.environ.copy()
+    if environment is not None:
+        env["MIGRATION_HUB_ENV"] = environment
+
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"
+    log_path = log_dir / f"{log_stem}-{stamp}.log"
+    log_file = log_path.open("w", encoding="utf-8")
+
+    process = subprocess.Popen(
+        args,
+        env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        creationflags=_WINDOWS_DETACH_FLAGS,
+        close_fds=True,
+        start_new_session=sys.platform != "win32",
+    )
+    log_file.close()
+    return WorkerHandle(process=process, log_path=log_path)
+
+def start_retry_subprocess(
+    *,
+    batch_id: str | None = None,
+    file_id: int | None = None,
+    environment: str | None = None,
+) -> WorkerHandle:
+    if (batch_id is None) == (file_id is None):
+        raise ValueError("specify exactly one of batch_id or file_id")
+    if batch_id is not None:
+        return _launch_cli(["retry", "--batch", batch_id], f"retry-{batch_id}", environment)
+    return _launch_cli(["retry", "--file-id", str(file_id)], f"retry-file-{file_id}", environment)

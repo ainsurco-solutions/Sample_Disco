@@ -50,7 +50,8 @@ class FileDiagnostics(BaseModel):
 
 class RetryResult(BaseModel):
     file_id: int
-    requeued: bool
+    retry_started: bool
+    log_path: str
 
 def _file_summary(file: MigrationFile) -> FileSummary:
     return FileSummary(
@@ -130,13 +131,9 @@ def file_diagnostics(
 @router.post("/files/{file_id}/retry", response_model=RetryResult)
 def retry_file(file_id: int, registry: Registry = Depends(get_registry)) -> RetryResult:
     file = _require_file(registry, file_id)
-    try:
-        batch_ops.retry_files(
-            registry,
-            batch_id=file.batch_id,
-            file_ids=[file_id],
-            actor="api",
+    if FileState(file.state) not in batch_ops.RETRYABLE_STATES:
+        raise HTTPException(
+            status_code=409, detail=str(batch_ops.NotRetryableError(file_id, file.state))
         )
-    except batch_ops.NotRetryableError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return RetryResult(file_id=file_id, requeued=True)
+    handle = batch_ops.start_retry_subprocess(file_id=file_id)
+    return RetryResult(file_id=file_id, retry_started=True, log_path=str(handle.log_path))

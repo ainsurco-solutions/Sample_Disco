@@ -55,6 +55,7 @@
   "max_poll_minutes": 360,
 
   "max_attempts": 3,
+  "max_archive_attempts": 9,
   "claim_timeout_minutes": 420,
 
   "compute_checksums": false,

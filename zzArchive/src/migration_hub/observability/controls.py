@@ -42,6 +42,9 @@ class ControlTotals:
     retry_count: int
     exception_count: int
 
+    archive_failed_count: int = 0
+    bridge_count: int = 0
+
     @property
     def balances(self) -> bool:
         return self.unaccounted == 0
@@ -50,6 +53,7 @@ class ControlTotals:
     def unaccounted(self) -> int:
         return self.source_count - (
             self.completed_count
+            + self.archive_failed_count
             + self.abandoned_count
             + self.rejected_count
             + self.skipped_count
@@ -116,9 +120,10 @@ def derive(*, registry: Registry, run_id: UUID) -> ControlTotals:
     metrics = registry.file_metrics(batch_id=run.batch_id)
 
     completed = counts[FileState.COMPLETED]
+    archive_failed = counts[FileState.ARCHIVE_FAILED]
     abandoned = counts[FileState.ABANDONED]
     rejected = counts[FileState.REJECTED]
-    outstanding = sum(counts.values()) - completed - abandoned - rejected
+    outstanding = sum(counts.values()) - completed - archive_failed - abandoned - rejected
 
     attempts_sum = metrics["attempts_sum"]
     attempted_count = metrics["attempted_count"]
@@ -134,7 +139,8 @@ def derive(*, registry: Registry, run_id: UUID) -> ControlTotals:
         skipped_count=0,
         outstanding_count=outstanding,
         retry_count=attempts_sum - attempted_count,
-        exception_count=abandoned + rejected,
+        exception_count=abandoned + rejected + archive_failed,
+        archive_failed_count=archive_failed,
     )
 
 def close(
@@ -143,6 +149,7 @@ def close(
     run_id: UUID,
     reconciled_target_count: int,
     reconciled_target_bytes: int | None = None,
+    reconciled_bridge_count: int = 0,
 ) -> ControlRecord:
     run = _require_run(registry, run_id)
     provisional = derive(registry=registry, run_id=run_id)
@@ -168,6 +175,8 @@ def close(
         outstanding_count=provisional.outstanding_count,
         retry_count=provisional.retry_count,
         exception_count=provisional.exception_count,
+        archive_failed_count=provisional.archive_failed_count,
+        bridge_count=reconciled_bridge_count,
     )
     if not final.balances:
         raise ControlBalanceError(run_id, final.unaccounted)
@@ -175,6 +184,7 @@ def close(
     clean = (
         final.abandoned_count == 0
         and final.rejected_count == 0
+        and final.archive_failed_count == 0
         and final.target_count == final.completed_count
     )
     registry.update_batch_run(
@@ -191,6 +201,8 @@ def close(
         outstanding_count=final.outstanding_count,
         retry_count=final.retry_count,
         exception_count=final.exception_count,
+        archive_failed_count=final.archive_failed_count,
+        bridge_count=final.bridge_count,
     )
     return _to_record(_require_run(registry, run_id))
 
@@ -210,7 +222,8 @@ def abort(*, registry: Registry, run_id: UUID, reason: str) -> ControlRecord:
 def export(*, registry: Registry, run_id: UUID, output_path: str) -> str:
     run = _require_run(registry, run_id)
     exceptions = registry.files_in_states(
-        states=[FileState.ABANDONED, FileState.REJECTED], batch_id=run.batch_id
+        states=[FileState.ABANDONED, FileState.REJECTED, FileState.ARCHIVE_FAILED],
+        batch_id=run.batch_id,
     )
 
     path = Path(output_path)
@@ -237,6 +250,8 @@ def export(*, registry: Registry, run_id: UUID, output_path: str) -> str:
                 "outstanding_count",
                 "retry_count",
                 "exception_count",
+                "archive_failed_count",
+                "bridge_count",
             ]
         )
         writer.writerow(
@@ -259,6 +274,8 @@ def export(*, registry: Registry, run_id: UUID, output_path: str) -> str:
                 run.outstanding_count,
                 run.retry_count,
                 run.exception_count,
+                run.archive_failed_count,
+                run.bridge_count,
             ]
         )
         writer.writerow([])
@@ -286,11 +303,14 @@ def sign_off(*, registry: Registry, run_id: UUID, by: str) -> ControlRecord:
         raise ValueError(f"run {run_id} is still open -- close it before sign-off")
 
     if run.status == str(RunStatus.EXCEPTIONS):
-        abandoned = registry.files_in_states(states=[FileState.ABANDONED], batch_id=run.batch_id)
-        unexplained = [file.file_id for file in abandoned if not file.last_error]
+        exceptions = registry.files_in_states(
+            states=[FileState.ABANDONED, FileState.ARCHIVE_FAILED], batch_id=run.batch_id
+        )
+        unexplained = [file.file_id for file in exceptions if not file.last_error]
         if unexplained:
             raise ValueError(
-                f"{len(unexplained)} abandoned file(s) have no recorded reason: {unexplained}"
+                f"{len(unexplained)} abandoned/archive-failed file(s) have no recorded "
+                f"reason: {unexplained}"
             )
 
     registry.update_batch_run(
@@ -312,6 +332,7 @@ def verify(*, registry: Registry, run_id: UUID) -> tuple[bool, list[str]]:
         ("outstanding_count", run.outstanding_count, fresh.outstanding_count),
         ("retry_count", run.retry_count, fresh.retry_count),
         ("exception_count", run.exception_count, fresh.exception_count),
+        ("archive_failed_count", run.archive_failed_count, fresh.archive_failed_count),
     )
     divergences = [
         f"{name}: stored {stored}, now {current}"
@@ -351,6 +372,8 @@ def _to_record(run: BatchRun) -> ControlRecord:
             outstanding_count=run.outstanding_count,
             retry_count=run.retry_count,
             exception_count=run.exception_count,
+            archive_failed_count=run.archive_failed_count,
+            bridge_count=run.bridge_count or 0,
         ),
         evidence_uri=run.evidence_uri,
         evidence_sha256=run.evidence_sha256,

@@ -15,7 +15,7 @@ from sqlalchemy.engine import Engine
 from migration_hub.config.settings import Settings
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
-from migration_hub.core.states import TERMINAL_STATES, BatchState, FileState
+from migration_hub.core.states import SETTLED_STATES, BatchState, FileState
 from migration_hub.orchestration import batches as batch_ops
 from migration_hub.producers import scanner, validator
 
@@ -31,10 +31,13 @@ _STATE_PROGRESS = {
     FileState.DISCOVERED: 10,
     FileState.VALIDATED: 25,
     FileState.REJECTED: 0,
-    FileState.UPLOADING: 55,
-    FileState.UPLOADED: 65,
-    FileState.IMPORTING: 78,
-    FileState.VERIFYING: 90,
+    FileState.UPLOADING: 50,
+    FileState.UPLOADED: 60,
+    FileState.IMPORTING: 70,
+    FileState.VERIFYING: 80,
+    FileState.BRIDGED: 85,
+    FileState.ARCHIVING: 92,
+    FileState.ARCHIVE_FAILED: 85,
     FileState.COMPLETED: 100,
     FileState.FAILED: 45,
     FileState.ABANDONED: 0,
@@ -51,9 +54,13 @@ def _batch_display_state(
     state: BatchState, counts: dict[FileState, int]
 ) -> tuple[str, _BadgeColor]:
     total = sum(counts.values())
-    outstanding = total - sum(counts[s] for s in TERMINAL_STATES)
+    outstanding = total - sum(counts[s] for s in SETTLED_STATES)
     if state in (BatchState.PLANNED, BatchState.RUNNING) and total > 0 and outstanding == 0:
-        failed = counts[FileState.FAILED] + counts[FileState.ABANDONED]
+        failed = (
+            counts[FileState.FAILED]
+            + counts[FileState.ABANDONED]
+            + counts[FileState.ARCHIVE_FAILED]
+        )
         return ("Completed with issues", "orange") if failed else ("Completed", "green")
     return state.value.title(), _BATCH_STATE_COLOR[state]
 
@@ -156,9 +163,15 @@ def _render_unknown_states(registry: Registry) -> None:
 def _kpi_strip_global(registry: Registry) -> None:
     counts = registry.counts_by_state(batch_id=None)
     in_flight = (
-        counts[FileState.UPLOADING] + counts[FileState.IMPORTING] + counts[FileState.VERIFYING]
+        counts[FileState.UPLOADING]
+        + counts[FileState.IMPORTING]
+        + counts[FileState.VERIFYING]
+        + counts[FileState.BRIDGED]
+        + counts[FileState.ARCHIVING]
     )
-    issues = counts[FileState.FAILED] + counts[FileState.ABANDONED]
+    issues = (
+        counts[FileState.FAILED] + counts[FileState.ABANDONED] + counts[FileState.ARCHIVE_FAILED]
+    )
     completed_recently = registry.count_transitions_since(
         batch_id=None,
         to_state=FileState.COMPLETED,
@@ -167,7 +180,7 @@ def _kpi_strip_global(registry: Registry) -> None:
 
     tiles = [
         ("gray", "Discovered", counts[FileState.DISCOVERED], "awaiting validation"),
-        ("blue", "In flight", in_flight, "uploading · importing · verifying"),
+        ("blue", "In flight", in_flight, "uploading · importing · archiving"),
         (
             "green",
             "Completed",
@@ -201,7 +214,7 @@ def _render_batch_log(registry: Registry) -> None:
         label, _color = _batch_display_state(BatchState(b.state), counts)
 
         total = sum(counts.values())
-        outstanding = total - sum(counts[s] for s in TERMINAL_STATES)
+        outstanding = total - sum(counts[s] for s in SETTLED_STATES)
         is_done = total > 0 and outstanding == 0
 
         started_at = registry.earliest_file_created_at(batch_id=b.batch_id)
@@ -216,7 +229,9 @@ def _render_batch_log(registry: Registry) -> None:
                 "state": label,
                 "files": total,
                 "completed": counts[FileState.COMPLETED],
-                "failed": counts[FileState.FAILED] + counts[FileState.ABANDONED],
+                "failed": counts[FileState.FAILED]
+                + counts[FileState.ABANDONED]
+                + counts[FileState.ARCHIVE_FAILED],
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "duration": _format_duration(started_at, ended_at) if ended_at else None,
@@ -382,7 +397,7 @@ def _add_batch_progress(registry: Registry, batch_id: str, wiz: _AddBatchWizard)
     state = batch_ops.state_of(registry=registry, batch_id=batch_id)
     counts = batch_ops.progress(registry=registry, batch_id=batch_id)
     total = sum(counts.values())
-    outstanding = total - sum(counts[s] for s in TERMINAL_STATES)
+    outstanding = total - sum(counts[s] for s in SETTLED_STATES)
     completed = counts[FileState.COMPLETED]
 
     with st.container(horizontal=True, vertical_alignment="center"):
@@ -444,7 +459,7 @@ def _pipeline_nodes(counts: dict[FileState, int]) -> list[dict[str, str]]:
                 FileState.UPLOADED,
                 FileState.IMPORTING,
                 FileState.VERIFYING,
-                FileState.COMPLETED,
+                *_ARCHIVE_STAGE_STATES,
             ],
         ),
         (
@@ -457,17 +472,23 @@ def _pipeline_nodes(counts: dict[FileState, int]) -> list[dict[str, str]]:
                 FileState.UPLOADED,
                 FileState.IMPORTING,
                 FileState.VERIFYING,
-                FileState.COMPLETED,
+                *_ARCHIVE_STAGE_STATES,
             ],
         ),
         (
             "upload",
             "Upload",
             FileState.UPLOADING,
-            [FileState.UPLOADED, FileState.IMPORTING, FileState.VERIFYING, FileState.COMPLETED],
+            [FileState.UPLOADED, FileState.IMPORTING, FileState.VERIFYING, *_ARCHIVE_STAGE_STATES],
         ),
-        ("import", "Import", FileState.IMPORTING, [FileState.VERIFYING, FileState.COMPLETED]),
-        ("verify", "Verify", FileState.VERIFYING, [FileState.COMPLETED]),
+        ("import", "Import", FileState.IMPORTING, [FileState.VERIFYING, *_ARCHIVE_STAGE_STATES]),
+        ("verify", "Verify", FileState.VERIFYING, list(_ARCHIVE_STAGE_STATES)),
+        (
+            "archive",
+            "Archive",
+            FileState.ARCHIVING,
+            [FileState.ARCHIVE_FAILED, FileState.COMPLETED],
+        ),
     ]
 
     nodes = []
@@ -492,6 +513,13 @@ def _pipeline_nodes(counts: dict[FileState, int]) -> list[dict[str, str]]:
         }
     )
     return nodes
+
+_ARCHIVE_STAGE_STATES = (
+    FileState.BRIDGED,
+    FileState.ARCHIVING,
+    FileState.ARCHIVE_FAILED,
+    FileState.COMPLETED,
+)
 
 def _pipeline_tracker_html(nodes: list[dict[str, str]]) -> str:
     palette = _TRACKER_PALETTE.get(st.context.theme.type or "light", _TRACKER_PALETTE["light"])
@@ -574,24 +602,20 @@ def _render_retry_action(
         return
 
     if st.button(f"Retry {len(retryable)} failed/abandoned file(s)", icon=":material/replay:"):
-        with st.status("Requeuing", expanded=True) as status:
-            outcome = batch_ops.retry_files(
-                registry,
-                batch_id=batch,
-                file_ids=[f.file_id for f in retryable],
-                actor="operator",
-                detail="manual retry from dashboard",
-                worker_count=max(1, settings.max_concurrent_uploads),
-                max_files_per_worker=None,
-                environment=settings.environment,
+        with st.status("Retrying", expanded=True) as status:
+            handle = batch_ops.start_retry_subprocess(
+                batch_id=batch, environment=settings.environment
             )
-            st.write(f"Requeued **{len(outcome.requeued_file_ids)}** file(s) to VALIDATED.")
-
-            pids = ", ".join(f"`{h.pid}`" for h in outcome.workers)
-            st.write(f"Worker(s) started (pid {pids}).")
-            status.update(
-                label="Requeued and handed off to a worker", state="complete", expanded=False
+            st.write(f"Retry started (pid `{handle.pid}`). Output: `{handle.log_path}`")
+            st.write(
+                "Each file is checked in Data Vault, then Data Bridge: already in "
+                "Data Vault -> COMPLETED; on Data Bridge -> archive only; on "
+                "neither -> uploaded again. The retry then starts the pipeline "
+                "for this batch itself -- nothing else to run. If files in the "
+                "batch are still in flight it starts nothing, and says so in "
+                "the log."
             )
+            status.update(label="Handed off to the retry", state="complete", expanded=False)
         st.rerun()
 
 def _render_archive_action(
@@ -601,13 +625,17 @@ def _render_archive_action(
     if not pending:
         return
 
+    failed = sum(1 for f in pending if f.state == str(FileState.ARCHIVE_FAILED))
     st.warning(
         f"**{len(pending)} file(s) reached Data Bridge but are not in the "
-        "Data Vault.** Data Bridge is the route in; the Vault is the "
-        "destination. These are not migrated until they are archived."
+        "Data Vault**"
+        + (f", {failed} of them after a failed archive" if failed else "")
+        + ". Data Bridge is the route in; the Vault is the destination. These "
+        "are not migrated until they are archived."
     )
     if st.button(
-        f"Archive {len(pending)} file(s) into Data Vault",
+        f"Archive {len(pending)} file(s) into Data Vault"
+        + (" (retries the archive only)" if failed else ""),
         icon=":material/inventory_2:",
     ):
         with st.status("Archiving", expanded=True) as status:
@@ -619,7 +647,8 @@ def _render_archive_action(
             st.write(
                 "Runs in the background -- this count falls as files are "
                 "archived. Safe to press again: a file already archived is "
-                "skipped."
+                "skipped, and a recorded archive job is seen through before "
+                "another is started."
             )
             status.update(
                 label="Handed off to the archiver", state="complete", expanded=False

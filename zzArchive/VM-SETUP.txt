@@ -355,7 +355,8 @@ then run ONLY this again:
 migration-hub run --batch SMOKE01 --max-files 1
 
 Watch it move VALIDATED -> UPLOADING -> UPLOADED -> IMPORTING ->
-VERIFYING -> COMPLETED. (It was STAGED -> UPLOADING before 2026-09-22;
+VERIFYING -> BRIDGED; run stops there, and archiving is 2d. (It was
+STAGED -> UPLOADING before 2026-09-22;
 that state is gone.) The import is polled, so IMPORTING can sit for a while:
 poll_interval_seconds is 60 and max_poll_minutes is 360.
 
@@ -367,10 +368,12 @@ concurrent uploads.
 --- 2d. Archive it into Data Vault -------------------------------------
 migration-hub archive --batch SMOKE01
 
-COMPLETED means the database reached Data Bridge. It is not migrated
+BRIDGED means the database reached Data Bridge. It is not migrated
 until it is archived in Data Vault -- the bridge is the route in, the
-vault is the destination, and archiving is a separate explicit step
-(see the GLOSSARY). Five years' retention from the upload date is
+vault is the destination. This takes it BRIDGED -> ARCHIVING ->
+COMPLETED, and COMPLETED now means "in Data Vault" (ADR-0010). A failed
+archive leaves it ARCHIVE_FAILED -- still on Data Bridge -- and running
+this again retries the archive only, never the upload. Five years' retention from the upload date is
 applied automatically.
 
 It waits for the archive job to finish (checking every

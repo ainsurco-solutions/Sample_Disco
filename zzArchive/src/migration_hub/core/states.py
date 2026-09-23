@@ -11,6 +11,9 @@ class FileState(StrEnum):
     UPLOADED = "UPLOADED"
     IMPORTING = "IMPORTING"
     VERIFYING = "VERIFYING"
+    BRIDGED = "BRIDGED"
+    ARCHIVING = "ARCHIVING"
+    ARCHIVE_FAILED = "ARCHIVE_FAILED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     ABANDONED = "ABANDONED"
@@ -18,6 +21,8 @@ class FileState(StrEnum):
 TERMINAL_STATES: frozenset[FileState] = frozenset(
     {FileState.COMPLETED, FileState.REJECTED, FileState.ABANDONED}
 )
+
+SETTLED_STATES: frozenset[FileState] = TERMINAL_STATES | {FileState.ARCHIVE_FAILED}
 
 CLAIMED_STATES: frozenset[FileState] = frozenset({FileState.UPLOADING, FileState.IMPORTING})
 
@@ -28,7 +33,10 @@ LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {
     FileState.UPLOADING: frozenset({FileState.UPLOADED, FileState.VALIDATED, FileState.FAILED}),
     FileState.UPLOADED: frozenset({FileState.IMPORTING, FileState.FAILED}),
     FileState.IMPORTING: frozenset({FileState.VERIFYING, FileState.FAILED}),
-    FileState.VERIFYING: frozenset({FileState.COMPLETED, FileState.FAILED}),
+    FileState.VERIFYING: frozenset({FileState.BRIDGED, FileState.FAILED}),
+    FileState.BRIDGED: frozenset({FileState.ARCHIVING}),
+    FileState.ARCHIVING: frozenset({FileState.COMPLETED, FileState.ARCHIVE_FAILED}),
+    FileState.ARCHIVE_FAILED: frozenset({FileState.ARCHIVING, FileState.ABANDONED}),
     FileState.COMPLETED: frozenset(),
     FileState.FAILED: frozenset(
         {
@@ -36,9 +44,11 @@ LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {
             FileState.UPLOADING,
             FileState.IMPORTING,
             FileState.ABANDONED,
+            FileState.BRIDGED,
+            FileState.COMPLETED,
         }
     ),
-    FileState.ABANDONED: frozenset({FileState.VALIDATED}),
+    FileState.ABANDONED: frozenset({FileState.VALIDATED, FileState.BRIDGED, FileState.COMPLETED}),
 }
 
 class IllegalTransitionError(RuntimeError):

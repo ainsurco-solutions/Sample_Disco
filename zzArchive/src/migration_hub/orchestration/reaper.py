@@ -80,7 +80,7 @@ def reconcile_importing(
         exists = adapter.database_exists(instance_name=instance_name, database_name=database_name)
 
     if exists:
-        registry.transition(file_id=file_id, to_state=FileState.COMPLETED, actor=actor)
+        registry.transition(file_id=file_id, to_state=FileState.BRIDGED, actor=actor)
     else:
         registry.record_failure(
             file_id=file_id,

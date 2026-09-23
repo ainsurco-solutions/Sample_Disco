@@ -41,6 +41,7 @@ class Settings(BaseModel):
     max_poll_minutes: int = 360
 
     max_attempts: int = 3
+    max_archive_attempts: int = Field(default=9, ge=1)
     claim_timeout_minutes: int = 420
 
     scheduler_poll_interval_seconds: float = 60.0

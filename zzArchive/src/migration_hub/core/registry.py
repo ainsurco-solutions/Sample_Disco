@@ -18,6 +18,7 @@ from migration_hub.core.models import (
 )
 from migration_hub.core.states import (
     CLAIMED_STATES,
+    SETTLED_STATES,
     TERMINAL_STATES,
     BatchState,
     FileState,
@@ -302,6 +303,7 @@ class Registry:
                 FileState.FAILED,
                 FileState.ABANDONED,
                 FileState.REJECTED,
+                FileState.ARCHIVE_FAILED,
             ):
                 file.last_error = detail
 
@@ -381,7 +383,7 @@ class Registry:
 
     def outstanding(self, *, batch_id: str | None = None) -> Sequence[MigrationFile]:
         stmt = select(MigrationFile).where(
-            MigrationFile.state.not_in([str(s) for s in TERMINAL_STATES])
+            MigrationFile.state.not_in([str(s) for s in SETTLED_STATES])
         )
         if batch_id is not None:
             stmt = stmt.where(MigrationFile.batch_id == batch_id)
@@ -403,10 +405,14 @@ class Registry:
             session.expunge_all()
             return results
 
-    def pending_archives(self, *, batch_id: str | None = None) -> Sequence[MigrationFile]:
+    def pending_archives(
+        self, *, batch_id: str | None = None, include_failed: bool = True
+    ) -> Sequence[MigrationFile]:
+        states = [FileState.BRIDGED, FileState.ARCHIVING]
+        if include_failed:
+            states.append(FileState.ARCHIVE_FAILED)
         stmt = select(MigrationFile).where(
-            MigrationFile.state == str(FileState.COMPLETED),
-            MigrationFile.archived_at.is_(None),
+            MigrationFile.state.in_([str(s) for s in states]),
             MigrationFile.instance_name.is_not(None),
         )
         if batch_id is not None:

@@ -121,9 +121,16 @@ def run(
 
 @app.command()
 def migrate(
-    source: Path = typer.Option(..., "--source"),
+    source: Path | None = typer.Option(None, "--source"),
+    batch: str | None = typer.Option(
+        None, "--batch", help="Run over an existing batch instead of a folder (no discovery)."
+    ),
     max_files: int | None = typer.Option(None, "--max-files"),
 ) -> None:
+    if (source is None) == (batch is None):
+        typer.echo("specify exactly one of --source or --batch", err=True)
+        raise typer.Exit(1)
+
     settings = _load_settings()
     registry = _registry(settings)
 
@@ -131,6 +138,7 @@ def migrate(
         registry=registry,
         adapter_factory=lambda: _adapter(settings),
         source_root=source,
+        batch_id=batch,
         pattern=settings.file_pattern,
         max_files=max_files,
         thread_count=max(1, settings.max_concurrent_uploads),
@@ -140,13 +148,15 @@ def migrate(
         max_poll_minutes=settings.max_poll_minutes,
         instance_name=settings.databridge_instance_name,
         instances=settings.databridge_instances,
+        max_archive_attempts=settings.max_archive_attempts,
         compute_checksum=settings.compute_checksums,
         on_progress=lambda message: typer.echo(message),
     )
 
     typer.echo("")
     breakdown = ", ".join(f"{count} {state}" for state, count in sorted(result.outcomes.items()))
-    typer.echo(f"batch {result.batch_id!r}: {breakdown}")
+    retried = f" after {result.passes} passes" if result.passes > 1 else ""
+    typer.echo(f"batch {result.batch_id!r}{retried}, files by final state: {breakdown}")
     typer.echo(f"run {result.run_id} status={result.status}")
     if result.signed_off:
         typer.secho(f"signed off automatically as {result.signed_off_by!r}", fg=typer.colors.GREEN)
@@ -191,6 +201,7 @@ def archive(batch: str | None = typer.Option(None, "--batch")) -> None:
             resource_group_id=session.resource_group_id,
             max_wait_minutes=settings.max_poll_minutes,
             poll_interval_seconds=settings.poll_interval_seconds,
+            max_archive_attempts=settings.max_archive_attempts,
         )
     finally:
         adapter.close()
@@ -229,37 +240,70 @@ def retry(
         if file is None:
             typer.echo(f"no file {file_id}", err=True)
             raise typer.Exit(1)
-        try:
-            outcome = batches.retry_files(
-                registry,
-                batch_id=file.batch_id,
-                file_ids=[file_id],
-                actor=actor,
-                detail="manual retry via CLI",
-                worker_count=1,
-                max_files_per_worker=1,
-            )
-        except batches.NotRetryableError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(1) from exc
-        typer.echo(f"requeued file {file_id} to VALIDATED")
-        return
+        if FileState(file.state) not in batches.RETRYABLE_STATES:
+            typer.echo(str(batches.NotRetryableError(file_id, file.state)), err=True)
+            raise typer.Exit(1)
+        batch_id, file_ids = file.batch_id, [file_id]
+    else:
+        assert batch is not None
+        retryable = registry.files_in_states(
+            states=sorted(batches.RETRYABLE_STATES), batch_id=batch
+        )
+        if not retryable:
+            typer.echo(f"no FAILED/ABANDONED/ARCHIVE_FAILED file(s) in batch {batch!r}")
+            return
+        batch_id, file_ids = batch, [f.file_id for f in retryable]
 
-    retryable = registry.files_in_states(states=[FileState.FAILED, FileState.ABANDONED], batch_id=batch)
-    if not retryable:
-        typer.echo(f"no FAILED/ABANDONED file(s) in batch {batch!r}")
-        return
-    outcome = batches.retry_files(
-        registry,
-        batch_id=batch,
-        file_ids=[f.file_id for f in retryable],
-        actor=actor,
-        detail="manual retry via CLI",
-        worker_count=max(1, settings.max_concurrent_uploads),
-        max_files_per_worker=None,
-        environment=settings.environment,
-    )
-    typer.echo(f"requeued {len(outcome.requeued_file_ids)} file(s) to VALIDATED")
+    adapter = _adapter(settings)
+    try:
+        outcome = batches.retry_files(
+            registry,
+            batch_id=batch_id,
+            file_ids=file_ids,
+            actor=actor,
+            locate=batches.platform_locator(adapter),
+            detail="manual retry via CLI",
+            environment=settings.environment,
+        )
+    finally:
+        adapter.close()
+    _echo_retry(outcome)
+
+def _echo_retry(outcome: batches.RetryOutcome) -> None:
+    if outcome.completed_file_ids:
+        typer.echo(
+            f"{len(outcome.completed_file_ids)} file(s) already in Data Vault -- "
+            "marked COMPLETED, nothing redone"
+        )
+    if outcome.bridged_file_ids:
+        typer.echo(
+            f"{len(outcome.bridged_file_ids)} file(s) already on Data Bridge -- "
+            "BRIDGED, archive only"
+        )
+    if outcome.requeued_file_ids:
+        typer.echo(
+            f"{len(outcome.requeued_file_ids)} file(s) on neither -- requeued to VALIDATED "
+            "from the start"
+        )
+    if outcome.archive_retry_file_ids:
+        typer.echo(
+            f"{len(outcome.archive_retry_file_ids)} ARCHIVE_FAILED file(s) -- "
+            "retrying the archive only"
+        )
+    if outcome.workers:
+        logs = ", ".join(str(w.log_path) for w in outcome.workers)
+        started = (
+            "the migrate pipeline (upload, archive, close)" if outcome.pipeline_started
+            else "the archive"
+        )
+        typer.echo(f"{started} started in the background; output: {logs}")
+    if outcome.not_started_reason:
+        typer.echo(outcome.not_started_reason, err=True)
+    for failed_id, reason in outcome.unchecked.items():
+        typer.echo(
+            f"file {failed_id}: could not check the platform, left as it was -- {reason}",
+            err=True,
+        )
 
 @app.command()
 def status(batch: str | None = typer.Option(None, "--batch")) -> None:
@@ -270,7 +314,7 @@ def status(batch: str | None = typer.Option(None, "--batch")) -> None:
         typer.echo(f"  {state.value:<12} {counts[state]}")
 
     stuck = registry.files_in_states(
-        states=(FileState.FAILED, FileState.ABANDONED), batch_id=batch
+        states=(FileState.FAILED, FileState.ABANDONED, FileState.ARCHIVE_FAILED), batch_id=batch
     )
     if stuck:
         typer.echo("")
@@ -297,7 +341,9 @@ def _echo_record(
         f"target={resolved.target_count}/{resolved.target_bytes}B "
         f"completed={resolved.completed_count} abandoned={resolved.abandoned_count} "
         f"rejected={resolved.rejected_count} skipped={resolved.skipped_count} "
-        f"outstanding={resolved.outstanding_count} retry={resolved.retry_count}"
+        f"outstanding={resolved.outstanding_count} retry={resolved.retry_count} "
+        f"archive_failed={resolved.archive_failed_count} "
+        f"still_on_bridge={resolved.bridge_count}"
     )
     typer.echo(f"  balances={resolved.balances} (unaccounted={resolved.unaccounted})")
 
@@ -327,17 +373,24 @@ def controls_close(run_id: str = typer.Option(..., "--run-id")) -> None:
 
     adapter = _adapter(settings)
     try:
-        confirmed_count, confirmed_bytes = reconciliation.reconcile_target_count(
+        targets = reconciliation.reconcile_targets(
             registry=registry, adapter=adapter, batch_id=run.batch_id
         )
     finally:
         adapter.close()
 
+    if targets.lost_file_ids:
+        typer.echo(
+            f"LOST: file(s) {targets.lost_file_ids} are ARCHIVE_FAILED but on neither "
+            "Data Bridge nor Data Vault -- investigate before retrying",
+            err=True,
+        )
     record = controls.close(
         registry=registry,
         run_id=parsed_id,
-        reconciled_target_count=confirmed_count,
-        reconciled_target_bytes=confirmed_bytes,
+        reconciled_target_count=targets.target_count,
+        reconciled_target_bytes=targets.target_bytes,
+        reconciled_bridge_count=targets.bridge_count,
     )
     _echo_record(record)
 

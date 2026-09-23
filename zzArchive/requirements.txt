@@ -1,63 +1,22 @@
-# Runtime dependencies for the Migration Hub.
-#
-# ---------------------------------------------------------------------------
-# pyproject.toml is the source of truth. This file mirrors its [project]
-# dependencies for hosts where `pip install -e .` is not practical -- a
-# locked-down migration host without a build backend, for instance.
-#
-# If you change one, change the other. Nothing currently enforces this -- when
-# CI exists, a drift check belongs in it, because a divergence means deploying
-# something other than what was tested.
-#
-# THESE ARE NOT PINNED. Lower bounds only, which is right for development and
-# wrong for a migration that runs for weeks across multiple restarts. Before
-# the first production wave, generate a fully pinned lock on the migration host:
-#
+# --- Installing on a fresh host ---------------------------------------------
+#     python -m venv .venv
+#     .venv\Scripts\activate
 #     pip install -r requirements.txt
+
+# --- Then, before the first production wave ---------------------------------
 #     pip freeze > requirements.lock.txt
-#
-# and install from the lock thereafter. A dependency silently upgrading between
-# wave 3 and wave 4 is not a debugging session anyone wants at 35 TB.
-#
-# PYTHON VERSION: target 3.12. The project declares >=3.12, but pyodbc and
-# streamlit's transitive pyarrow do not reliably publish wheels for the newest
-# interpreters. On 3.14 (the current local interpreter) expect a source build
-# and a compiler requirement. Pin the migration host to 3.12.
-# ---------------------------------------------------------------------------
 
 # --- Configuration ----------------------------------------------------------
-# Loads .env into the process environment at CLI startup (see cli.py). Not
-# transitive from pydantic-settings: Settings is a plain pydantic.BaseModel,
-# not BaseSettings, so nothing else in this project reads a .env file for you.
 python-dotenv>=1.0,<2.0
 
 # --- Vendor integration -----------------------------------------------------
 httpx>=0.27,<1.0
 
-# WINDOWS, BEHIND A TLS-INSPECTING PROXY. MS Amlin re-signs outbound TLS with an
-# internal CA. httpx trusts certifi's bundle and boto3 trusts botocore's, and both
-# carry public roots only -- so every vendor call fails CERTIFICATE_VERIFY_FAILED,
-# which reads like an outage or a bad key rather than a proxy. truststore routes
-# verification through the Windows certificate store, where that internal root
-# already is.
-#
-# Chosen over python-certifi-win32 (what dev-tools/Reconcile uses) because it
-# patches the ssl layer rather than certifi alone, so it covers boto3 -- the
-# upload path, where the 952 GB files go. certifi-win32 is also unmaintained
-# since 2022.
-#
-# Optional by design: migration_hub/_tls.py injects best-effort and the
-# application runs without it. Do NOT reach for verify=False instead -- that
-# sends the API key over a connection nobody is authenticating.
 truststore>=0.9 ; sys_platform == "win32"
-# boto3 handles SigV4 signing, S3 multipart chunking and transfer retries. This
-# is the practical reason Option A was chosen over PowerShell -- see ADR-0002.
 boto3>=1.34,<2.0
 
 # --- Registry ---------------------------------------------------------------
 sqlalchemy>=2.0,<3.0
-# MS SQL Server driver. Requires "ODBC Driver 18 for SQL Server" on the host --
-# a pip install alone is not sufficient. See infra/README.md.
 pyodbc>=5.1,<6.0
 alembic>=1.13,<2.0
 
@@ -75,21 +34,3 @@ structlog>=24.1
 
 # --- CLI --------------------------------------------------------------------
 typer>=0.12,<1.0
-
-# ---------------------------------------------------------------------------
-# Deliberately absent
-#
-# tenacity      - the architecture paper suggested it, but core/retry.py owns
-#                 error classification as a domain decision (which errors are
-#                 retryable, when a 403 means "re-stage" rather than "retry").
-#                 Wrapping that in a generic retry library would split the
-#                 policy across two places.
-# pandas        - arrives transitively with streamlit. Control and reconciliation
-#                 exports use the stdlib csv module; nothing imports pandas
-#                 directly. If that changes, declare it here explicitly rather
-#                 than relying on streamlit to keep supplying it.
-# requests      - httpx is the HTTP client. Do not add a second one.
-# celery/redis  - dropped: Redis/RabbitMQ were not granted for the Amlin estate,
-#                 and Celery has no supported SQL Server broker. The work queue
-#                 is the registry table itself; see ADR-0006.
-# ---------------------------------------------------------------------------
