@@ -1,11 +1,11 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 32705e292c447b4f8c12c88caa88c07af0a4f740
+# source commit: 4704429214871fbf70fe9a3dc3059f4f56c377f8
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
 config	4290	127	91664a4eb136b9fb598bbf672753861cacc6892b1ed1086697e5141ee7dc75e2	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
-config	32800	699	d3764884c9ddbe76e66050228dfcdb4e4c3f63937fa61b0dd37f453f751a3389	VM-SETUP.txt
+config	33053	706	bab1b3253d813170990c2dbccef9e568328feeabdd2f40fd09b461460ac32d75	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
 config	1153	36	828b5d872328eba6737982d8e077a39073a6e84d7bbeccfd51b0b2bfd62e1cf0	config/dev.example.json
 config	2738	64	950a987f1e59bb9e3425265275e1df5cdee8a386a42be0d2d08538b6f8e43592	config/prod.example.json
@@ -29,7 +29,7 @@ code	3544	97	b0c59b3f4282f00403f90976617babcf42c0cef0a282a99b67c7b0c7d9245b8e	sc
 code	3387	89	cf6ced2ea5c5b5ab132407ea131b0bd663c03cef331207733f9f4074c42c136e	scripts/check_copy.bat
 code	5520	168	eb29dd11ba6feec3812369fadccf3309b7ec85fdeef1239b3e597221234438ea	scripts/check_copy.py
 code	8796	234	7eb0c2658b7df580c347bc77b9114c1b0a222666ad1c1c8aa223a46409deda8b	scripts/check_credentials.py
-code	7431	207	83d5ed6b62792d327605f2670bbc49229b0b60a5adcbd98d690914008115791d	scripts/probe_job_queue.py
+code	10229	277	0de84dd2ddf151210d3157f0ccffc6444e70686330453c0ba6db9ca4e026874e	scripts/probe_job_queue.py
 code	6964	182	3d228ae0255ee733dfb7364436105bb848a390da55d0c1eaf0251eb320f172fc	scaffold.ps1
 code	4449	138	e00000136b263f37135ed3bfaa05dc8812efa944884fc44e60e644b0b20e05e3	scripts/upgrade_db.bat
 code	69	5	cd5dccf0e6a1e627c496abd88a7882a54316b7b0ae08e2f82bb87df97b8f993f	src/migration_hub/__init__.py

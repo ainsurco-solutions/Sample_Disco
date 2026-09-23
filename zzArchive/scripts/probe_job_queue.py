@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -45,6 +46,10 @@ class ProbeResult:
     known_ids_matched: int = 0
     active_items: int = 0
     counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    item_fields: list[str] = field(default_factory=list)
+    elapsed_ms: int = 0
+    response_bytes: int = 0
+    params: dict[str, str] = field(default_factory=dict)
     verdict: str = ""
     note: str = ""
 
@@ -73,6 +78,7 @@ def summarise(result: ProbeResult, body: object, known_ids: set[str]) -> None:
     if jobs is None:
         return
     result.items = len(jobs)
+    result.item_fields = sorted({key for job in jobs[:50] for key in job})
     counts: dict[str, Counter[str]] = {name: Counter() for name in _COUNTED_FIELDS}
     for job in jobs:
         job_id = next((str(job[k]) for k in _ID_KEYS if job.get(k) is not None), None)
@@ -103,6 +109,27 @@ def classify(result: ProbeResult) -> str:
         return "Relevant -- returns this Hub's Data Bridge jobs"
     return "Adjacent or wrong family -- lists jobs, none of them ours"
 
+FILTER_VARIANTS: tuple[dict[str, str], ...] = (
+    {"status": "Processing"},
+    {"status": "Done"},
+    {"$filter": "status eq 'Processing'"},
+    {"filter": 'status="PROCESSING"'},
+    {"$top": "5"},
+    {"limit": "5"},
+    {"pageSize": "5"},
+    {"take": "5"},
+)
+
+def filter_verdict(result: ProbeResult, baseline_items: int) -> str:
+    code = result.status_code
+    if code is None:
+        return "Unknown -- no response"
+    if code >= 400:
+        return f"Rejected -- HTTP {code}"
+    if result.items < baseline_items:
+        return f"Honoured -- {result.items} of {baseline_items}"
+    return "Ignored -- same count as the baseline"
+
 def _known_job_ids(database_url: str) -> set[str]:
     engine = create_registry_engine(database_url)
     with Session(engine) as session:
@@ -115,7 +142,34 @@ def _settings() -> Settings:
     config_dir = Path(os.environ.get("MIGRATION_HUB_CONFIG_DIR", "config"))
     return Settings.load(environment=environment, config_dir=config_dir)
 
+def _instances(settings: Settings) -> list[str]:
+    names = list(dict.fromkeys(settings.databridge_instances.values()))
+    if settings.databridge_instance_name and settings.databridge_instance_name not in names:
+        names.append(settings.databridge_instance_name)
+    return names
+
+def _filter_candidates(
+    settings: Settings,
+) -> list[tuple[str, str, bool, dict[str, str] | None]]:
+    instances = _instances(settings)
+    out: list[tuple[str, str, bool, dict[str, str] | None]] = [
+        (f"{name} baseline", f"/databridge/v1/sql-instances/{name}/Jobs", False, None)
+        for name in instances
+    ]
+    if instances:
+        path = f"/databridge/v1/sql-instances/{instances[0]}/Jobs"
+        out += [(f"{instances[0]} ?{next(iter(v))}", path, False, v) for v in FILTER_VARIANTS]
+    return out
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--filters",
+        action="store_true",
+        help="try filter/page-size parameters on the instance jobs list",
+    )
+    args = parser.parse_args()
+
     settings = _settings()
     known_ids = _known_job_ids(settings.database_url)
     print(f"registry holds {len(known_ids)} known Data Bridge job id(s)")
@@ -144,7 +198,9 @@ def main() -> int:
                 None,
             )
         )
-    if known_ids:
+    if args.filters:
+        candidates = _filter_candidates(settings)
+    elif known_ids:
         candidates.append(
             (
                 "databridge single job (control)",
@@ -164,9 +220,14 @@ def main() -> int:
         for i, (name, path, documented, params) in enumerate(candidates):
             if i:
                 time.sleep(_PAUSE_SECONDS)
-            result = ProbeResult(candidate=name, path=path, documented=documented)
+            result = ProbeResult(
+                candidate=name, path=path, documented=documented, params=dict(params or {})
+            )
             try:
+                started = time.monotonic()
                 response = adapter.probe_get(path, params=params)
+                result.elapsed_ms = int((time.monotonic() - started) * 1000)
+                result.response_bytes = len(response.content)
                 result.status_code = response.status_code
                 try:
                     body: object = response.json()
@@ -176,6 +237,11 @@ def main() -> int:
             except Exception as exc:
                 result.note = type(exc).__name__
             result.verdict = classify(result)
+            if args.filters and result.params:
+                baseline = next(
+                    (r.items for r in results if not r.params and r.path == result.path), 0
+                )
+                result.verdict = filter_verdict(result, baseline)
             results.append(result)
     finally:
         adapter.close()
@@ -183,10 +249,14 @@ def main() -> int:
     print()
     for r in results:
         print(f"{r.candidate}  ({'documented' if r.documented else 'undocumented'})")
-        print(f"    GET {r.path}  ->  {r.status_code}  {r.shape}")
+        query = "?" + "&".join(f"{k}={v}" for k, v in r.params.items()) if r.params else ""
+        print(f"    GET {r.path}{query}  ->  {r.status_code}  {r.shape}")
+        print(f"    {r.elapsed_ms} ms, {r.response_bytes:,} bytes")
         print(f"    items {r.items}, ours matched {r.known_ids_matched}, active {r.active_items}")
         for fname, values in r.counts.items():
             print(f"    {fname}: {values}")
+        if r.item_fields:
+            print(f"    fields: {', '.join(r.item_fields)}")
         print(f"    VERDICT: {r.verdict}{'  (' + r.note + ')' if r.note else ''}")
         print()
 
