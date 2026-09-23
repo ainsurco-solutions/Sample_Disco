@@ -99,7 +99,7 @@ _XML_CODE = re.compile(r"<Code>([^<]{1,80})</Code>")
 
 _REASON_KEYS = ("code", "errorCode", "title", "message", "detail", "error")
 
-def _reason(response_body: object) -> str:
+def short_reason(response_body: object) -> str:
     if isinstance(response_body, str):
         match = _XML_CODE.search(response_body)
         return match.group(1) if match else response_body.strip()[:120]
@@ -123,7 +123,7 @@ def _log_call(
     who = f"file {file_id}" if file_id is not None else "no file"
     status = str(status_code) if status_code is not None else "no response"
     failed = error is not None or status_code is None or status_code >= 400
-    reason = (error or _reason(response_body)) if failed else ""
+    reason = (error or short_reason(response_body)) if failed else ""
     _log.log(
         logging.WARNING if failed else logging.INFO,
         "%s  %s %s  %s  %d ms%s",

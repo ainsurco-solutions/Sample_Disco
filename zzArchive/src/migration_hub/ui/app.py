@@ -13,10 +13,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from migration_hub.config.settings import Settings
-from migration_hub.core.models import MigrationFile
+from migration_hub.core.models import ApiTransaction, MigrationEvent, MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import SETTLED_STATES, BatchState, FileState
-from migration_hub.observability import controls, metrics
+from migration_hub.observability import audit, controls, metrics
 from migration_hub.orchestration import batches as batch_ops
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
@@ -257,7 +257,7 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
             st.metric("Remaining", _format_bytes(remaining_bytes))
             st.caption("by registered file size")
         with cols[3]:
-            eta_text = _format_timedelta(eta) if eta is not None else "Insufficient measurement"
+            eta_text = _format_timedelta(eta) if eta is not None else "Not enough data"
             st.metric("ETA", eta_text)
             if eta is None:
                 st.caption(
@@ -1205,81 +1205,164 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
             )
 
     with activity_tab:
-        events_view, calls_view = st.tabs(["State transitions", "Vendor calls"])
-        with events_view:
-            events = registry.recent_events(batch_id=batch, limit=30)
-            if not events:
-                st.caption("No events yet.")
-            for e in events:
-                with st.container(border=True, horizontal=True, vertical_alignment="center"):
-                    st.caption(e.occurred_at.strftime("%H:%M:%S"))
-                    detail = f"  ·  {e.detail}" if e.detail else ""
-                    st.write(f"`#{e.file_id}` {e.from_state or '—'} → **{e.to_state}**{detail}")
-
-        with calls_view:
-            st.caption("Bodies are already redacted at rest -- safe to display.")
-            window_minutes = st.selectbox(
-                "Time window",
-                [15, 60, 360, 1440],
-                index=1,
-                format_func=lambda m: "15 minutes"
-                if m == 15
-                else ("1 hour" if m == 60 else ("6 hours" if m == 360 else "24 hours")),
-                key=f"calls_window_{batch}",
-            )
-            status_filter = st.selectbox(
-                "Status",
-                ["All", "2xx", "3xx", "4xx", "5xx", "unknown"],
-                key=f"calls_status_{batch}",
-            )
-            endpoint_filter = st.text_input(
-                "Endpoint contains", value="", key=f"calls_endpoint_{batch}"
-            ).strip()
-            since = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=window_minutes)
-            transactions = list(registry.transactions_since(batch_id=batch, since=since))
-            if status_filter != "All":
-                transactions = [
-                    transaction
-                    for transaction in transactions
-                    if metrics.status_family(transaction.status_code) == status_filter
-                ]
-            if endpoint_filter:
-                needle = endpoint_filter.lower()
-                transactions = [
-                    transaction
-                    for transaction in transactions
-                    if needle in transaction.url.lower()
-                ]
-            if not transactions:
-                st.caption("No vendor calls recorded yet.")
-            else:
-                st.dataframe(
-                    [
-                        {
-                            "occurred_at": t.occurred_at,
-                            "file_id": t.file_id,
-                            "method": t.method,
-                            "endpoint": metrics.endpoint_key(t.url),
-                            "url": t.url,
-                            "status_code": t.status_code,
-                            "duration_ms": t.duration_ms,
-                        }
-                        for t in transactions
-                    ],
-                    column_config={
-                        "occurred_at": st.column_config.DatetimeColumn("When", format="HH:mm:ss"),
-                        "endpoint": st.column_config.TextColumn("Endpoint"),
-                        "status_code": st.column_config.NumberColumn("Status"),
-                        "duration_ms": st.column_config.NumberColumn("Duration", format="%d ms"),
-                    },
-                    hide_index=True,
-                )
+        _render_activity_tab(registry, batch)
 
     with controls_tab:
         _render_controls_tab(registry, batch)
 
     with diagnostics_tab:
         _render_diagnostics_tab(registry, batch)
+
+_PROBLEM_STATES = frozenset(
+    {FileState.FAILED, FileState.ABANDONED, FileState.REJECTED, FileState.ARCHIVE_FAILED}
+)
+
+_ACTIVITY_ROWS_PER_FILE = 60
+
+_ACTIVITY_MAX_FILES = 50
+
+_ACTIVITY_WINDOWS: dict[str, int | None] = {
+    "All time": None,
+    "15 min": 15,
+    "1 hour": 60,
+    "6 hours": 360,
+    "24 hours": 1440,
+}
+
+def _activity_tree(
+    files: Sequence[MigrationFile],
+    events: Sequence[MigrationEvent],
+    transactions: Sequence[ApiTransaction],
+    *,
+    since: datetime | None = None,
+    include_calls: bool = True,
+    problems_only: bool = False,
+) -> list[tuple[MigrationFile, list[dict[str, object]]]]:
+    rows_by_file: dict[int, list[dict[str, object]]] = {f.file_id: [] for f in files}
+
+    for e in events:
+        if since is not None and e.occurred_at < since:
+            continue
+        to_state = FileState(e.to_state)
+        restaged = e.from_state == FileState.UPLOADING and to_state is FileState.VALIDATED
+        rows_by_file.setdefault(e.file_id, []).append(
+            {
+                "when": e.occurred_at,
+                "step": "state",
+                "what": f"{e.from_state or '-'} -> {e.to_state}",
+                "result": e.to_state,
+                "ms": None,
+                "detail": e.detail or "",
+                "problem": to_state in _PROBLEM_STATES or restaged,
+            }
+        )
+
+    if include_calls:
+        for t in transactions:
+            if t.file_id is None or (since is not None and t.occurred_at < since):
+                continue
+            failed = t.status_code is None or t.status_code >= 400
+            rows_by_file.setdefault(t.file_id, []).append(
+                {
+                    "when": t.occurred_at,
+                    "step": "call",
+                    "what": f"{t.method} {metrics.endpoint_key(t.url)}",
+                    "result": str(t.status_code) if t.status_code is not None else "no response",
+                    "ms": t.duration_ms,
+                    "detail": audit.short_reason(t.response_body) if failed else "",
+                    "problem": failed,
+                }
+            )
+
+    tree: list[tuple[MigrationFile, list[dict[str, object]]]] = []
+    for f in files:
+        rows = sorted(rows_by_file.get(f.file_id, []), key=lambda r: str(r["when"]))
+        if problems_only:
+            rows = [r for r in rows if r["problem"]]
+            if not rows and FileState(f.state) not in _PROBLEM_STATES:
+                continue
+        elif since is not None and not rows:
+            continue
+        tree.append((f, rows[-_ACTIVITY_ROWS_PER_FILE:]))
+    return tree
+
+def _render_activity_tab(registry: Registry, batch: str) -> None:
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        window = st.selectbox(
+            "Window", list(_ACTIVITY_WINDOWS), key=f"activity_window_{batch}", width=160
+        )
+        find = st.text_input(
+            "Find file", key=f"activity_find_{batch}", placeholder="name contains...", width=260
+        ).strip().lower()
+        include_calls = st.checkbox(
+            "Vendor calls", value=True, key=f"activity_calls_{batch}"
+        )
+        problems_only = st.checkbox("Problems only", key=f"activity_problems_{batch}")
+
+    minutes = _ACTIVITY_WINDOWS[window]
+    since = (
+        datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=minutes)
+        if minutes is not None
+        else None
+    )
+    files = [
+        f
+        for f in registry.batch_files(batch_id=batch)
+        if not find or find in f.source_database.lower()
+    ]
+    tree = _activity_tree(
+        files,
+        registry.batch_events(batch_id=batch),
+        registry.batch_transactions(batch_id=batch) if include_calls else [],
+        since=since,
+        include_calls=include_calls,
+        problems_only=problems_only,
+    )
+    if not tree:
+        st.caption("Nothing matches -- widen the window or clear the filters.")
+        return
+    if len(tree) > _ACTIVITY_MAX_FILES:
+        st.caption(
+            f"Showing the first {_ACTIVITY_MAX_FILES} of {len(tree)} files -- "
+            "use Find file to narrow it."
+        )
+
+    for f, rows in tree[:_ACTIVITY_MAX_FILES]:
+        state = FileState(f.state)
+        problems = sum(1 for r in rows if r["problem"])
+        if state in _PROBLEM_STATES or problems:
+            icon = ":material/error:"
+        elif state is FileState.COMPLETED:
+            icon = ":material/check_circle:"
+        else:
+            icon = ":material/pending:"
+        label = (
+            f"**#{f.file_id}  {f.source_database}**  ·  {state}  ·  "
+            f"attempt {f.attempts}  ·  {len(rows)} step(s)"
+            + (f"  ·  {problems} problem(s)" if problems else "")
+        )
+        open_by_default = state not in SETTLED_STATES or bool(problems)
+        with st.expander(label, icon=icon, expanded=open_by_default):
+            if f.last_error:
+                st.caption(f"Last error: {f.last_error}")
+            if not rows:
+                st.caption("No activity in this window.")
+                continue
+            st.dataframe(
+                [{k: v for k, v in r.items() if k != "problem"} for r in rows],
+                column_config={
+                    "when": st.column_config.DatetimeColumn(
+                        "When", format="HH:mm:ss", width="small"
+                    ),
+                    "step": st.column_config.TextColumn("", width="small"),
+                    "what": st.column_config.TextColumn("What", width="large"),
+                    "result": st.column_config.TextColumn("Result", width="small"),
+                    "ms": st.column_config.NumberColumn("ms", format="%d", width="small"),
+                    "detail": st.column_config.TextColumn("Detail", width="large"),
+                },
+                hide_index=True,
+                height=min(38 + 35 * len(rows), 400),
+            )
 
 def _render_controls_tab(registry: Registry, batch: str) -> None:
     runs = registry.list_batch_runs(batch_id=batch)
@@ -1349,40 +1432,40 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
         + counts[FileState.ARCHIVE_FAILED]
         + counts[FileState.REJECTED]
     )
-    call_summary = metrics.api_call_summary(registry=registry, batch_id=batch, window_minutes=15)
-
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.badge("Target workflow", color="green", icon=":material/troubleshoot:")
-        st.caption("Registry-only diagnostics for common runbook triage checks.")
+    quiet = _minutes_since_activity(registry, batch)
 
     cols = st.columns(4)
     tiles = [
         ("Outstanding", outstanding, "not in a settled state"),
         ("Pending archive", pending_archive, "on Data Bridge, not in Vault"),
         ("Failures / rejected", failures, "needs review or disposition"),
-        ("API calls / min", f"{call_summary.calls_per_minute:.1f}", "last 15 minutes"),
+        (
+            "Last activity",
+            _ago(quiet) if quiet != float("inf") else "never",
+            "state change or vendor call"
+            + (" -- nothing is working on it" if outstanding and quiet >= _IDLE_MINUTES else ""),
+        ),
     ]
     for col, (label, value, caption) in zip(cols, tiles, strict=True):
         with col, st.container(border=True):
             st.metric(label, str(value))
             st.caption(caption)
 
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.caption("Files by state:")
+        for state in FileState:
+            if counts[state]:
+                color: _BadgeColor = (
+                    "red"
+                    if state in _PROBLEM_STATES
+                    else "green"
+                    if state is FileState.COMPLETED
+                    else "blue"
+                )
+                st.badge(f"{state} {counts[state]}", color=color)
+
     st.space("small")
     _render_operational_observability(registry, batch_id=batch)
-    st.space("small")
-
-    st.dataframe(
-        [
-            {"state": state.value, "count": counts[state]}
-            for state in FileState
-            if counts[state]
-        ],
-        column_config={
-            "state": st.column_config.TextColumn("State"),
-            "count": st.column_config.NumberColumn("Count"),
-        },
-        hide_index=True,
-    )
 
 if __name__ == "__main__":
     render()
