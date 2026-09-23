@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 4704429214871fbf70fe9a3dc3059f4f56c377f8
+# source commit: 20ccd5fa32fd506cb855b2381cfcdde09adf79da
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -29,7 +29,7 @@ code	3544	97	b0c59b3f4282f00403f90976617babcf42c0cef0a282a99b67c7b0c7d9245b8e	sc
 code	3387	89	cf6ced2ea5c5b5ab132407ea131b0bd663c03cef331207733f9f4074c42c136e	scripts/check_copy.bat
 code	5520	168	eb29dd11ba6feec3812369fadccf3309b7ec85fdeef1239b3e597221234438ea	scripts/check_copy.py
 code	8796	234	7eb0c2658b7df580c347bc77b9114c1b0a222666ad1c1c8aa223a46409deda8b	scripts/check_credentials.py
-code	10229	277	0de84dd2ddf151210d3157f0ccffc6444e70686330453c0ba6db9ca4e026874e	scripts/probe_job_queue.py
+code	10293	279	624884f5c21da07e2993ac6c959b0e2a59e8b99eba819c021da6e69d46873d92	scripts/probe_job_queue.py
 code	6964	182	3d228ae0255ee733dfb7364436105bb848a390da55d0c1eaf0251eb320f172fc	scaffold.ps1
 code	4449	138	e00000136b263f37135ed3bfaa05dc8812efa944884fc44e60e644b0b20e05e3	scripts/upgrade_db.bat
 code	69	5	cd5dccf0e6a1e627c496abd88a7882a54316b7b0ae08e2f82bb87df97b8f993f	src/migration_hub/__init__.py

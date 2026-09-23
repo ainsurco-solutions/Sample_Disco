@@ -162,7 +162,9 @@ def _filter_candidates(
     return out
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Which Moody's API lists this Hub's jobs? A read-only probe (TASK-0094)."
+    )
     parser.add_argument(
         "--filters",
         action="store_true",
