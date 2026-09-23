@@ -413,10 +413,19 @@ def retry_files(
                 "not starting a second pipeline or archiver over them. Once that work "
                 f"finishes, run `migration-hub migrate --batch {batch_id}`."
             )
+        elif requeue and registry.batch_destination(batch_id) is BatchDestination.BRIDGE:
+            workers.extend(
+                start_run_subprocesses(
+                    registry=registry,
+                    batch_id=batch_id,
+                    count=worker_count,
+                    environment=environment,
+                )
+            )
         elif requeue:
             workers.append(start_migrate_subprocess(batch_id=batch_id, environment=environment))
             pipeline_started = True
-        else:
+        elif archive_retry or registry.batch_destination(batch_id) is BatchDestination.VAULT:
             workers.append(start_archive_subprocess(batch_id=batch_id, environment=environment))
 
     return RetryOutcome(
@@ -450,7 +459,92 @@ def start_migrate_source_subprocess(
         ["migrate", "--source", str(source_root)], f"migrate-{batch_id}", environment
     )
 
-_LOG_KINDS = ("run", "migrate", "archive", "retry")
+def start_controls_open_subprocess(
+    *,
+    batch_id: str,
+    trigger: controls.RunTrigger | str,
+    by: str | None = None,
+    environment: str | None = None,
+) -> WorkerHandle:
+    args = ["controls", "open", "--batch", batch_id, "--trigger", str(trigger)]
+    if by:
+        args += ["--by", by]
+    return _launch_cli(args, f"controls-open-{batch_id}", environment)
+
+def start_controls_close_subprocess(
+    *,
+    run_id: str,
+    environment: str | None = None,
+    batch_id: str | None = None,
+) -> WorkerHandle:
+    return _launch_cli(
+        ["controls", "close", "--run-id", run_id],
+        f"controls-close-{batch_id or run_id}",
+        environment,
+    )
+
+def start_controls_abort_subprocess(
+    *,
+    run_id: str,
+    reason: str,
+    environment: str | None = None,
+    batch_id: str | None = None,
+) -> WorkerHandle:
+    return _launch_cli(
+        ["controls", "abort", "--run-id", run_id, "--reason", reason],
+        f"controls-abort-{batch_id or run_id}",
+        environment,
+    )
+
+def start_controls_export_subprocess(
+    *,
+    run_id: str,
+    output_path: Path,
+    environment: str | None = None,
+    batch_id: str | None = None,
+) -> WorkerHandle:
+    return _launch_cli(
+        ["controls", "export", "--run-id", run_id, "--output", str(output_path)],
+        f"controls-export-{batch_id or run_id}",
+        environment,
+    )
+
+def start_controls_verify_subprocess(
+    *,
+    run_id: str,
+    environment: str | None = None,
+    batch_id: str | None = None,
+) -> WorkerHandle:
+    return _launch_cli(
+        ["controls", "verify", "--run-id", run_id],
+        f"controls-verify-{batch_id or run_id}",
+        environment,
+    )
+
+def start_controls_sign_off_subprocess(
+    *,
+    run_id: str,
+    by: str | None = None,
+    environment: str | None = None,
+    batch_id: str | None = None,
+) -> WorkerHandle:
+    args = ["controls", "sign-off", "--run-id", run_id]
+    if by:
+        args += ["--by", by]
+    return _launch_cli(args, f"controls-sign-off-{batch_id or run_id}", environment)
+
+_LOG_KINDS = (
+    "run",
+    "migrate",
+    "archive",
+    "retry",
+    "controls-open",
+    "controls-close",
+    "controls-abort",
+    "controls-export",
+    "controls-verify",
+    "controls-sign-off",
+)
 
 _TAIL_BYTES = 128 * 1024
 

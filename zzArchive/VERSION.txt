@@ -1,3 +1,3 @@
-source commit : 5a5d76b38ee15dce54387dd9205fbe3a402b79be
-               feat: choose a batch's destination up front -- Data Vault or Data Bridge only (TASK-0092)
+source commit : 98c1a8d7b300ab6694dc719dcbcc6e5df41dd23d
+               fix: keep launch messages visible; controls logs in Live log; retry honours destination; strip scaffold prose (TASK-0091, TASK-0092, TASK-0071)
 files         : 88

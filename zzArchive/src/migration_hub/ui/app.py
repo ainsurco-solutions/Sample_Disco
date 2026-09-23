@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import html
 import os
 from collections.abc import Sequence
@@ -13,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from migration_hub.config.settings import Settings
-from migration_hub.core.models import ApiTransaction, MigrationEvent, MigrationFile
+from migration_hub.core.models import ApiTransaction, BatchRun, MigrationEvent, MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import (
     SETTLED_STATES,
@@ -169,6 +170,7 @@ _BATCH_REFRESH = "8s"
 
 @st.fragment(run_every=_BATCH_REFRESH)
 def _live_batch_action_bar(registry: Registry, settings: Settings, batch: str) -> None:
+    _render_launch_notes(batch)
     _render_batch_action_bar(registry, settings, batch)
 
 @st.fragment(run_every=_BATCH_REFRESH)
@@ -1017,6 +1019,7 @@ def _render_retry_action(
                 batch_id=batch, environment=settings.environment
             )
             st.write(f"Retry started (pid `{handle.pid}`). Output: `{handle.log_path}`")
+            _note_launch(batch, "Retry", handle)
             st.write(
                 "Each file is checked in Data Vault, then Data Bridge: already in "
                 "Data Vault -> COMPLETED; on Data Bridge -> archive only; on "
@@ -1053,6 +1056,7 @@ def _render_archive_action(
                 batch_id=batch, environment=settings.environment
             )
             st.write(f"Archiver started (pid `{handle.pid}`).")
+            _note_launch(batch, "Archive", handle)
             st.write(f"Output: `{handle.log_path}`")
             st.write(
                 "Runs in the background -- this count falls as files are "
@@ -1139,6 +1143,39 @@ def _minutes_since_activity(registry: Registry, batch: str) -> float:
     now = datetime.now(UTC).replace(tzinfo=None)
     return (now - newest).total_seconds() / 60
 
+_LAUNCH_NOTES_KEPT = 3
+
+def _note_launch(batch: str | None, label: str, handle: batch_ops.WorkerHandle) -> None:
+    if not batch:
+        return
+    notes = st.session_state.setdefault("launch_notes", {}).setdefault(batch, [])
+    notes.insert(
+        0,
+        {
+            "label": label,
+            "pid": handle.pid,
+            "log": str(handle.log_path),
+            "at": datetime.now().strftime("%H:%M:%S"),
+        },
+    )
+    del notes[_LAUNCH_NOTES_KEPT:]
+
+def _render_launch_notes(batch: str) -> None:
+    notes = st.session_state.get("launch_notes", {}).get(batch) or []
+    if not notes:
+        return
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.caption("Recent actions -- follow them with **Live log** below.")
+            if st.button("Dismiss", key=f"dismiss_launch_notes_{batch}", type="tertiary"):
+                st.session_state["launch_notes"].pop(batch, None)
+                st.rerun(scope="fragment")
+        for note in notes:
+            st.caption(
+                f"{note['at']}  **{note['label']}** started -- pid `{note['pid']}`, "
+                f"log `{note['log']}`"
+            )
+
 def _launch_continue(registry: Registry, settings: Settings, batch: str) -> None:
     destination = registry.batch_destination(batch)
     with st.status("Starting workers", expanded=True) as status:
@@ -1149,6 +1186,8 @@ def _launch_continue(registry: Registry, settings: Settings, batch: str) -> None
             environment=settings.environment,
         )
         handle = handles[0]
+        for h in handles:
+            _note_launch(batch, f"Workers to {_DESTINATION_LABEL[destination]}", h)
         pids = ", ".join(f"`{h.pid}`" for h in handles)
         st.write(f"Started, to **{_DESTINATION_LABEL[destination]}** (pid {pids}).")
         st.write(
@@ -1221,6 +1260,7 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                         batch_id=batch, environment=settings.environment
                     )
                     st.write(f"Archiver started (pid `{handle.pid}`).")
+                    _note_launch(batch, "Archive", handle)
                     st.write(f"Output: `{handle.log_path}`")
                     status.update(
                         label="Handed off to the archiver", state="complete", expanded=False
@@ -1238,6 +1278,7 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                         batch_id=batch, environment=settings.environment
                     )
                     st.write(f"Retry started (pid `{handle.pid}`). Output: `{handle.log_path}`")
+                    _note_launch(batch, "Retry", handle)
                     status.update(label="Handed off to the retry", state="complete", expanded=False)
                 st.rerun()
 
@@ -1293,7 +1334,7 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
         _render_activity_tab(registry, batch)
 
     with controls_tab:
-        _render_controls_tab(registry, batch)
+        _render_controls_tab(registry, settings, batch)
 
     with diagnostics_tab:
         _render_diagnostics_tab(registry, batch)
@@ -1449,17 +1490,18 @@ def _render_activity_tab(registry: Registry, batch: str) -> None:
                 height=min(38 + 35 * len(rows), 400),
             )
 
-def _render_controls_tab(registry: Registry, batch: str) -> None:
+def _render_controls_tab(registry: Registry, settings: Settings, batch: str) -> None:
     runs = registry.list_batch_runs(batch_id=batch)
     with st.container(horizontal=True, vertical_alignment="center"):
         st.badge("Target workflow", color="green", icon=":material/fact_check:")
-        st.caption("Formal control actions are visible here; wiring them is the next slice.")
+        st.caption("Formal run controls launch the same CLI commands as the runbook.")
 
     if not runs:
         st.info("No control records have been opened for this batch yet.")
+        _render_controls_open_form(settings, batch)
         return
 
-    rows = []
+    rows: list[dict[str, object]] = []
     for run in runs:
         live = (
             controls.derive(registry=registry, run_id=run.run_id)
@@ -1483,12 +1525,20 @@ def _render_controls_tab(registry: Registry, batch: str) -> None:
                 "retry_count": live.retry_count if live else run.retry_count,
                 "evidence": run.evidence_uri,
                 "signed_off_by": run.signed_off_by,
+                "run_id": str(run.run_id),
             }
         )
 
-    st.dataframe(
+    selected_key = f"controls_selected_run_{batch}"
+    if st.session_state.get(selected_key) not in {str(run.run_id) for run in runs}:
+        st.session_state[selected_key] = str(runs[-1].run_id)
+
+    event = st.dataframe(
         rows,
+        on_select="rerun",
+        selection_mode="single-row",
         column_config={
+            "run_id": st.column_config.TextColumn("Run id"),
             "run_seq": st.column_config.NumberColumn("Run"),
             "started_at": st.column_config.DatetimeColumn("Started", format="YYYY-MM-DD HH:mm"),
             "finished_at": st.column_config.DatetimeColumn("Finished", format="YYYY-MM-DD HH:mm"),
@@ -1498,14 +1548,223 @@ def _render_controls_tab(registry: Registry, batch: str) -> None:
             "signed_off_by": st.column_config.TextColumn("Signed off by"),
         },
         hide_index=True,
+        key=f"controls_runs_{batch}",
     )
+    selected_rows = _selected_rows(event)
+    if selected_rows:
+        st.session_state[selected_key] = str(rows[selected_rows[0]]["run_id"])
+
+    selected_run = _selected_control_run(runs, str(st.session_state[selected_key]))
+    if selected_run is None:
+        st.info("Select a control run to act on it.")
+        return
+
+    st.space("small")
+    _render_selected_control_run_summary(registry, selected_run)
+    st.space("small")
+    _render_control_actions(registry, settings, selected_run)
+
+def _selected_control_run(runs: Sequence[BatchRun], run_id: str) -> BatchRun | None:
+    for run in runs:
+        if str(run.run_id) == run_id:
+            return run
+    return None
+
+def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> None:
+    live = (
+        controls.derive(registry=registry, run_id=run.run_id)
+        if run.status == str(controls.RunStatus.RUNNING)
+        else None
+    )
+    outstanding = live.outstanding_count if live else run.outstanding_count
+    exceptions = live.exception_count if live else run.exception_count
+
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            color: _BadgeColor = (
+                "blue" if run.status == str(controls.RunStatus.RUNNING) else "green"
+            )
+            if run.status == str(controls.RunStatus.EXCEPTIONS):
+                color = "orange"
+            if run.status == str(controls.RunStatus.ABORTED):
+                color = "red"
+            st.badge(run.status + (" (live)" if live else ""), color=color)
+            st.write(f"**Run {run.run_seq}** `{run.run_id}`")
+        cols = st.columns(4)
+        with cols[0]:
+            st.metric("Outstanding", outstanding)
+            st.caption(f"Trigger {run.trigger}")
+        with cols[1]:
+            st.metric("Exceptions", exceptions)
+            st.caption(f"Retries {live.retry_count if live else run.retry_count}")
+        with cols[2]:
+            st.metric("Evidence", "yes" if run.evidence_uri else "no")
+            st.caption(run.evidence_sha256 or "no hash recorded")
+        with cols[3]:
+            st.metric("Signed off", "yes" if run.signed_off_at else "no")
+            st.caption(run.signed_off_by or "not signed")
+
+        if run.evidence_uri:
+            st.caption(f"Evidence: `{run.evidence_uri}`")
+        if run.notes:
+            st.caption(f"Notes: {run.notes}")
+
+def _render_control_actions(registry: Registry, settings: Settings, run: BatchRun) -> None:
+    status = controls.RunStatus(run.status)
+    outstanding = (
+        controls.derive(registry=registry, run_id=run.run_id).outstanding_count
+        if status is controls.RunStatus.RUNNING
+        else run.outstanding_count
+    )
+    run_id = str(run.run_id)
+
+    if status is controls.RunStatus.RUNNING:
+        if outstanding:
+            st.warning(
+                f"{outstanding} file(s) still look unsettled in the registry. "
+                "The CLI will make the final close decision."
+            )
+        with st.container(horizontal=True):
+            if st.button("Close run", icon=":material/check_circle:", key=f"close_run_{run_id}"):
+                _launch_control_command(
+                    "Close run",
+                    batch_ops.start_controls_close_subprocess(
+                        run_id=run_id, environment=settings.environment, batch_id=run.batch_id
+                    ),
+                    "Refresh after completion; closed totals and reconciliation will appear here.",
+                )
+            _render_abort_control_form(settings, run_id, run.batch_id)
+        return
 
     with st.container(horizontal=True):
-        st.button("Close run", icon=":material/check_circle:", disabled=True)
-        st.button("Export evidence", icon=":material/download:", disabled=True)
-        st.button("Verify", icon=":material/fact_check:", disabled=True)
-        st.button("Sign off", icon=":material/approval:", disabled=True)
-        st.button("Abort with reason", icon=":material/cancel:", disabled=True)
+        _render_export_control_form(settings, run)
+        if st.button("Verify", icon=":material/fact_check:", key=f"verify_run_{run_id}"):
+            _launch_control_command(
+                "Verify run",
+                batch_ops.start_controls_verify_subprocess(
+                    run_id=run_id, environment=settings.environment, batch_id=run.batch_id
+                ),
+                "Refresh after completion; divergences, if any, are in the command log.",
+            )
+        signed = run.signed_off_at is not None
+        if st.button(
+            "Sign off",
+            icon=":material/approval:",
+            disabled=signed or status is controls.RunStatus.ABORTED,
+            key=f"sign_off_run_{run_id}",
+        ):
+            st.session_state[f"sign_off_form_{run_id}"] = True
+    if run.signed_off_at is not None:
+        st.caption(f"Already signed off by {run.signed_off_by or 'unknown'}.")
+    elif status is controls.RunStatus.ABORTED:
+        st.caption("Aborted runs are recorded with a reason rather than signed off.")
+
+    if st.session_state.get(f"sign_off_form_{run_id}"):
+        _render_sign_off_control_form(settings, run_id, run.batch_id)
+
+def _render_controls_open_form(settings: Settings, batch: str) -> None:
+    with st.form(f"controls_open_{batch}", border=True):
+        st.subheader("Open control run")
+        trigger = st.selectbox(
+            "Trigger",
+            [controls.RunTrigger.RUN, controls.RunTrigger.RETRY, controls.RunTrigger.RESUME],
+            format_func=lambda value: value.value,
+        )
+        by = st.text_input("Initiated by", value=_default_operator())
+        submitted = st.form_submit_button("Open run", icon=":material/add_circle:")
+    if submitted:
+        _launch_control_command(
+            "Open run",
+            batch_ops.start_controls_open_subprocess(
+                batch_id=batch,
+                trigger=trigger,
+                by=by.strip() or None,
+                environment=settings.environment,
+            ),
+            "Refresh after completion; the new control run will appear in this tab.",
+        )
+
+def _render_abort_control_form(settings: Settings, run_id: str, batch: str) -> None:
+    with st.popover("Abort with reason", icon=":material/cancel:"):
+        reason = st.text_area("Reason", key=f"abort_reason_{run_id}")
+        if st.button(
+            "Abort run",
+            icon=":material/cancel:",
+            disabled=not reason.strip(),
+            key=f"abort_run_{run_id}",
+        ):
+            _launch_control_command(
+                "Abort run",
+                batch_ops.start_controls_abort_subprocess(
+                    run_id=run_id,
+                    reason=reason.strip(),
+                    environment=settings.environment,
+                    batch_id=batch,
+                ),
+                "Refresh after completion; the run will be marked ABORTED with this reason.",
+            )
+
+def _render_export_control_form(settings: Settings, run: BatchRun) -> None:
+    run_id = str(run.run_id)
+    default = Path("results") / "controls" / f"{run.batch_id}_run{run.run_seq}.csv"
+    with st.popover("Export evidence", icon=":material/download:"):
+        output_text = st.text_input("Output path", value=str(run.evidence_uri or default)).strip()
+        if st.button(
+            "Export",
+            icon=":material/download:",
+            disabled=not output_text,
+            key=f"export_run_{run_id}",
+        ):
+            _launch_control_command(
+                "Export evidence",
+                batch_ops.start_controls_export_subprocess(
+                    run_id=run_id,
+                    output_path=Path(output_text),
+                    environment=settings.environment,
+                    batch_id=run.batch_id,
+                ),
+                "Refresh after completion; evidence path and SHA-256 will appear here.",
+            )
+
+def _render_sign_off_control_form(settings: Settings, run_id: str, batch: str) -> None:
+    with st.form(f"sign_off_{run_id}", border=True):
+        by = st.text_input("Operator", value=_default_operator())
+        left, right = st.columns(2)
+        submitted = left.form_submit_button(
+            "Sign off run",
+            icon=":material/approval:",
+            disabled=not by.strip(),
+        )
+        cancelled = right.form_submit_button("Cancel")
+    if cancelled:
+        st.session_state.pop(f"sign_off_form_{run_id}", None)
+        st.rerun()
+    if submitted:
+        _launch_control_command(
+            "Sign off run",
+            batch_ops.start_controls_sign_off_subprocess(
+                run_id=run_id, by=by.strip(), environment=settings.environment, batch_id=batch
+            ),
+            "Refresh after completion; sign-off and possible batch DONE status will appear here.",
+        )
+        st.session_state.pop(f"sign_off_form_{run_id}", None)
+
+def _launch_control_command(
+    label: str, handle: batch_ops.WorkerHandle, expected: str
+) -> None:
+    _note_launch(st.session_state.get("selected_batch"), label, handle)
+    with st.status(label, expanded=True) as status:
+        st.write(f"Started (pid `{handle.pid}`).")
+        st.write(f"Output: `{handle.log_path}`")
+        st.code(f'Get-Content "{handle.log_path}" -Wait -Tail 40', language="powershell")
+        st.caption(expected)
+        status.update(label=f"{label} handed off", state="complete", expanded=True)
+
+def _default_operator() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:
+        return ""
 
 def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
     counts = registry.counts_by_state(batch_id=batch)
