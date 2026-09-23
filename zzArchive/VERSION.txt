@@ -1,3 +1,3 @@
-source commit : 90b716f940876b422b6f28a5eedff1465b687397
-               feat: operator run log -- one line per step and per vendor call (TASK-0090)
+source commit : fa9491648a92eacfd2ba5e45467dcaa3ea67ea0e
+               chore: scaffold manifest picks up observability/endpoints.py (TASK-0090)
 files         : 87

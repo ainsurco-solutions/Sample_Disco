@@ -100,6 +100,7 @@ $Files = @(
     'src/migration_hub/observability/audit.py'
     'src/migration_hub/observability/audit_export.py'
     'src/migration_hub/observability/controls.py'
+    'src/migration_hub/observability/endpoints.py'
     'src/migration_hub/observability/logging.py'
     'src/migration_hub/observability/metrics.py'
     'src/migration_hub/observability/redaction.py'

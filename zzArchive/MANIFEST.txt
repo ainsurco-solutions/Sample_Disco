@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 90b716f940876b422b6f28a5eedff1465b687397
+# source commit: fa9491648a92eacfd2ba5e45467dcaa3ea67ea0e
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -28,7 +28,7 @@ code	3544	97	b0c59b3f4282f00403f90976617babcf42c0cef0a282a99b67c7b0c7d9245b8e	sc
 code	3387	89	cf6ced2ea5c5b5ab132407ea131b0bd663c03cef331207733f9f4074c42c136e	scripts/check_copy.bat
 code	5520	168	eb29dd11ba6feec3812369fadccf3309b7ec85fdeef1239b3e597221234438ea	scripts/check_copy.py
 code	8796	234	7eb0c2658b7df580c347bc77b9114c1b0a222666ad1c1c8aa223a46409deda8b	scripts/check_credentials.py
-code	10745	259	66c6204b8bda9095e8665c8a76b29b68d05d1ac849566e01bcb5f308c41cc971	scaffold.ps1
+code	10796	260	72f9e3aeb0df03f4b94dd612090c4d80a4b16fbbe017ca57b0361e1b0cfa6080	scaffold.ps1
 code	4449	138	e00000136b263f37135ed3bfaa05dc8812efa944884fc44e60e644b0b20e05e3	scripts/upgrade_db.bat
 code	69	5	cd5dccf0e6a1e627c496abd88a7882a54316b7b0ae08e2f82bb87df97b8f993f	src/migration_hub/__init__.py
 code	795	32	ff421957fde599f0193a9e144e804852fbf1a3a510c62b01de103f005d118241	src/migration_hub/_tls.py
