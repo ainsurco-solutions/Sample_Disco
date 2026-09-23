@@ -1,3 +1,3 @@
-source commit : a5ad1086b64be6dc6778a6517d1c445cc88ceec3
-               fix: treat the job status Enqueued as in progress (TASK-0071)
+source commit : 2aaf66bebb71e2b3e31f50b6c382eb16a91be2e4
+               fix: classify every Data Bridge job status the tenant can report (TASK-0071)
 files         : 87

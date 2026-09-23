@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: a5ad1086b64be6dc6778a6517d1c445cc88ceec3
+# source commit: 2aaf66bebb71e2b3e31f50b6c382eb16a91be2e4
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -35,7 +35,7 @@ code	795	32	ff421957fde599f0193a9e144e804852fbf1a3a510c62b01de103f005d118241	src
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/adapters/__init__.py
 code	335	17	95769491656f197c2b9506eb2fd289f8a229c092944fdbcd2d60c3df4cbf6ac6	src/migration_hub/adapters/base.py
 code	35	1	5384bfdb2df380b6557cc7a71d16891415bccaa87699406e236f752c6415389f	src/migration_hub/adapters/databridge/__init__.py
-code	9779	273	824e2f9abf304b673ee8cba96592cd804e255983b6a277d7f772a6cf83b362e5	src/migration_hub/adapters/databridge/client.py
+code	9827	273	08169f33c3e93ccd875757906cc1ded97351dc2c6ce20147948a8e7927e8d391	src/migration_hub/adapters/databridge/client.py
 code	1755	54	833032cbc62999802d8149ae3a7c7653bd13ace1ea78d81b77dd03cc1077a9a1	src/migration_hub/adapters/databridge/errors.py
 code	1419	33	713ed5e1112a2485e5fb857ddb1d8781a82d2ebd5cdd2ce0a79913219f60923c	src/migration_hub/adapters/databridge/session.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/adapters/storage/__init__.py

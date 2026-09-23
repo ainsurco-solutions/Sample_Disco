@@ -25,9 +25,9 @@ LARGE_FILE_THRESHOLD_BYTES = 5 * 1024**3
 
 _FORMAT_CODES = {"mdf": 0, "bak": 1, "dacpac": 2}
 
-_SUCCESS_STATUSES = {"success", "succeeded"}
-_FAILURE_STATUSES = {"failed", "cancelled"}
-_IN_PROGRESS_STATUSES = {"inprogress", "pending", "queued", "enqueued", "running"}
+_SUCCESS_STATUSES = {"done", "succeeded", "success"}
+_FAILURE_STATUSES = {"failed", "cancelled", "deleted", "unavailable"}
+_IN_PROGRESS_STATUSES = {"enqueued", "processing", "inprogress", "pending", "queued", "running"}
 _KNOWN_STATUSES = _SUCCESS_STATUSES | _FAILURE_STATUSES | _IN_PROGRESS_STATUSES
 
 @dataclass(frozen=True, slots=True)
