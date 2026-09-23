@@ -33,11 +33,11 @@
     Report what would be created without creating it.
 
 .EXAMPLE
-    .\New-AmigoScaffold.ps1 -Root C:\AMIGO -WhatIf
+    .\scaffold.ps1 -Root C:\AMIGO -WhatIf
     Show the tree that would be created.
 
 .EXAMPLE
-    .\New-AmigoScaffold.ps1 -Root C:\AMIGO
+    .\scaffold.ps1 -Root C:\AMIGO
     Create it. Then paste each file's contents from the Sample_Disco copy.
 
 .NOTES
@@ -70,10 +70,7 @@ $Files = @(
     'src/migration_hub/adapters/databridge/__init__.py'
     'src/migration_hub/adapters/databridge/client.py'
     'src/migration_hub/adapters/databridge/errors.py'
-    'src/migration_hub/adapters/irp/__init__.py'
-    'src/migration_hub/adapters/irp/client.py'
-    'src/migration_hub/adapters/irp/errors.py'
-    'src/migration_hub/adapters/irp/session.py'
+    'src/migration_hub/adapters/databridge/session.py'
     'src/migration_hub/adapters/storage/__init__.py'
     'src/migration_hub/adapters/storage/databridge_uploader.py'
     'src/migration_hub/adapters/storage/s3_uploader.py'
@@ -104,14 +101,17 @@ $Files = @(
     'src/migration_hub/observability/metrics.py'
     'src/migration_hub/observability/redaction.py'
     'src/migration_hub/orchestration/__init__.py'
+    'src/migration_hub/orchestration/archiver.py'
+    'src/migration_hub/orchestration/auto_migrate.py'
+    'src/migration_hub/orchestration/batch_identity.py'
     'src/migration_hub/orchestration/batches.py'
     'src/migration_hub/orchestration/reaper.py'
     'src/migration_hub/orchestration/reconciliation.py'
     'src/migration_hub/orchestration/scheduler.py'
+    'src/migration_hub/orchestration/worker_pool.py'
     'src/migration_hub/producers/__init__.py'
     'src/migration_hub/producers/naming.py'
     'src/migration_hub/producers/scanner.py'
-    'src/migration_hub/producers/stager.py'
     'src/migration_hub/producers/target_list.py'
     'src/migration_hub/producers/validator.py'
     'src/migration_hub/ui/__init__.py'
@@ -121,17 +121,27 @@ $Files = @(
     'migrations/README.md'
     'migrations/script.py.mako'
     'migrations/versions/.gitkeep'
+    'migrations/versions/2e4122b688e7_drop_staged_path.py'
     'migrations/versions/3405822f52ca_create_registry_schema.py'
+    'migrations/versions/4b8c1d5e9a02_move_staged_rows_to_validated.py'
+    'migrations/versions/7c3f1a9e2b4d_add_databridge_and_archive_columns.py'
+    'migrations/versions/9d2e6f4a1c8b_drop_irp_only_columns.py'
     'alembic.ini'
     'requirements.txt'
     'pyproject.toml'
     '.env.example'
     'config/dev.example.json'
+    'config/prod.example.json'
     '.streamlit/config.toml'
+    '.streamlit/config.teal.toml'
     'scripts/amigo.bat'
     'scripts/check_credentials.py'
     'scripts/check_copy.py'
-    'New-AmigoScaffold.ps1'
+    'scaffold.ps1'
+    'VM-SETUP.txt'
+    'scripts/check_copy.bat'
+    'scripts/backup_registry.bat'
+    'scripts/_backup_registry.py'
 )
 # --- END GENERATED MANIFEST -------------------------------------------------
 
@@ -156,7 +166,7 @@ if ($Root -match '(^|[\\/])-Root([\\/]|$)' -or $Root -match '.\w:[\\/]') {
     Write-Host "      $Root" -ForegroundColor Red
     Write-Host ""
     Write-Host "  Use a SPACE between the parameter and its value, not a slash:"
-    Write-Host '      .\New-AmigoScaffold.ps1 -Root "C:\path\to\folder"'
+    Write-Host '      .\scaffold.ps1 -Root "C:\path\to\folder"'
     Write-Host ""
     Write-Host "  Or omit -Root entirely to scaffold into the current directory."
     Write-Host ""

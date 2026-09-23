@@ -1,3 +1,7 @@
 source commit : 03e55893218f096fbf437ea437060445aff15984
                Merge origin/main -- renumber my TASK-0077 to TASK-0079
 files         : 80
+
+WARNING: published from a DIRTY working tree. This copy does not
+         correspond to any commit. Re-publish from a clean checkout
+         before mirroring it to SharePoint.
