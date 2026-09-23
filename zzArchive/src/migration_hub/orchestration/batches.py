@@ -15,7 +15,7 @@ from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.consumers.worker import MigrationWorker
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
-from migration_hub.core.states import BatchState, FileState
+from migration_hub.core.states import BatchDestination, BatchState, FileState
 from migration_hub.observability import controls
 from migration_hub.orchestration import archiver
 from migration_hub.orchestration.batch_identity import derive_batch_id
@@ -429,6 +429,15 @@ def retry_files(
         pipeline_started=pipeline_started,
         not_started_reason=not_started_reason,
     )
+
+def start_to_destination(
+    *, registry: Registry, batch_id: str, count: int, environment: str | None = None
+) -> list[WorkerHandle]:
+    if registry.batch_destination(batch_id) is BatchDestination.BRIDGE:
+        return start_run_subprocesses(
+            registry=registry, batch_id=batch_id, count=count, environment=environment
+        )
+    return [start_migrate_subprocess(batch_id=batch_id, environment=environment)]
 
 def start_migrate_subprocess(*, batch_id: str, environment: str | None = None) -> WorkerHandle:
     return _launch_cli(["migrate", "--batch", batch_id], f"migrate-{batch_id}", environment)

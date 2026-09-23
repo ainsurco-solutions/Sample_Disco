@@ -23,6 +23,7 @@ from migration_hub.core.states import (
     CLAIMED_STATES,
     SETTLED_STATES,
     TERMINAL_STATES,
+    BatchDestination,
     BatchState,
     FileState,
     assert_transition,
@@ -61,7 +62,12 @@ class Registry:
         self._engine = engine
 
     def ensure_batch(
-        self, *, batch_id: str, description: str | None = None, max_concurrency: int = 1
+        self,
+        *,
+        batch_id: str,
+        description: str | None = None,
+        max_concurrency: int = 1,
+        destination: BatchDestination = BatchDestination.VAULT,
     ) -> None:
         try:
             with Session(self._engine) as session, session.begin():
@@ -73,6 +79,7 @@ class Registry:
                             description=description,
                             state="PLANNED",
                             max_concurrency=max_concurrency,
+                            destination=str(destination),
                         )
                     )
         except IntegrityError:
@@ -479,6 +486,18 @@ class Registry:
             if batch is not None:
                 session.expunge(batch)
             return batch
+
+    def batch_destination(self, batch_id: str) -> BatchDestination:
+        with Session(self._engine) as session:
+            batch = session.get(Batch, batch_id)
+            return BatchDestination(batch.destination) if batch else BatchDestination.VAULT
+
+    def set_batch_destination(self, *, batch_id: str, destination: BatchDestination) -> None:
+        with Session(self._engine) as session, session.begin():
+            batch = session.get(Batch, batch_id)
+            if batch is None:
+                raise ValueError(f"No batch {batch_id!r}")
+            batch.destination = str(destination)
 
     def set_batch_state(self, *, batch_id: str, state: BatchState) -> None:
         with Session(self._engine) as session, session.begin():

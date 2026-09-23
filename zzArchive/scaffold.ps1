@@ -130,6 +130,7 @@ $Files = @(
     'migrations/versions/4b8c1d5e9a02_move_staged_rows_to_validated.py'
     'migrations/versions/7c3f1a9e2b4d_add_databridge_and_archive_columns.py'
     'migrations/versions/9d2e6f4a1c8b_drop_irp_only_columns.py'
+    'migrations/versions/a1d9c7e5b3f2_batch_destination.py'
     'migrations/versions/c5a7e3d91f20_archive_states.py'
     'migrations/versions/e8b2f4a6c1d3_scrub_presigned_signatures.py'
     'alembic.ini'

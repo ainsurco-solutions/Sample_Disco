@@ -24,6 +24,16 @@ TERMINAL_STATES: frozenset[FileState] = frozenset(
 
 SETTLED_STATES: frozenset[FileState] = TERMINAL_STATES | {FileState.ARCHIVE_FAILED}
 
+class BatchDestination(StrEnum):
+
+    VAULT = "VAULT"
+    BRIDGE = "BRIDGE"
+
+def done_states(destination: BatchDestination) -> frozenset[FileState]:
+    if destination is BatchDestination.BRIDGE:
+        return SETTLED_STATES | {FileState.BRIDGED}
+    return SETTLED_STATES
+
 CLAIMED_STATES: frozenset[FileState] = frozenset({FileState.UPLOADING, FileState.IMPORTING})
 
 LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {

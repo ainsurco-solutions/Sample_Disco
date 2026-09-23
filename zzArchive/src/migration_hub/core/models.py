@@ -128,6 +128,9 @@ class Batch(Base):
     wave: Mapped[int | None] = mapped_column(default=None)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     max_concurrency: Mapped[int] = mapped_column(default=1, server_default="1")
+    destination: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="VAULT", server_default="VAULT"
+    )
     created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, server_default=UTC_NOW)
     started_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     finished_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)

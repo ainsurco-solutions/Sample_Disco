@@ -15,7 +15,13 @@ from sqlalchemy.engine import Engine
 from migration_hub.config.settings import Settings
 from migration_hub.core.models import ApiTransaction, MigrationEvent, MigrationFile
 from migration_hub.core.registry import Registry
-from migration_hub.core.states import SETTLED_STATES, BatchState, FileState
+from migration_hub.core.states import (
+    SETTLED_STATES,
+    BatchDestination,
+    BatchState,
+    FileState,
+    done_states,
+)
 from migration_hub.observability import audit, controls, metrics
 from migration_hub.orchestration import batches as batch_ops
 from migration_hub.orchestration.batch_identity import derive_batch_id
@@ -53,18 +59,32 @@ _BATCH_STATE_COLOR: dict[BatchState, _BadgeColor] = {
 }
 
 def _batch_display_state(
-    state: BatchState, counts: dict[FileState, int]
+    state: BatchState,
+    counts: dict[FileState, int],
+    destination: BatchDestination = BatchDestination.VAULT,
 ) -> tuple[str, _BadgeColor]:
     total = sum(counts.values())
-    outstanding = total - sum(counts[s] for s in SETTLED_STATES)
+    outstanding = total - sum(counts[s] for s in done_states(destination))
     if state in (BatchState.PLANNED, BatchState.RUNNING) and total > 0 and outstanding == 0:
         failed = (
             counts[FileState.FAILED]
             + counts[FileState.ABANDONED]
             + counts[FileState.ARCHIVE_FAILED]
         )
+        if destination is BatchDestination.BRIDGE:
+            return (
+                ("On Data Bridge, with issues", "orange") if failed else ("On Data Bridge", "green")
+            )
         return ("Completed with issues", "orange") if failed else ("Completed", "green")
     return state.value.title(), _BATCH_STATE_COLOR[state]
+
+_DESTINATION_LABEL = {
+    BatchDestination.VAULT: "Data Vault",
+    BatchDestination.BRIDGE: "Data Bridge only",
+}
+
+def _outstanding(counts: dict[FileState, int], destination: BatchDestination) -> int:
+    return sum(counts.values()) - sum(counts[s] for s in done_states(destination))
 
 _TRACKER_PALETTE = {
     "light": {
@@ -347,15 +367,25 @@ def _render_needs_action_queue(registry: Registry) -> None:
             + counts[FileState.ABANDONED]
             + counts[FileState.ARCHIVE_FAILED]
         )
-        outstanding = sum(counts.values()) - sum(counts[s] for s in SETTLED_STATES)
+        destination = BatchDestination(batch.destination)
+        outstanding = _outstanding(counts, destination)
 
-        if pending_archive:
+        if pending_archive and destination is BatchDestination.VAULT:
             rows.append(
                 {
                     "priority": 1,
                     "batch": batch.batch_id,
                     "finding": f"{pending_archive} file(s) pending archive",
                     "next_action": "Archive into Data Vault",
+                }
+            )
+        elif pending_archive:
+            rows.append(
+                {
+                    "priority": 4,
+                    "batch": batch.batch_id,
+                    "finding": f"{pending_archive} file(s) on Data Bridge (its destination)",
+                    "next_action": "Archive into Data Vault when ready",
                 }
             )
         if failed:
@@ -410,11 +440,12 @@ def _render_batch_log(registry: Registry) -> None:
     rows = []
     for b in batches:
         counts = registry.counts_by_state(batch_id=b.batch_id)
-        label, _color = _batch_display_state(BatchState(b.state), counts)
+        label, _color = _batch_display_state(
+            BatchState(b.state), counts, BatchDestination(b.destination)
+        )
 
         total = sum(counts.values())
-        outstanding = total - sum(counts[s] for s in SETTLED_STATES)
-        is_done = total > 0 and outstanding == 0
+        is_done = total > 0 and _outstanding(counts, BatchDestination(b.destination)) == 0
 
         started_at = registry.earliest_file_created_at(batch_id=b.batch_id)
         ended_at = None
@@ -487,6 +518,23 @@ def _add_batch_dialog(registry: Registry, settings: Settings) -> None:
         _render_add_batch_done(wiz)
 
 def _render_add_batch_select(registry: Registry, settings: Settings, wiz: _AddBatchWizard) -> None:
+    destination = st.radio(
+        "Take files to",
+        list(BatchDestination),
+        format_func=lambda d: (
+            "Data Vault -- the migration (recommended)"
+            if d is BatchDestination.VAULT
+            else "Data Bridge only -- stop before archiving"
+        ),
+        horizontal=True,
+        key="start_migration_destination",
+        help=(
+            "Data Vault is where the estate must land; Data Bridge is only the route "
+            "in. Data Bridge only is for a trial or a staged cutover -- those files "
+            "stay BRIDGED until someone archives them."
+        ),
+    )
+    wiz["destination"] = str(destination)
     mode = st.radio(
         "Mode",
         ["Automated folder migration", "Advanced selected-file batch"],
@@ -512,13 +560,16 @@ def _render_start_migration_automated(
     source_root = Path(source_text)
     derived_batch = derive_batch_id(source_root)
 
+    destination = BatchDestination(str(wiz.get("destination", BatchDestination.VAULT)))
     preview_count: int | None = None
+    new_files: list[MigrationFile] = []
     if not source_root.exists():
         st.warning(f"Folder not found: {source_root}")
     else:
         candidates = list(scanner.scan(source_root=source_root, pattern=settings.file_pattern))
         known = registry.known_source_paths(paths=[c.source_path for c in candidates])
-        preview_count = len([c for c in candidates if c.source_path not in known])
+        new_files = [c for c in candidates if c.source_path not in known]
+        preview_count = len(new_files)
         hidden = len(candidates) - preview_count
         if hidden:
             st.caption(f"{hidden} file(s) already migrated or in progress elsewhere.")
@@ -536,12 +587,26 @@ def _render_start_migration_automated(
         "The dashboard tracks progress from the registry after the CLI creates or "
         "updates the derived batch."
     )
+    bridge_only = destination is BatchDestination.BRIDGE
+    if bridge_only:
+        st.caption(
+            "Data Bridge only: the files are registered and validated here, then "
+            "`run` workers take them to BRIDGED and stop."
+        )
     if st.button(
         "Start automated migration",
         type="primary",
         icon=":material/rocket_launch:",
-        disabled=not source_root.exists(),
+        disabled=not source_root.exists() or (bridge_only and not new_files),
     ):
+        if bridge_only:
+            wiz["batch_id"] = derived_batch
+            _start_add_batch(registry, settings, wiz, new_files)
+            st.rerun()
+        registry.ensure_batch(
+            batch_id=derived_batch, max_concurrency=settings.max_concurrent_uploads
+        )
+        registry.set_batch_destination(batch_id=derived_batch, destination=destination)
         with st.status("Starting automated migration", expanded=True) as status:
             handle = batch_ops.start_migrate_source_subprocess(
                 source_root=source_root, environment=settings.environment
@@ -637,7 +702,13 @@ def _start_add_batch(
         file.batch_id = batch_id
 
     with st.status("Starting migration", expanded=True) as status:
-        registry.ensure_batch(batch_id=batch_id, max_concurrency=settings.max_concurrent_uploads)
+        destination = BatchDestination(str(wiz.get("destination", BatchDestination.VAULT)))
+        registry.ensure_batch(
+            batch_id=batch_id,
+            max_concurrency=settings.max_concurrent_uploads,
+            destination=destination,
+        )
+        registry.set_batch_destination(batch_id=batch_id, destination=destination)
         registered = registry.register(chosen)
         st.write(f"Registered **{registered}** file(s).")
 
@@ -653,14 +724,12 @@ def _start_add_batch(
 
         worker_count = max(1, settings.max_concurrent_uploads)
         st.write(
-            f":material/rocket_launch: Starting {worker_count} worker(s) for "
-            "upload / import / verify..."
+            f":material/rocket_launch: Starting work to **{_DESTINATION_LABEL[destination]}**..."
         )
-        handles = batch_ops.start_run_subprocesses(
+        handles = batch_ops.start_to_destination(
             registry=registry,
             batch_id=batch_id,
             count=worker_count,
-            max_files=None,
             environment=settings.environment,
         )
         pids = ", ".join(f"`{h.pid}`" for h in handles)
@@ -682,9 +751,12 @@ def _add_batch_progress(
 ) -> None:
     state = batch_ops.state_of(registry=registry, batch_id=batch_id)
     counts = batch_ops.progress(registry=registry, batch_id=batch_id)
+    destination = registry.batch_destination(batch_id)
     total = sum(counts.values())
-    outstanding = total - sum(counts[s] for s in SETTLED_STATES)
+    outstanding = _outstanding(counts, destination)
     completed = counts[FileState.COMPLETED]
+    if destination is BatchDestination.BRIDGE:
+        completed += counts[FileState.BRIDGED]
 
     with st.container(horizontal=True, vertical_alignment="center"):
         st.subheader(f"Batch {batch_id}")
@@ -692,7 +764,7 @@ def _add_batch_progress(
 
     st.progress(
         completed / total if total else 0.0,
-        text=f"{completed} of {total} file(s) migrated",
+        text=f"{completed} of {total} file(s) at {_DESTINATION_LABEL[destination]}",
     )
     st.html(_pipeline_tracker_html(_pipeline_nodes(counts)))
 
@@ -700,11 +772,10 @@ def _add_batch_progress(
         if state is BatchState.PAUSED:
             if st.button("Resume", icon=":material/play_circle:"):
                 batch_ops.resume(registry=registry, batch_id=batch_id)
-                batch_ops.start_run_subprocesses(
+                batch_ops.start_to_destination(
                     registry=registry,
                     batch_id=batch_id,
                     count=max(1, settings.max_concurrent_uploads),
-                    max_files=None,
                     environment=settings.environment,
                 )
         else:
@@ -1032,7 +1103,9 @@ def _live_log_panel(registry: Registry, batch: str) -> None:
     lines = batch_ops.tail_lines(chosen, lines=_LIVE_LOG_LINES)
     problems = [ln for ln in lines if " WARNING " in ln or " ERROR " in ln]
     quiet_minutes = (datetime.now().timestamp() - chosen.stat().st_mtime) / 60
-    outstanding = len(registry.outstanding(batch_id=batch))
+    outstanding = _outstanding(
+        registry.counts_by_state(batch_id=batch), registry.batch_destination(batch)
+    )
 
     caption = (
         f"{chosen.name} -- last written {_ago(quiet_minutes)}, "
@@ -1066,12 +1139,18 @@ def _minutes_since_activity(registry: Registry, batch: str) -> float:
     now = datetime.now(UTC).replace(tzinfo=None)
     return (now - newest).total_seconds() / 60
 
-def _launch_continue(settings: Settings, batch: str) -> None:
+def _launch_continue(registry: Registry, settings: Settings, batch: str) -> None:
+    destination = registry.batch_destination(batch)
     with st.status("Starting workers", expanded=True) as status:
-        handle = batch_ops.start_migrate_subprocess(
-            batch_id=batch, environment=settings.environment
+        handles = batch_ops.start_to_destination(
+            registry=registry,
+            batch_id=batch,
+            count=max(1, settings.max_concurrent_uploads),
+            environment=settings.environment,
         )
-        st.write(f"`migration-hub migrate --batch {batch}` started (pid `{handle.pid}`).")
+        handle = handles[0]
+        pids = ", ".join(f"`{h.pid}`" for h in handles)
+        st.write(f"Started, to **{_DESTINATION_LABEL[destination]}** (pid {pids}).")
         st.write(
             "Watch it with **Live log** below, or in PowerShell from the tree root:"
         )
@@ -1080,8 +1159,9 @@ def _launch_continue(settings: Settings, batch: str) -> None:
 
 def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str) -> None:
     counts = registry.counts_by_state(batch_id=batch)
+    destination = registry.batch_destination(batch)
     total = sum(counts.values())
-    outstanding = total - sum(counts[s] for s in SETTLED_STATES)
+    outstanding = _outstanding(counts, destination)
     pending_archives = registry.pending_archives(batch_id=batch)
     retryable = registry.files_in_states(
         states=(FileState.FAILED, FileState.ABANDONED), batch_id=batch
@@ -1092,11 +1172,16 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
         + counts[FileState.ARCHIVE_FAILED]
     )
     state = batch_ops.state_of(registry=registry, batch_id=batch)
-    display_state, display_color = _batch_display_state(state, counts)
+    display_state, display_color = _batch_display_state(state, counts, destination)
 
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.badge(display_state, color=display_color)
+            st.badge(
+                f"to {_DESTINATION_LABEL[destination]}",
+                color="violet" if destination is BatchDestination.BRIDGE else "gray",
+                icon=":material/flag:",
+            )
             st.caption(
                 f"{total} file(s), {outstanding} outstanding, "
                 f"{len(pending_archives)} pending archive, {issues} issue(s)"
@@ -1107,7 +1192,7 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
             if state is BatchState.PAUSED:
                 if st.button("Resume", icon=":material/play_circle:", key=f"resume_{batch}"):
                     batch_ops.resume(registry=registry, batch_id=batch)
-                    _launch_continue(settings, batch)
+                    _launch_continue(registry, settings, batch)
             else:
                 if st.button("Pause", icon=":material/pause_circle:", key=f"pause_{batch}"):
                     batch_ops.pause(registry=registry, batch_id=batch)
@@ -1119,10 +1204,10 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                     help=(
                         f"No worker activity for {_IDLE_MINUTES}+ minutes, so nothing is "
                         "working on this batch -- e.g. it was resumed after its workers "
-                        "exited. Starts `migrate --batch` for it."
+                        "exited. Starts it again, as far as its destination."
                     ),
                 ):
-                    _launch_continue(settings, batch)
+                    _launch_continue(registry, settings, batch)
 
             archive_label = f"Archive {len(pending_archives)} into Data Vault"
             if st.button(
@@ -1425,7 +1510,7 @@ def _render_controls_tab(registry: Registry, batch: str) -> None:
 def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
     counts = registry.counts_by_state(batch_id=batch)
     pending_archive = len(registry.pending_archives(batch_id=batch))
-    outstanding = len(registry.outstanding(batch_id=batch))
+    outstanding = _outstanding(counts, registry.batch_destination(batch))
     failures = (
         counts[FileState.FAILED]
         + counts[FileState.ABANDONED]

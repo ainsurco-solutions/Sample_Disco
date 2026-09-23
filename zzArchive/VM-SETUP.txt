@@ -253,6 +253,10 @@ with it; see 1d below.
 
 BEFORE THE FIRST RUN, MIGRATE THE REGISTRY:
 
+(2026-09-23: the publish carrying TASK-0092 adds a column -- the batch's
+destination, Data Vault or Data Bridge only. Run upgrade_db.bat after
+copying it, before starting the dashboard.)
+
   python -m alembic upgrade head
 
 or double-click scripts\upgrade_db.bat, which snapshots the registry
