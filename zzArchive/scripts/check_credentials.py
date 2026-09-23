@@ -52,9 +52,6 @@ def _step_settings() -> Settings:
     if "REPLACE_WITH" in settings.api_host:
         print(f"{_NO} api_host is still the shipped placeholder -- nothing will work")
         raise SystemExit(2)
-    if not settings.databridge_instance_name:
-        print(f"{_NO} databridge_instance_name is not set in config/{environment}.json")
-        raise SystemExit(2)
     return settings
 
 def _step_api_key(settings: Settings) -> str:
@@ -78,11 +75,27 @@ def _step_sql_instances(adapter: DatabridgeAdapter, settings: Settings) -> None:
     instances = adapter.list_sql_instances()
     names = [i.name for i in instances]
     print(f"{_OK} {len(instances)} instance(s): {', '.join(names) or '(none)'}")
+
+    if not settings.databridge_instance_name:
+        environment = os.environ.get("MIGRATION_HUB_ENV", "dev")
+        print(f"{_NO} databridge_instance_name is not set in config/{environment}.json")
+        if names:
+            print("       set it to one of the names above, exactly as printed:")
+            for name in names:
+                print(f'         "databridge_instance_name": "{name}"')
+            print("       the name is the import DESTINATION in the Moody's tenant,")
+            print("       not one of your on-prem SQL servers.")
+        else:
+            print("       the tenant reports no SQL instances -- ask Moody's which")
+            print("       instance this key is entitled to import into.")
+        raise SystemExit(2)
+
     if settings.databridge_instance_name not in names:
         print(
             f"{_NO} configured databridge_instance_name "
             f"{settings.databridge_instance_name!r} is not among them"
         )
+        print(f"       valid: {', '.join(names) or '(none)'}")
         raise SystemExit(1)
     print(f"{_OK} {settings.databridge_instance_name!r} confirmed present")
 
