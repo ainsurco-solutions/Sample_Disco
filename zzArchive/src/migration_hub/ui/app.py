@@ -581,12 +581,50 @@ def _render_needs_action_queue(registry: Registry, settings: Settings | None = N
                 break
             _render_needs_action_rows([row], offset=i)
 
+def _is_already_on_target(file: MigrationFile) -> bool:
+    error = file.last_error or ""
+    return error.startswith(ALREADY_ON_TARGET) or (
+        " 409 " in error and "already exists" in error.lower()
+    )
+
 def _already_on_target(registry: Registry, batch_id: str) -> int:
     return sum(
         1
         for file in registry.files_in_states(states=[FileState.ABANDONED], batch_id=batch_id)
-        if (file.last_error or "").startswith(ALREADY_ON_TARGET)
+        if _is_already_on_target(file)
     )
+
+def _adopt_warning(adopting: Sequence[MigrationFile]) -> str:
+    names = ", ".join(f"`{f.source_database}`" for f in adopting[:5])
+    more = f" and {len(adopting) - 5} more" if len(adopting) > 5 else ""
+    return (
+        f"**Retry will not upload {len(adopting)} of these file(s) -- a database "
+        f"with the same name is already on Data Bridge:** {names}{more}.\n\n"
+        "Retry **adopts the database already there** as this file's copy: if it "
+        "is in Data Vault the file is marked COMPLETED; otherwise it is marked "
+        "BRIDGED and *that* copy is archived into Data Vault. It may be from an "
+        "earlier run, another developer or a manual import -- continue only if "
+        "it is the right database."
+    )
+
+def _retry_confirmed(key: str, clicked: bool, adopting: Sequence[MigrationFile]) -> bool:
+    flag = f"confirm_retry_{key}"
+    if clicked and not adopting:
+        return True
+    if clicked:
+        st.session_state[flag] = True
+    if not st.session_state.get(flag):
+        return False
+    with st.container(border=True):
+        st.warning(_adopt_warning(adopting), icon=":material/warning:")
+        with st.container(horizontal=True):
+            if st.button("Retry and adopt", type="primary", key=f"{flag}_yes"):
+                st.session_state.pop(flag, None)
+                return True
+            if st.button("Cancel", key=f"{flag}_no"):
+                st.session_state.pop(flag, None)
+                st.rerun()
+    return False
 
 def _render_needs_action_rows(rows: list[dict[str, str | int]], *, offset: int) -> None:
     for i, row in enumerate(rows, start=offset):
@@ -1331,7 +1369,13 @@ def _render_retry_action(
     if not retryable:
         return
 
-    if st.button(f"Retry {len(retryable)} failed/abandoned file(s)", icon=":material/replay:"):
+    clicked = st.button(
+        f"Retry {len(retryable)} failed/abandoned file(s)",
+        icon=":material/replay:",
+        key=f"retry_files_tab_{batch}",
+    )
+    adopting = [f for f in retryable if _is_already_on_target(f)]
+    if _retry_confirmed(f"files_tab_{batch}", clicked, adopting):
         with st.status("Retrying", expanded=True) as status:
             handle = batch_ops.start_retry_subprocess(
                 batch_id=batch, environment=settings.environment
@@ -1604,20 +1648,23 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                     )
 
             retry_label = f"Retry {len(retryable)} failed/abandoned"
-            if st.button(
+            retry_clicked = st.button(
                 retry_label,
                 icon=":material/replay:",
                 disabled=not retryable,
                 key=f"retry_{batch}",
-            ):
-                with st.status("Retrying", expanded=True) as status:
-                    handle = batch_ops.start_retry_subprocess(
-                        batch_id=batch, environment=settings.environment
-                    )
-                    st.write(f"Retry started (pid `{handle.pid}`). Output: `{handle.log_path}`")
-                    _note_launch(batch, "Retry", handle)
-                    status.update(label="Handed off to the retry", state="complete", expanded=False)
-                st.rerun()
+            )
+
+        adopting = [f for f in retryable if _is_already_on_target(f)]
+        if _retry_confirmed(f"bar_{batch}", retry_clicked, adopting):
+            with st.status("Retrying", expanded=True) as status:
+                handle = batch_ops.start_retry_subprocess(
+                    batch_id=batch, environment=settings.environment
+                )
+                st.write(f"Retry started (pid `{handle.pid}`). Output: `{handle.log_path}`")
+                _note_launch(batch, "Retry", handle)
+                status.update(label="Handed off to the retry", state="complete", expanded=False)
+            st.rerun()
 
 def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
     files_tab, activity_tab, controls_tab, diagnostics_tab = st.tabs(
@@ -1670,10 +1717,11 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
                         **st.column_config.TextColumn("Duration"),
                         "alignment": "center",
                     },
-                    "last_error": {
-                        **st.column_config.TextColumn("Last error"),
-                        "alignment": "center",
-                    },
+                    "last_error": st.column_config.TextColumn(
+                        "Last error",
+                        width="large",
+                        help="Select the row to read the whole error below the table.",
+                    ),
                 },
                 hide_index=True,
                 key=table_key,
@@ -1746,7 +1794,6 @@ def _render_file_detail_panel(
             ("Uploaded at", file.uploaded_at),
             ("Archived at", file.archived_at),
             ("Archive expiration", file.archive_expiration_date),
-            ("Last error", file.last_error),
         ]
         st.dataframe(
             [{"field": label, "value": _display_value(value)} for label, value in detail_rows],
@@ -1757,6 +1804,17 @@ def _render_file_detail_panel(
             hide_index=True,
             width="stretch",
         )
+
+        if file.last_error:
+            st.caption("Last error")
+            st.code(file.last_error, language=None, wrap_lines=True)
+            if _is_already_on_target(file):
+                st.info(
+                    "Not uploaded: Data Bridge already holds a database with this "
+                    "name. **Retry file** adopts that database (Data Vault first, "
+                    "then archive only) -- it asks you to confirm first.",
+                    icon=":material/info:",
+                )
 
         state_tab, calls_tab, support_tab = st.tabs(["State history", "Vendor calls", "Support"])
         with state_tab:
@@ -1851,11 +1909,16 @@ def _render_file_detail_panel(
             )
             action_cols = st.columns(2)
             with action_cols[0]:
-                if st.button(
+                retry_file_clicked = st.button(
                     "Retry file",
                     icon=":material/replay:",
                     disabled=not retryable,
                     key=f"retry_file_{file.file_id}",
+                )
+                if _retry_confirmed(
+                    f"file_{file.file_id}",
+                    retry_file_clicked,
+                    [file] if _is_already_on_target(file) else [],
                 ):
                     with st.status("Retrying file", expanded=True) as status:
                         handle = batch_ops.start_retry_subprocess(
