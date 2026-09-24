@@ -35,6 +35,7 @@ class MigrationWorker:
         max_poll_minutes: float = 30.0,
         instance_name: str | None = None,
         instances: dict[str, str] | None = None,
+        group_ids: list[str] | None = None,
         archive: Callable[[int, str | None], FileState] | None = None,
     ) -> None:
         self._registry = registry
@@ -47,6 +48,7 @@ class MigrationWorker:
         self._max_poll_minutes = max_poll_minutes
         self._instance_name = instance_name
         self._instances = dict(instances or {})
+        self._group_ids = list(group_ids or [])
         self._dry_run_seen: set[int] = set()
 
     def run_once(self, *, batch_id: str) -> FileState | None:
@@ -127,6 +129,7 @@ class MigrationWorker:
                 database_name=database_name,
                 file_extension="bak",
                 source=Path(source_path),
+                group_ids=self._group_ids,
             )
 
         self._registry.transition(

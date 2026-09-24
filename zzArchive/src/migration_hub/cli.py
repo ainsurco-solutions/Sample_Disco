@@ -117,6 +117,7 @@ def run(
             ),
             instance_name=settings.databridge_instance_name,
             instances=settings.databridge_instances,
+            group_ids=settings.databridge_group_ids,
         )
     finally:
         adapter.close()
@@ -176,6 +177,7 @@ def migrate(
         max_poll_minutes=settings.max_poll_minutes,
         instance_name=settings.databridge_instance_name,
         instances=settings.databridge_instances,
+        group_ids=settings.databridge_group_ids,
         max_archive_attempts=settings.max_archive_attempts,
         compute_checksum=settings.compute_checksums,
         on_progress=lambda message: typer.echo(message),

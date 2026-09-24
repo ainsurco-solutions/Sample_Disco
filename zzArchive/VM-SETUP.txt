@@ -27,6 +27,23 @@ BLOCKED -- see the note on STEP 1.
 
 
 -----------------------------------------------------------------------
+BEFORE COPYING THE 2026-09-24 PUBLISH -- add the Data Bridge group id
+-----------------------------------------------------------------------
+From this publish (TASK-0072) every import sends Data Bridge the
+tenant's access-control group id, and the setting is REQUIRED: without
+it every migration-hub command and the dashboard refuse to start with
+"databridge_group_ids".
+
+BEFORE copying the new files, open config\prod.json and add, next to
+the other databridge_ settings:
+
+  "databridge_group_ids": ["d3360f21-a0dc-4d6e-8a18-805da7a6ea3c"],
+
+It is an identifier, not a secret. Then copy, run check_copy, and prove
+the import still works with a ONE-file batch before anything larger --
+the import request itself changed.
+
+-----------------------------------------------------------------------
 RUNNING THE AMIGO SCREENS (Streamlit UI)
 -----------------------------------------------------------------------
 This is the review UI for the Migration Hub itself -- batches, files and

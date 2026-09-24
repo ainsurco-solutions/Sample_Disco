@@ -36,7 +36,12 @@
     "scripts/check_credentials.py to list them (they are hyphenated).",
     "",
     "databridge_instance_name is the older single-destination form, still",
-    "accepted for a batch whose files all come from one server."
+    "accepted for a batch whose files all come from one server.",
+    "",
+    "databridge_group_ids: access-control groups for the import POST body",
+    "(databridge/v1's groupIds), required -- Settings.load fails if this is",
+    "missing or empty. Replace with the real group ID(s) for this tenant --",
+    "see ADR-0008."
   ],
 
   "environment": "prod",
@@ -50,6 +55,7 @@
     "sriskpd0101": "databridge-1",
     "sriskpd0001": "databridge-2"
   },
+  "databridge_group_ids": ["REPLACE_WITH_GROUP_ID"],
 
   "max_concurrent_uploads": 1,
   "poll_interval_seconds": 60,

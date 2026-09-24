@@ -64,6 +64,7 @@ def run_automated_migration(
     max_poll_minutes: float,
     instance_name: str | None,
     instances: dict[str, str] | None = None,
+    group_ids: list[str] | None = None,
     max_archive_attempts: int | None = None,
     compute_checksum: bool = False,
     on_progress: Callable[[str], None] | None = None,
@@ -119,6 +120,7 @@ def run_automated_migration(
             poll_interval_seconds=poll_interval_seconds, max_poll_minutes=max_poll_minutes,
             instance_name=instance_name,
             instances=instances,
+            group_ids=group_ids,
             archive_after_bridge=not dry_run,
             max_archive_attempts=max_archive_attempts,
         )

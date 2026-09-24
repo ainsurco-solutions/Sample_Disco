@@ -11,7 +11,12 @@
     "makes the file fail to load.",
     "",
     "Files upload directly from source_root, the share RatCat wrote the",
-    "backups to -- no local staging copy, no extra writes."
+    "backups to -- no local staging copy, no extra writes.",
+    "",
+    "databridge_group_ids: access-control groups for the import POST body",
+    "(databridge/v1's groupIds), required -- Settings.load fails if this is",
+    "missing or empty. Replace with the real group ID(s) for this tenant --",
+    "see ADR-0008."
   ],
 
   "environment": "dev",
@@ -22,6 +27,7 @@
   "api_host": "REPLACE_WITH_MOODYS_HOST",
   "api_key_env_var": "MOODYS_API_KEY",
   "databridge_instance_name": "REPLACE_WITH_SQL_INSTANCE_NAME",
+  "databridge_group_ids": ["REPLACE_WITH_GROUP_ID"],
 
   "max_concurrent_uploads": 1,
   "poll_interval_seconds": 60,

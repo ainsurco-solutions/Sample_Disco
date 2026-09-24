@@ -60,6 +60,7 @@ def run_worker_loop(
     on_outcome: Callable[[FileState, int], None] | None = None,
     instance_name: str | None = None,
     instances: dict[str, str] | None = None,
+    group_ids: list[str] | None = None,
     archive_after_bridge: bool = False,
     max_archive_attempts: int | None = None,
 ) -> dict[FileState, int]:
@@ -73,6 +74,7 @@ def run_worker_loop(
         max_poll_minutes=max_poll_minutes,
         instance_name=instance_name,
         instances=instances,
+        group_ids=group_ids,
         archive=(
             partial(
                 _archive_bridged_file,

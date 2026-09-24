@@ -8,10 +8,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+from pandas.io.formats.style import Styler
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
@@ -1113,9 +1115,40 @@ def _file_state_color(raw: str) -> _BadgeColor:
         return "red"
     if state is FileState.COMPLETED:
         return "green"
-    if state in (FileState.BRIDGED, FileState.ARCHIVING):
-        return "violet"
+    if state is FileState.BRIDGED:
+        return "orange"
+    if state in (FileState.DISCOVERED, FileState.VALIDATED):
+        return "gray"
     return "blue"
+
+def _file_state_priority(raw: str) -> int:
+    state = _known_file_state(raw)
+    if state is None:
+        return 5
+    if state in _PROBLEM_STATES:
+        return 1
+    if state is FileState.BRIDGED:
+        return 2
+    if state in (FileState.DISCOVERED, FileState.VALIDATED):
+        return 3
+    if state is FileState.COMPLETED:
+        return 4
+    return 0
+
+def _file_table_style(rows: list[dict[str, object]], *, dark: bool) -> Styler:
+    tones = {
+        "green": ("#1F5B41", "#E4F3EA") if not dark else ("#8FDBB6", "#113023"),
+        "orange": ("#7A4E0A", "#FBF0DF") if not dark else ("#EFC978", "#302610"),
+        "red": ("#8A2C2C", "#FBE9E9") if not dark else ("#F1A9A4", "#33191A"),
+        "blue": ("#141052", "#E8E7F2") if not dark else ("#7FEFF5", "#0E2A2D"),
+        "gray": ("#3F4C57", "#F8F8F8") if not dark else ("#B7C2CA", "#161D24"),
+    }
+
+    def state_style(value: object) -> str:
+        foreground, background = tones[_file_state_color(str(value))]
+        return f"color: {foreground}; background-color: {background}; font-weight: 600"
+
+    return pd.DataFrame(rows).style.set_uuid("file_progress").map(state_style, subset=["state"])
 
 def _file_table_rows(
     files: Sequence[MigrationFile], terminal_times: dict[int, datetime]
@@ -1129,12 +1162,13 @@ def _file_table_rows(
             "progress": _file_progress(f.state),
             "size_mb": round(f.size_bytes / (1024 * 1024), 1),
             "attempts": f.attempts,
+            "archive_attempts": f.archive_attempts,
             "started_at": f.created_at,
             "ended_at": terminal_times.get(f.file_id),
             "duration": _format_duration(f.created_at, terminal_times.get(f.file_id)),
             "last_error": f.last_error,
         }
-        for f in files
+        for f in sorted(files, key=lambda file: (_file_state_priority(file.state), file.file_id))
     ]
 
 def _support_bundle_filename(file: MigrationFile) -> str:
@@ -1433,7 +1467,7 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
 
 def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
     files_tab, activity_tab, controls_tab, diagnostics_tab = st.tabs(
-        ["Files", "Activity", "Controls", "Diagnostics"]
+        ["Files", "Activity", "Controls", "Health"]
     )
 
     with files_tab:
@@ -1450,31 +1484,46 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
             if st.session_state.get(selected_key) not in file_by_id:
                 st.session_state.pop(selected_key, None)
 
-            event = st.dataframe(
-                rows,
+            file_ids = [cast(int, row["file_id"]) for row in rows]
+            snapshot = sha256(json.dumps(file_ids).encode()).hexdigest()[:16]
+            table_key = f"files_table_{batch}_{snapshot}"
+            st.session_state[f"active_files_table_{batch}"] = table_key
+            st.dataframe(
+                _file_table_style(rows, dark=st.context.theme.type == "dark"),
                 column_config={
                     "file_id": st.column_config.NumberColumn("ID", pinned=True),
                     "source_database": st.column_config.TextColumn("Source EDM"),
                     "target_exposure_name": st.column_config.TextColumn("Target exposure"),
-                    "state": st.column_config.TextColumn("State"),
+                    "state": {**st.column_config.TextColumn("State"), "alignment": "center"},
                     "progress": st.column_config.ProgressColumn(
                         "Progress", min_value=0, max_value=100, format="%d%%"
                     ),
                     "size_mb": st.column_config.NumberColumn("Size (MB)", format="%.1f"),
                     "attempts": st.column_config.NumberColumn("Attempts"),
-                    "started_at": st.column_config.DatetimeColumn("Started", format="HH:mm:ss"),
-                    "ended_at": st.column_config.DatetimeColumn("Ended", format="HH:mm:ss"),
-                    "duration": st.column_config.TextColumn("Duration"),
-                    "last_error": st.column_config.TextColumn("Last error"),
+                    "archive_attempts": st.column_config.NumberColumn("Archive attempts"),
+                    "started_at": {
+                        **st.column_config.DatetimeColumn("Started", format="HH:mm:ss"),
+                        "alignment": "center",
+                    },
+                    "ended_at": {
+                        **st.column_config.DatetimeColumn("Ended", format="HH:mm:ss"),
+                        "alignment": "center",
+                    },
+                    "duration": {
+                        **st.column_config.TextColumn("Duration"),
+                        "alignment": "center",
+                    },
+                    "last_error": {
+                        **st.column_config.TextColumn("Last error"),
+                        "alignment": "center",
+                    },
                 },
                 hide_index=True,
-                key=f"files_table_{batch}",
-                on_select="rerun",
+                key=table_key,
+                on_select=lambda: _select_file_from_table(table_key, batch, file_ids),
                 selection_mode="single-row",
+                height=min(390, 38 + 35 * len(rows)),
             )
-            selected_rows = _selected_rows(event)
-            if selected_rows:
-                st.session_state[selected_key] = rows[selected_rows[0]]["file_id"]
 
             selected_file_id = st.session_state.get(selected_key)
             selected_file = (
@@ -1491,6 +1540,18 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
 
     with diagnostics_tab:
         _render_diagnostics_tab(registry, batch)
+
+def _select_file_from_table(table_key: str, batch: str, file_ids: list[int]) -> None:
+    if st.session_state.get(f"active_files_table_{batch}") != table_key:
+        return
+    rows = st.session_state[table_key]["selection"]["rows"]
+    selection = (table_key, tuple(rows))
+    last_selection_key = f"file_table_last_selection_{batch}"
+    if st.session_state.get(last_selection_key) == selection:
+        return
+    st.session_state[last_selection_key] = selection
+    if rows and 0 <= rows[0] < len(file_ids):
+        st.session_state[f"selected_file_{batch}"] = file_ids[rows[0]]
 
 def _display_value(value: object) -> str:
     if value is None:
@@ -1824,14 +1885,33 @@ def _render_activity_tab(registry: Registry, batch: str) -> None:
 
 def _render_controls_tab(registry: Registry, settings: Settings, batch: str) -> None:
     runs = registry.list_batch_runs(batch_id=batch)
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.badge("Target workflow", color="green", icon=":material/fact_check:")
-        st.caption("Formal run controls launch the same CLI commands as the runbook.")
-
     if not runs:
-        st.info("No control records have been opened for this batch yet.")
+        st.subheader("No control run recorded")
         _render_controls_open_form(settings, batch)
         return
+
+    selected_key = f"controls_selected_run_{batch}"
+    run_by_id = {str(run.run_id): run for run in runs}
+    if st.session_state.get(selected_key) not in run_by_id:
+        st.session_state[selected_key] = str(runs[-1].run_id)
+    selected_id = st.selectbox(
+        "Control run",
+        list(run_by_id),
+        format_func=lambda run_id: f"Run {run_by_id[run_id].run_seq} - {run_by_id[run_id].trigger}",
+        key=selected_key,
+    )
+    selected_run = run_by_id[selected_id]
+    _render_selected_control_run_summary(registry, selected_run)
+    _render_control_issues(registry, selected_run)
+    _render_control_actions(registry, settings, selected_run)
+
+    _, reasons = batch_ops.exit_criteria_met(registry=registry, batch_id=batch)
+    with st.expander("Batch completion checks"):
+        if reasons:
+            for reason in reasons:
+                st.write(reason)
+        else:
+            st.caption("All runs closed; latest run signed off.")
 
     rows: list[dict[str, object]] = []
     for run in runs:
@@ -1861,46 +1941,24 @@ def _render_controls_tab(registry: Registry, settings: Settings, batch: str) -> 
             }
         )
 
-    selected_key = f"controls_selected_run_{batch}"
-    if st.session_state.get(selected_key) not in {str(run.run_id) for run in runs}:
-        st.session_state[selected_key] = str(runs[-1].run_id)
-
-    event = st.dataframe(
-        rows,
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config={
-            "run_id": st.column_config.TextColumn("Run id"),
-            "run_seq": st.column_config.NumberColumn("Run"),
-            "started_at": st.column_config.DatetimeColumn("Started", format="YYYY-MM-DD HH:mm"),
-            "finished_at": st.column_config.DatetimeColumn("Finished", format="YYYY-MM-DD HH:mm"),
-            "source_count": st.column_config.NumberColumn("Source"),
-            "target_count": st.column_config.NumberColumn("Target"),
-            "retry_count": st.column_config.NumberColumn("Retries"),
-            "signed_off_by": st.column_config.TextColumn("Signed off by"),
-        },
-        hide_index=True,
-        key=f"controls_runs_{batch}",
-    )
-    selected_rows = _selected_rows(event)
-    if selected_rows:
-        st.session_state[selected_key] = str(rows[selected_rows[0]]["run_id"])
-
-    selected_run = _selected_control_run(runs, str(st.session_state[selected_key]))
-    if selected_run is None:
-        st.info("Select a control run to act on it.")
-        return
-
-    st.space("small")
-    _render_selected_control_run_summary(registry, selected_run)
-    st.space("small")
-    _render_control_actions(registry, settings, selected_run)
-
-def _selected_control_run(runs: Sequence[BatchRun], run_id: str) -> BatchRun | None:
-    for run in runs:
-        if str(run.run_id) == run_id:
-            return run
-    return None
+    with st.expander(f"Run history ({len(runs)})"):
+        st.dataframe(
+            rows,
+            column_config={
+                "run_id": st.column_config.TextColumn("Run id"),
+                "run_seq": st.column_config.NumberColumn("Run"),
+                "started_at": st.column_config.DatetimeColumn("Started", format="YYYY-MM-DD HH:mm"),
+                "finished_at": st.column_config.DatetimeColumn(
+                    "Finished", format="YYYY-MM-DD HH:mm"
+                ),
+                "source_count": st.column_config.NumberColumn("Source"),
+                "target_count": st.column_config.NumberColumn("Target"),
+                "retry_count": st.column_config.NumberColumn("Retries"),
+                "signed_off_by": st.column_config.TextColumn("Signed off by"),
+            },
+            hide_index=True,
+            height=min(285, 38 + 35 * len(rows)),
+        )
 
 def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> None:
     live = (
@@ -1910,6 +1968,17 @@ def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> N
     )
     outstanding = live.outstanding_count if live else run.outstanding_count
     exceptions = live.exception_count if live else run.exception_count
+
+    if run.status == str(controls.RunStatus.ABORTED):
+        st.subheader("Control run aborted")
+    elif run.signed_off_at is not None:
+        st.subheader("Run signed off")
+    elif live:
+        st.subheader("Closure blocked" if outstanding else "Ready to close")
+    elif run.status == str(controls.RunStatus.EXCEPTIONS):
+        st.subheader("Closed with exceptions")
+    else:
+        st.subheader("Ready for sign-off")
 
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
@@ -1941,6 +2010,33 @@ def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> N
         if run.notes:
             st.caption(f"Notes: {run.notes}")
 
+def _render_control_issues(registry: Registry, run: BatchRun) -> None:
+    settled = SETTLED_STATES | done_states(registry.batch_destination(run.batch_id))
+    files = registry.batch_files(batch_id=run.batch_id)
+    running = run.status == str(controls.RunStatus.RUNNING)
+    issues = [file for file in files if file.state not in settled or file.state in _PROBLEM_STATES]
+    if not issues:
+        return
+    with st.expander(f"Current file issues ({len(issues)})", expanded=running):
+        st.dataframe(
+            [
+                {
+                    "ID": file.file_id,
+                    "Source EDM": file.source_database,
+                    "State": file.state,
+                    "Closure": "Blocked" if file.state not in settled else "Settled exception",
+                    "Recorded reason": file.last_error or "Not recorded",
+                }
+                for file in sorted(
+                    issues, key=lambda file: (_file_state_priority(file.state), file.file_id)
+                )
+            ],
+            hide_index=True,
+            height=min(285, 38 + 35 * len(issues)),
+        )
+        if not running:
+            st.caption("Current batch state; closed run totals remain frozen.")
+
 def _render_control_actions(registry: Registry, settings: Settings, run: BatchRun) -> None:
     status = controls.RunStatus(run.status)
     outstanding = (
@@ -1952,12 +2048,14 @@ def _render_control_actions(registry: Registry, settings: Settings, run: BatchRu
 
     if status is controls.RunStatus.RUNNING:
         if outstanding:
-            st.warning(
-                f"{outstanding} file(s) still look unsettled in the registry. "
-                "The CLI will make the final close decision."
-            )
+            st.caption(f"{outstanding} unsettled file(s); closure requires no outstanding work.")
         with st.container(horizontal=True):
-            if st.button("Close run", icon=":material/check_circle:", key=f"close_run_{run_id}"):
+            if st.button(
+                "Close run",
+                icon=":material/check_circle:",
+                key=f"close_run_{run_id}",
+                help="Reconcile and freeze totals. The CLI rechecks closure eligibility.",
+            ):
                 _launch_control_command(
                     "Close run",
                     batch_ops.start_controls_close_subprocess(
@@ -1968,9 +2066,27 @@ def _render_control_actions(registry: Registry, settings: Settings, run: BatchRu
             _render_abort_control_form(settings, run_id, run.batch_id)
         return
 
+    if status is controls.RunStatus.EXCEPTIONS and run.signed_off_at is None:
+        st.caption(
+            "Run-level acceptance only. File outcomes stay unchanged; "
+            "individual accept/ignore decisions are not yet supported."
+        )
+    missing_reasons = (
+        [
+            file.file_id
+            for file in registry.files_in_states(
+                states=[FileState.ABANDONED, FileState.ARCHIVE_FAILED], batch_id=run.batch_id
+            )
+            if not file.last_error
+        ]
+        if status is controls.RunStatus.EXCEPTIONS
+        else []
+    )
+    if missing_reasons and run.signed_off_at is None:
+        st.caption(f"Sign-off blocked: no recorded reason for file IDs {missing_reasons}.")
     with st.container(horizontal=True):
         _render_export_control_form(settings, run)
-        if st.button("Verify", icon=":material/fact_check:", key=f"verify_run_{run_id}"):
+        if st.button("Verify totals", icon=":material/fact_check:", key=f"verify_run_{run_id}"):
             _launch_control_command(
                 "Verify run",
                 batch_ops.start_controls_verify_subprocess(
@@ -1982,7 +2098,8 @@ def _render_control_actions(registry: Registry, settings: Settings, run: BatchRu
         if st.button(
             "Sign off",
             icon=":material/approval:",
-            disabled=signed or status is controls.RunStatus.ABORTED,
+            disabled=signed or status is controls.RunStatus.ABORTED or bool(missing_reasons),
+            help="Accept this closed run. The CLI marks the batch DONE only when all checks pass.",
             key=f"sign_off_run_{run_id}",
         ):
             st.session_state[f"sign_off_form_{run_id}"] = True
@@ -1991,7 +2108,12 @@ def _render_control_actions(registry: Registry, settings: Settings, run: BatchRu
     elif status is controls.RunStatus.ABORTED:
         st.caption("Aborted runs are recorded with a reason rather than signed off.")
 
-    if st.session_state.get(f"sign_off_form_{run_id}"):
+    if (
+        st.session_state.get(f"sign_off_form_{run_id}")
+        and not signed
+        and status is not controls.RunStatus.ABORTED
+        and not missing_reasons
+    ):
         _render_sign_off_control_form(settings, run_id, run.batch_id)
 
 def _render_controls_open_form(settings: Settings, batch: str) -> None:
@@ -2017,7 +2139,8 @@ def _render_controls_open_form(settings: Settings, batch: str) -> None:
         )
 
 def _render_abort_control_form(settings: Settings, run_id: str, batch: str) -> None:
-    with st.popover("Abort with reason", icon=":material/cancel:"):
+    with st.popover("Abort control record", icon=":material/cancel:"):
+        st.caption("The migration worker is not stopped by this action.")
         reason = st.text_area("Reason", key=f"abort_reason_{run_id}")
         if st.button(
             "Abort run",
@@ -2060,18 +2183,21 @@ def _render_export_control_form(settings: Settings, run: BatchRun) -> None:
 
 def _render_sign_off_control_form(settings: Settings, run_id: str, batch: str) -> None:
     with st.form(f"sign_off_{run_id}", border=True):
+        st.write(f"**Confirm sign-off: {batch}**")
         by = st.text_input("Operator", value=_default_operator())
         left, right = st.columns(2)
         submitted = left.form_submit_button(
             "Sign off run",
             icon=":material/approval:",
-            disabled=not by.strip(),
         )
         cancelled = right.form_submit_button("Cancel")
     if cancelled:
         st.session_state.pop(f"sign_off_form_{run_id}", None)
         st.rerun()
     if submitted:
+        if not by.strip():
+            st.error("Operator is required for sign-off.")
+            return
         _launch_control_command(
             "Sign off run",
             batch_ops.start_controls_sign_off_subprocess(
@@ -2110,6 +2236,17 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
     )
     quiet = _minutes_since_activity(registry, batch)
 
+    st.subheader("Batch health")
+    if failures:
+        st.badge(f"{failures} file issue(s)", color="red", icon=":material/error:")
+    if outstanding and quiet >= _IDLE_MINUTES:
+        st.badge("No recent activity", color="orange", icon=":material/schedule:")
+        st.caption(
+            "Outstanding work with no recent registry activity; worker status is unconfirmed."
+        )
+    elif not outstanding and not failures and not pending_archive:
+        st.badge("No open file issues", color="green", icon=":material/check_circle:")
+
     cols = st.columns(4)
     tiles = [
         ("Outstanding", outstanding, "not in a settled state"),
@@ -2118,8 +2255,7 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
         (
             "Last activity",
             _ago(quiet) if quiet != float("inf") else "never",
-            "state change or vendor call"
-            + (" -- nothing is working on it" if outstanding and quiet >= _IDLE_MINUTES else ""),
+            "state change or vendor call",
         ),
     ]
     for col, (label, value, caption) in zip(cols, tiles, strict=True):
@@ -2131,14 +2267,7 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
         st.caption("Files by state:")
         for state in FileState:
             if counts[state]:
-                color: _BadgeColor = (
-                    "red"
-                    if state in _PROBLEM_STATES
-                    else "green"
-                    if state is FileState.COMPLETED
-                    else "blue"
-                )
-                st.badge(f"{state} {counts[state]}", color=color)
+                st.badge(f"{state} {counts[state]}", color=_file_state_color(state))
 
     st.space("small")
     _render_operational_observability(registry, batch_id=batch)

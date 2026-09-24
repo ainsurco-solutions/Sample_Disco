@@ -11,6 +11,7 @@ _SRC = _HERE.parent / "src"
 if _SRC.is_dir():
     sys.path.insert(0, str(_SRC))
 
+from dotenv import load_dotenv
 from sqlalchemy import Engine
 
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
@@ -41,6 +42,7 @@ def _config_dir() -> Path:
 
 def _step_settings() -> Settings:
     print("1. Loading settings")
+    load_dotenv(Path.cwd() / ".env", override=False)
     environment = os.environ.get("MIGRATION_HUB_ENV", "dev")
     os.environ.setdefault("MIGRATION_HUB_DATABASE_URL", "sqlite://")
     config_dir = _config_dir()

@@ -20,6 +20,7 @@ def run_worker_pool(
     max_poll_minutes: float,
     instance_name: str | None,
     instances: dict[str, str] | None = None,
+    group_ids: list[str] | None = None,
     archive_after_bridge: bool = False,
     max_archive_attempts: int | None = None,
 ) -> dict[FileState, int]:
@@ -46,6 +47,7 @@ def run_worker_pool(
                 max_poll_minutes=max_poll_minutes,
                 instance_name=instance_name,
                 instances=instances,
+                group_ids=group_ids,
                 archive_after_bridge=archive_after_bridge,
                 max_archive_attempts=max_archive_attempts,
             )

@@ -36,6 +36,8 @@ class Settings(BaseModel):
     databridge_instance_name: str | None = None
     databridge_instances: dict[str, str] = Field(default_factory=dict)
 
+    databridge_group_ids: list[str]
+
     max_concurrent_uploads: int = 1
     poll_interval_seconds: int = 60
     max_poll_minutes: int = 360
@@ -104,6 +106,15 @@ class Settings(BaseModel):
                 f"claim_timeout_minutes ({self.claim_timeout_minutes}) must exceed "
                 f"max_poll_minutes ({self.max_poll_minutes}) -- otherwise reap/"
                 "poll_running_imports can reclaim a claim a live worker still owns"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _group_ids_not_empty(self) -> Settings:
+        if not self.databridge_group_ids:
+            raise ValueError(
+                "databridge_group_ids must not be empty -- set the real group "
+                "ID(s) for this environment (see ADR-0008)"
             )
         return self
 
