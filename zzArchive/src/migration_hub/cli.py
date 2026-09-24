@@ -187,6 +187,13 @@ def migrate(
     breakdown = ", ".join(f"{count} {state}" for state, count in sorted(result.outcomes.items()))
     retried = f" after {result.passes} passes" if result.passes > 1 else ""
     typer.echo(f"batch {result.batch_id!r}{retried}, files by final state: {breakdown}")
+    if result.status == "PAUSED":
+        typer.secho(
+            f"batch {result.batch_id!r} is PAUSED -- stopped after the files in hand, "
+            "nothing closed. Resume (dashboard) or `migrate --batch` continues.",
+            fg=typer.colors.YELLOW,
+        )
+        return
     typer.echo(f"run {result.run_id} status={result.status}")
     if result.signed_off:
         typer.secho(f"signed off automatically as {result.signed_off_by!r}", fg=typer.colors.GREEN)

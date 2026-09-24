@@ -270,8 +270,7 @@ def start_run_subprocesses(
     max_files: int | None = None,
     environment: str | None = None,
 ) -> list[WorkerHandle]:
-    batch = registry.get_batch(batch_id)
-    effective_count = count if batch is None else min(count, max(batch.max_concurrency, 1))
+    effective_count = max(count, 1)
     return [
         start_run_subprocess(batch_id=batch_id, max_files=max_files, environment=environment)
         for _ in range(effective_count)

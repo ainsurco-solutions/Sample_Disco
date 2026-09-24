@@ -39,6 +39,10 @@ def check_source_folder(source_root: Path) -> None:
 
 AUTO_SIGN_OFF_ACTOR = "migration-hub-auto"
 
+def _is_paused(registry: Registry, batch_id: str) -> bool:
+    batch = registry.get_batch(batch_id)
+    return batch is not None and batch.state == str(BatchState.PAUSED)
+
 def mark_running(registry: Registry, batch_id: str) -> None:
     batch = registry.get_batch(batch_id)
     if batch is not None and batch.state == str(BatchState.PLANNED):
@@ -133,12 +137,24 @@ def run_automated_migration(
             max_archive_attempts=max_archive_attempts,
         )
 
+        if _is_paused(registry, batch_id):
+            break
         failed_now = list(registry.files_in_states(states=[FileState.FAILED], batch_id=batch_id))
         if not failed_now:
             break
         _requeue_failed_checked(
             registry=registry, failed=failed_now, adapter_factory=adapter_factory,
             dry_run=dry_run, log=_log,
+        )
+
+    if _is_paused(registry, batch_id):
+        _log(
+            "batch is PAUSED -- stopped after the files in hand; nothing closed. "
+            "Resume continues from here."
+        )
+        return AutoMigrationResult(
+            batch_id=batch_id, outcomes=_final_states(registry, batch_id), status="PAUSED",
+            signed_off=False, signed_off_by=None, run_id="", passes=passes,
         )
 
     if dry_run:

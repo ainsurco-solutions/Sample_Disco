@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 73e8747c3a37a3e6ea14b7ea4ef33097b9dc9be2
+# source commit: be3a82b04bb0389ef6a616ef82b1cfbddb1e764e
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -49,7 +49,7 @@ code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/mi
 code	2776	76	c9dee776331ee91937dceb86f46fce363fc0770e0aefb673bee21be81e2d6089	src/migration_hub/api/routers/batches.py
 code	4740	139	d171eb7ccda66c79993b8dbef06e1a09121422347c5aaee364e28bc73f76bdd9	src/migration_hub/api/routers/files.py
 code	773	23	d404bc8cf372c3599022678125cafa3f7eb6dae87f1e0b5a062579c1d429b8c8	src/migration_hub/api/routers/health.py
-code	23107	616	96caecb6489fb29700399ce0feb9c7e6655a7ef4847b2e507789432e6a78b35d	src/migration_hub/cli.py
+code	23393	623	549f61e5025f5a4dfe15af77944fa38fcb3f57d308ef4bdf14c875f56d1938df	src/migration_hub/cli.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/config/__init__.py
 code	4795	141	0f3d79adb7af713588a362a0fbb1dec13dbae52ac7e760d6d10e7e0ed189b975	src/migration_hub/config/settings.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/consumers/__init__.py
@@ -74,9 +74,9 @@ code	5734	162	1977021ab0035562432affdac0b957c40388fdcfd3fde9dacd67b985d8d6f51d	s
 code	2048	73	6d2510e7eeb73f04ca59e5c796ca11374f911bf9cb05744404c87fc7b2f7d65b	src/migration_hub/observability/redaction.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/orchestration/__init__.py
 code	9933	308	08d472e13abdd8ab4a6e517d85524f27594f8cd102f25936fd409d44c45e34ec	src/migration_hub/orchestration/archiver.py
-code	10972	284	c60ca08477123cded9e49a3903dc539e37c57e9fcf721f70ef6b5ecfbb9c559b	src/migration_hub/orchestration/auto_migrate.py
+code	11608	300	0a565c58acef4aeda3bcfd4f95f742f45f9e33f8c5978c49c809b60c8d6217f7	src/migration_hub/orchestration/auto_migrate.py
 code	794	24	9a259b40752b1633801ea9987eb79b16c382ea42fabbc58a9d0e90d4f2d1038c	src/migration_hub/orchestration/batch_identity.py
-code	20808	624	95bd22df83019371431eb72a31a7ac6902c665164462a43aad8a97e117c4eb32	src/migration_hub/orchestration/batches.py
+code	20711	623	5b449f4c43b4c6f07bc5abaac5e57cbc4800de0d714e7540e516e557d1f2aad9	src/migration_hub/orchestration/batches.py
 code	8390	248	8f2ac30b2783367a3731b7e1009929ce386a72e9d86e679b16baa39e12bbf71c	src/migration_hub/orchestration/queue_check.py
 code	2689	92	b84781840f239425ab1bdf68db8ea0077ebe981ea10322e0bf9c7959a3f109dc	src/migration_hub/orchestration/reaper.py
 code	1614	45	d84d3790d948804a4a1b0c623838ce5e318b19de30c31a68e4f781abc3e6fc2c	src/migration_hub/orchestration/reconciliation.py
