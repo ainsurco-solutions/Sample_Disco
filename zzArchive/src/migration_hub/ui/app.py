@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal
 
@@ -142,14 +143,16 @@ def render() -> None:
 
     with st.container(horizontal=True, vertical_alignment="center"):
         env_color: _BadgeColor = "red" if settings.environment == "prod" else "orange"
-        st.badge(settings.environment.upper(), color=env_color, icon=":material/dns:")
+        st.badge(
+            settings.environment.upper(),
+            color=env_color,
+            icon=":material/dns:",
+            help="Actions in this environment affect its live registry and services.",
+        )
         if settings.dry_run:
             st.badge("Dry run", color="gray", icon=":material/science:")
         if st.button("Refresh now", icon=":material/refresh:"):
             st.rerun()
-    if settings.environment == "prod":
-        st.error("Production -- every action here is real.")
-
     if st.session_state.get("add_batch_open"):
         _add_batch_dialog(registry, settings)
 
@@ -184,8 +187,6 @@ def _render_overview(registry: Registry) -> None:
     _kpi_strip_global(registry)
     st.space("small")
     _render_operational_observability(registry, batch_id=None)
-    st.space("small")
-    _render_needs_action_queue(registry)
     st.space("small")
     _render_batch_log(registry)
 
@@ -245,16 +246,61 @@ def _kpi_strip_global(registry: Registry) -> None:
             "needs attention" if issues else "none",
         ),
     ]
-    with st.container(horizontal=True):
-        for swatch, label, value, sub in tiles:
-            with st.container(border=True):
-                st.metric(f":{swatch}[■] {label}", value)
-                st.caption(sub)
+    st.markdown(
+        """
+        <style>
+          .mh-summary-row { display:flex; flex-wrap:wrap; gap:.6rem; margin:.15rem 0 .25rem; }
+          .mh-summary-card {
+            flex:1 1 150px; min-width:150px; padding:.5rem .7rem;
+            border:1px solid rgba(128,128,128,.28); border-radius:8px;
+            background:rgba(128,128,128,.06);
+          }
+          .mh-summary-value {
+            font-size:1.5rem; font-weight:700; line-height:1.05;
+            font-variant-numeric:tabular-nums;
+          }
+          .mh-summary-title { font-size:.88rem; font-weight:600; margin-top:.1rem; }
+          .mh-summary-note { font-size:.74rem; opacity:.7; margin-top:.15rem; }
+          .mh-summary-card[data-tone="green"] .mh-summary-value { color:#2E7D5B; }
+          .mh-summary-card[data-tone="orange"] .mh-summary-value { color:#A6690E; }
+          .mh-summary-card[data-tone="red"] .mh-summary-value { color:#B23A3A; }
+          .mh-summary-card[data-tone="blue"] .mh-summary-value { color:#1B1464; }
+          .mh-summary-card[data-empty="true"] { opacity:.6; }
+          .mh-summary-row[data-theme="dark"] [data-tone="green"] .mh-summary-value {
+            color:#57B98A;
+          }
+          .mh-summary-row[data-theme="dark"] [data-tone="orange"] .mh-summary-value {
+            color:#D9A441;
+          }
+          .mh-summary-row[data-theme="dark"] [data-tone="red"] .mh-summary-value {
+            color:#E2726B;
+          }
+          .mh-summary-row[data-theme="dark"] [data-tone="blue"] .mh-summary-value {
+            color:#00E6F0;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    cards = "".join(
+        f'<div class="mh-summary-card" data-tone="{swatch}" data-empty="{str(value == 0).lower()}">'
+        f'<div class="mh-summary-value">{value}</div>'
+        f'<div class="mh-summary-title">{html.escape(label)}</div>'
+        f'<div class="mh-summary-note">{html.escape(sub)}</div></div>'
+        for swatch, label, value, sub in tiles
+    )
+    theme = "dark" if st.context.theme.type == "dark" else "light"
+    st.markdown(
+        f'<div class="mh-summary-row" data-theme="{theme}">{cards}</div>',
+        unsafe_allow_html=True,
+    )
 
 def _render_operational_observability(registry: Registry, *, batch_id: str | None) -> None:
     left, right = st.columns(2)
     with left:
         _render_throughput_panel(registry, batch_id=batch_id)
+        if batch_id is None:
+            _render_needs_action_queue(registry)
     with right:
         _render_api_call_panel(registry, batch_id=batch_id)
 
@@ -280,7 +326,7 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
             st.metric("Remaining", _format_bytes(remaining_bytes))
             st.caption("by registered file size")
         with cols[3]:
-            eta_text = _format_timedelta(eta) if eta is not None else "Not enough data"
+            eta_text = _format_timedelta(eta) if eta is not None else "Pending"
             st.metric("ETA", eta_text)
             if eta is None:
                 st.caption(
@@ -329,6 +375,10 @@ def _render_api_call_panel(registry: Registry, *, batch_id: str | None) -> None:
         _render_api_summary_tables(summary)
 
 def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
+    if not summary.top_endpoints and not summary.status_families:
+        st.caption("No API calls logged in the last 15 minutes.")
+        return
+
     endpoint_rows = [
         {"endpoint": item.endpoint, "calls": item.calls, "errors": item.errors}
         for item in summary.top_endpoints
@@ -412,29 +462,35 @@ def _render_needs_action_queue(registry: Registry) -> None:
                 }
             )
 
-    if not rows:
-        with st.container(border=True):
-            st.success("No batches need operator action right now.")
-        return
-
-    rows = sorted(rows, key=lambda r: (int(r["priority"]), str(r["batch"])))[:8]
+    rows = sorted(rows, key=lambda r: (int(r["priority"]), str(r["batch"])))
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Needs action")
-            st.badge("Target workflow", color="green", icon=":material/playlist_add_check:")
-        st.caption("Open a batch below to inspect files, actions and controls.")
+            st.badge(str(len(rows)), color="orange" if rows else "green")
+        if not rows:
+            st.caption("No batches need operator action right now.")
         for i, row in enumerate(rows):
-            with st.container(horizontal=True, vertical_alignment="center"):
-                color: _BadgeColor = "orange" if int(row["priority"]) <= 2 else "blue"
-                st.badge(str(row["finding"]), color=color)
-                st.write(f"**{row['batch']}** - {row['next_action']}")
-                if st.button(
-                    "Open",
-                    key=f"needs_action_open_{i}_{row['batch']}",
-                    icon=":material/open_in_new:",
-                ):
-                    st.session_state["selected_batch"] = row["batch"]
-                    st.rerun()
+            if i == 3:
+                with st.expander(f"Show {len(rows) - 3} more"):
+                    _render_needs_action_rows(rows[3:], offset=3)
+                break
+            _render_needs_action_rows([row], offset=i)
+
+def _render_needs_action_rows(rows: list[dict[str, str | int]], *, offset: int) -> None:
+    for i, row in enumerate(rows, start=offset):
+        details, action = st.columns([4, 1], vertical_alignment="center")
+        with details:
+            color: _BadgeColor = "orange" if int(row["priority"]) <= 2 else "blue"
+            st.badge(str(row["finding"]), color=color)
+            st.caption(f"{row['batch']} · {row['next_action']}")
+        with action:
+            if st.button(
+                "Open",
+                key=f"needs_action_open_{i}_{row['batch']}",
+                icon=":material/open_in_new:",
+            ):
+                st.session_state["selected_batch"] = row["batch"]
+                st.rerun()
 
 def _render_batch_log(registry: Registry) -> None:
     batches = registry.list_batches()
@@ -443,6 +499,8 @@ def _render_batch_log(registry: Registry) -> None:
         return
 
     rows = []
+    attention_batches: set[str] = set()
+    archive_batches = {file.batch_id for file in registry.pending_archives(batch_id=None)}
     for b in batches:
         counts = registry.counts_by_state(batch_id=b.batch_id)
         label, _color = _batch_display_state(
@@ -451,6 +509,17 @@ def _render_batch_log(registry: Registry) -> None:
 
         total = sum(counts.values())
         is_done = total > 0 and _outstanding(counts, BatchDestination(b.destination)) == 0
+        failed = (
+            counts[FileState.FAILED]
+            + counts[FileState.ABANDONED]
+            + counts[FileState.ARCHIVE_FAILED]
+        )
+        if b.state != BatchState.DONE and (
+            failed
+            or counts[FileState.REJECTED]
+            or (b.destination == BatchDestination.VAULT and b.batch_id in archive_batches)
+        ):
+            attention_batches.add(b.batch_id)
 
         started_at = registry.earliest_file_created_at(batch_id=b.batch_id)
         ended_at = None
@@ -464,19 +533,28 @@ def _render_batch_log(registry: Registry) -> None:
                 "state": label,
                 "files": total,
                 "completed": counts[FileState.COMPLETED],
-                "failed": counts[FileState.FAILED]
-                + counts[FileState.ABANDONED]
-                + counts[FileState.ARCHIVE_FAILED],
+                "failed": failed,
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "duration": _format_duration(started_at, ended_at) if ended_at else None,
             }
         )
 
-    st.caption("Select a row to view that batch's files and activity below.")
-    event = st.dataframe(
-        rows,
-        on_select="rerun",
+    recent_rows = [
+        row for index, row in enumerate(rows) if index < 7 or row["batch_id"] in attention_batches
+    ]
+    st.caption("Recent batches and older batches needing attention. Select a row for details.")
+    if len(recent_rows) < len(rows):
+        st.toggle("Show all batches", key="batch_log_show_all")
+    visible_rows = rows if st.session_state.get("batch_log_show_all") else recent_rows
+    batch_ids = [str(row["batch_id"]) for row in visible_rows]
+    mode = "all" if st.session_state.get("batch_log_show_all") else "recent"
+    snapshot = sha256(json.dumps(batch_ids).encode()).hexdigest()[:16]
+    table_key = f"batch_log_table_{mode}_{snapshot}"
+    st.session_state["batch_log_active_table"] = table_key
+    st.dataframe(
+        visible_rows,
+        on_select=lambda: _queue_batch_selection(table_key, batch_ids),
         selection_mode="single-row",
         column_config={
             "batch_id": st.column_config.TextColumn("Batch"),
@@ -489,14 +567,24 @@ def _render_batch_log(registry: Registry) -> None:
             "duration": st.column_config.TextColumn("Duration"),
         },
         hide_index=True,
-        key="batch_log_table",
+        height=min(330, 38 + 35 * len(visible_rows)),
+        key=table_key,
     )
-    selected_rows = _selected_rows(event)
-    if selected_rows:
-        clicked = rows[selected_rows[0]]["batch_id"]
-        if st.session_state.get("selected_batch") != clicked:
-            st.session_state["selected_batch"] = clicked
-            st.rerun()
+    clicked = st.session_state.pop("batch_log_navigation", None)
+    if clicked in batch_ids and st.session_state.get("selected_batch") != clicked:
+        st.session_state["selected_batch"] = clicked
+        st.rerun()
+
+def _queue_batch_selection(table_key: str, batch_ids: list[str]) -> None:
+    if st.session_state.get("batch_log_active_table") != table_key:
+        return
+    rows = st.session_state[table_key]["selection"]["rows"]
+    selection = (table_key, tuple(rows))
+    if st.session_state.get("batch_log_last_selection") == selection:
+        return
+    st.session_state["batch_log_last_selection"] = selection
+    if rows and 0 <= rows[0] < len(batch_ids):
+        st.session_state["batch_log_navigation"] = batch_ids[rows[0]]
 
 def _suggest_batch_id(registry: Registry) -> str:
     existing = {b.batch_id for b in registry.list_batches()}
