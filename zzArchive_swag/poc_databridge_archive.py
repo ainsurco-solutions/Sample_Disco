@@ -50,8 +50,9 @@ def main() -> int:
     parser.add_argument(
         "--bak-dir",
         help="Path to a FOLDER of .bak files -- migrates every *.bak in it "
-        "(non-recursive, sorted by name), one at a time: import, archive, "
-        "verify, then the next file. The database name for each file is "
+        "(non-recursive, sorted by name), one at a time: import, then "
+        "archive/verify unless --import-only, then the next file. The "
+        "database name for each file is "
         "derived from its filename (the stem, without .bak) -- so rename "
         "files first if that's not the name you want on Data Bridge. Not "
         "combined with --database (derived per file) or --bak.",
@@ -87,6 +88,15 @@ def main() -> int:
         "-- running this again for an already-archived database creates a "
         "second real archive rather than failing. Use --verify-only "
         "instead if you only need to check the result.",
+    )
+    parser.add_argument(
+        "--import-only",
+        action="store_true",
+        help="Upload and import only -- stop once the database lands on "
+        "Data Bridge, skipping steps 6-9 (archive/verify) entirely. Mirrors "
+        "production's Batch destination (Data Bridge only vs. Data Vault, "
+        "TASK-0092). Archive it later with --archive-only. Not combined "
+        "with --archive-only.",
     )
     parser.add_argument(
         "--verify-only",
@@ -157,6 +167,10 @@ def main() -> int:
         "this flag, only a dry-run summary is printed.",
     )
     args = parser.parse_args()
+
+    if args.import_only and args.archive_only:
+        _fail("--import-only and --archive-only are contradictory -- pick one.")
+        return 1
 
     try:
         import requests
@@ -289,6 +303,10 @@ def main() -> int:
         if args.archive_only:
             print("  mode              = archive-only (no upload/import)")
             print(f"  database          = {args.database}")
+        elif args.import_only:
+            print(f"  mode              = import-only (no archive), {len(targets)} database(s)")
+            for bak_path, database in targets:
+                print(f"    {bak_path.name} -> {database}")
         else:
             print(f"  mode              = full pipeline, {len(targets)} database(s)")
             for bak_path, database in targets:
@@ -504,6 +522,13 @@ def _migrate_one(
     if status not in _SUCCESS_STATUSES:
         _fail("import did not succeed -- stopping before archiving")
         return 1
+
+    if args.import_only:
+        _ok(
+            f"database {database!r} imported and on Data Bridge -- stopping "
+            "here (--import-only). Run --archive-only later to archive it."
+        )
+        return 0
 
     return _archive_and_verify(session, host, args, database)
 
