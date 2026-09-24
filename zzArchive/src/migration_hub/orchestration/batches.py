@@ -6,7 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
@@ -123,6 +123,19 @@ def _archive_bridged_file(
         max_wait_minutes=max_wait_minutes,
         poll_interval_seconds=poll_interval_seconds,
     )
+
+def split_pending_archives(
+    files: Sequence[MigrationFile], *, now: datetime, in_hand_minutes: float
+) -> tuple[list[MigrationFile], list[MigrationFile]]:
+    cutoff = now - timedelta(minutes=in_hand_minutes)
+    ready: list[MigrationFile] = []
+    in_hand: list[MigrationFile] = []
+    for file in files:
+        busy = file.state == str(FileState.ARCHIVING) and (
+            file.updated_at is not None and file.updated_at > cutoff
+        )
+        (in_hand if busy else ready).append(file)
+    return ready, in_hand
 
 def state_of(*, registry: Registry, batch_id: str) -> BatchState:
     batch = registry.get_batch(batch_id)

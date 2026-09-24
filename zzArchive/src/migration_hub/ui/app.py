@@ -191,7 +191,7 @@ def _render_overview(registry: Registry, settings: Settings) -> None:
     st.space("small")
     _render_queue_panel(settings)
     st.space("small")
-    _render_operational_observability(registry, batch_id=None)
+    _render_operational_observability(registry, batch_id=None, settings=settings)
     st.space("small")
     _render_batch_log(registry)
 
@@ -382,12 +382,14 @@ def _kpi_strip_global(registry: Registry) -> None:
         unsafe_allow_html=True,
     )
 
-def _render_operational_observability(registry: Registry, *, batch_id: str | None) -> None:
+def _render_operational_observability(
+    registry: Registry, *, batch_id: str | None, settings: Settings | None = None
+) -> None:
     left, right = st.columns(2)
     with left:
         _render_throughput_panel(registry, batch_id=batch_id)
         if batch_id is None:
-            _render_needs_action_queue(registry)
+            _render_needs_action_queue(registry, settings)
     with right:
         _render_api_call_panel(registry, batch_id=batch_id)
 
@@ -497,13 +499,17 @@ def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
             height=180,
         )
 
-def _render_needs_action_queue(registry: Registry) -> None:
+def _render_needs_action_queue(registry: Registry, settings: Settings | None = None) -> None:
     rows: list[dict[str, str | int]] = []
     for batch in registry.list_batches():
         if batch.state == BatchState.DONE:
             continue
         counts = registry.counts_by_state(batch_id=batch.batch_id)
-        pending_archive = len(registry.pending_archives(batch_id=batch.batch_id))
+        pending_archive = (
+            len(_pending_archives(registry, settings, batch.batch_id)[0])
+            if settings is not None
+            else len(registry.pending_archives(batch_id=batch.batch_id))
+        )
         failed = (
             counts[FileState.FAILED]
             + counts[FileState.ABANDONED]
@@ -1324,10 +1330,21 @@ def _render_retry_action(
             status.update(label="Handed off to the retry", state="complete", expanded=False)
         st.rerun()
 
+def _pending_archives(
+    registry: Registry, settings: Settings, batch: str
+) -> tuple[list[MigrationFile], list[MigrationFile]]:
+    return batch_ops.split_pending_archives(
+        registry.pending_archives(batch_id=batch),
+        now=datetime.now(UTC).replace(tzinfo=None),
+        in_hand_minutes=settings.max_poll_minutes,
+    )
+
 def _render_archive_action(
     registry: Registry, settings: Settings, batch: str
 ) -> None:
-    pending = registry.pending_archives(batch_id=batch)
+    pending, in_hand = _pending_archives(registry, settings, batch)
+    if in_hand:
+        st.caption(f"{len(in_hand)} file(s) archiving now -- their archive job is running.")
     if not pending:
         return
 
@@ -1494,7 +1511,7 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
     destination = registry.batch_destination(batch)
     total = sum(counts.values())
     outstanding = _outstanding(counts, destination)
-    pending_archives = registry.pending_archives(batch_id=batch)
+    pending_archives, archiving_now = _pending_archives(registry, settings, batch)
     retryable = registry.files_in_states(
         states=(FileState.FAILED, FileState.ABANDONED), batch_id=batch
     )
@@ -1516,7 +1533,9 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
             )
             st.caption(
                 f"{total} file(s), {outstanding} outstanding, "
-                f"{len(pending_archives)} pending archive, {issues} issue(s)"
+                f"{len(pending_archives)} pending archive, "
+                + (f"{len(archiving_now)} archiving now, " if archiving_now else "")
+                + f"{issues} issue(s)"
             )
 
         idle = outstanding > 0 and _minutes_since_activity(registry, batch) >= _IDLE_MINUTES
@@ -1546,6 +1565,12 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                 archive_label,
                 icon=":material/inventory_2:",
                 disabled=not pending_archives,
+                help=(
+                    f"{len(archiving_now)} file(s) are being archived now and are not "
+                    "counted -- a second archive of the same file is never needed."
+                    if archiving_now
+                    else None
+                ),
                 key=f"archive_{batch}",
             ):
                 with st.status("Archiving", expanded=True) as status:

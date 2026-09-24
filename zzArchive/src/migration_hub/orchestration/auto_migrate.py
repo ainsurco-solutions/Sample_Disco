@@ -8,7 +8,7 @@ from pathlib import Path
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
-from migration_hub.core.states import FileState
+from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
 from migration_hub.orchestration import archiver
 from migration_hub.orchestration.batch_identity import derive_batch_id
@@ -38,6 +38,11 @@ def check_source_folder(source_root: Path) -> None:
     raise SourceFolderError(message)
 
 AUTO_SIGN_OFF_ACTOR = "migration-hub-auto"
+
+def mark_running(registry: Registry, batch_id: str) -> None:
+    batch = registry.get_batch(batch_id)
+    if batch is not None and batch.state == str(BatchState.PLANNED):
+        registry.set_batch_state(batch_id=batch_id, state=BatchState.RUNNING)
 
 @dataclass(frozen=True, slots=True)
 class AutoMigrationResult:
@@ -94,6 +99,9 @@ def run_automated_migration(
         if registry.get_batch(batch_id) is None:
             raise ValueError(f"no batch {batch_id!r} in this registry")
         _log(f"batch: {batch_id!r} (existing -- no discovery)")
+
+    if not dry_run:
+        mark_running(registry, batch_id)
 
     _log("validating...")
     validation_results = validator.validate_batch(

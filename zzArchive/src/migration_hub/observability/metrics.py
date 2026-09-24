@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, cast
 
 from migration_hub.core.models import ApiTransaction
 from migration_hub.core.registry import Registry
@@ -12,6 +12,8 @@ from migration_hub.observability.endpoints import STORAGE_UPLOAD_KEY as STORAGE_
 from migration_hub.observability.endpoints import endpoint_key as endpoint_key
 
 MIN_COMPLETIONS_FOR_ETA = 3
+
+_MIN_MEASURED_SPAN = timedelta(minutes=1)
 
 @dataclass(frozen=True, slots=True)
 class ThroughputSnapshot:
@@ -73,12 +75,17 @@ def throughput(
     *, registry: Registry, batch_id: str | None = None, window_hours: int = 24
 ) -> ThroughputSnapshot:
     window = timedelta(hours=window_hours)
-    since = datetime.now(UTC).replace(tzinfo=None) - window
+    now = datetime.now(UTC).replace(tzinfo=None)
+    since = now - window
     measured = registry.completed_transition_metrics_since(batch_id=batch_id, since=since)
+    started = measured["first_started_at"]
+    worked = window
+    if isinstance(started, datetime):
+        worked = min(window, max(now - started, _MIN_MEASURED_SPAN))
     return ThroughputSnapshot(
-        files_completed=measured["files_completed"],
-        bytes_transferred=measured["bytes_transferred"],
-        window=window,
+        files_completed=cast(int, measured["files_completed"]),
+        bytes_transferred=cast(int, measured["bytes_transferred"]),
+        window=worked,
         batch_id=batch_id,
     )
 

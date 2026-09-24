@@ -627,11 +627,13 @@ class Registry:
 
     def completed_transition_metrics_since(
         self, *, batch_id: str | None, since: datetime
-    ) -> dict[str, int]:
+    ) -> dict[str, int | datetime | None]:
         stmt = (
             select(
                 func.count(MigrationEvent.event_id),
                 func.coalesce(func.sum(MigrationFile.size_bytes), 0),
+                func.min(MigrationFile.created_at),
+                func.min(MigrationEvent.occurred_at),
             )
             .select_from(MigrationEvent)
             .join(MigrationFile)
@@ -644,10 +646,14 @@ class Registry:
             stmt = stmt.where(MigrationFile.batch_id == batch_id)
 
         with Session(self._engine) as session:
-            files_completed, bytes_transferred = session.execute(stmt).one()
+            files_completed, bytes_transferred, first_created, first_completed = session.execute(
+                stmt
+            ).one()
+        starts = [t for t in (first_created, first_completed) if t is not None]
         return {
             "files_completed": int(files_completed),
             "bytes_transferred": int(bytes_transferred),
+            "first_started_at": min(starts) if starts else None,
         }
 
     def file_terminal_times(self, *, batch_id: str) -> dict[int, datetime]:

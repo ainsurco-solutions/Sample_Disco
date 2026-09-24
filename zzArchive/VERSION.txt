@@ -1,3 +1,3 @@
-source commit : 08044ec2fe5add3966ec7ad9c66c424c6f7ae968
-               feat: Data Bridge queue card on the dashboard; BRIDGED is finished on a Bridge-only batch; Open says when the batch is already open (TASK-0096, TASK-0092, TASK-0095)
+source commit : 03b345473e0fc1d746532ba042493f647bd94752
+               fix: ETA measured over the time worked, not 24 h; migrate marks its batch Running; no archive offered for a file already archiving (TASK-0095)
 files         : 89
