@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
+from typing import IO, Any
 
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.consumers.worker import MigrationWorker
@@ -25,6 +26,45 @@ _WINDOWS_DETACH_FLAGS = (
     if sys.platform == "win32"
     else 0
 )
+
+_WINDOWS_BREAKAWAY = (
+    getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    if sys.platform == "win32"
+    else 0
+)
+
+_tied_to_launcher: bool | None = None
+
+def launches_tied_to_launcher() -> bool | None:
+    return _tied_to_launcher
+
+def _popen_detached(
+    args: list[str], *, env: dict[str, str], log_file: IO[Any]
+) -> subprocess.Popen[bytes]:
+    global _tied_to_launcher
+
+    def launch(flags: int) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(
+            args,
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            creationflags=flags,
+            close_fds=True,
+            start_new_session=sys.platform != "win32",
+        )
+
+    if _WINDOWS_BREAKAWAY:
+        try:
+            process = launch(_WINDOWS_DETACH_FLAGS | _WINDOWS_BREAKAWAY)
+        except OSError:
+            pass
+        else:
+            _tied_to_launcher = False
+            return process
+    process = launch(_WINDOWS_DETACH_FLAGS)
+    _tied_to_launcher = bool(_WINDOWS_BREAKAWAY)
+    return process
 
 def create_batch(
     *,
@@ -64,6 +104,7 @@ def run_worker_loop(
     archive_after_bridge: bool = False,
     max_archive_attempts: int | None = None,
     may_claim: Callable[[], bool] | None = None,
+    claim_heartbeat_seconds: float = 60.0,
 ) -> dict[FileState, int]:
     worker = MigrationWorker(
         registry=registry,
@@ -76,6 +117,7 @@ def run_worker_loop(
         instance_name=instance_name,
         instances=instances,
         group_ids=group_ids,
+        claim_heartbeat_seconds=claim_heartbeat_seconds,
         archive=(
             partial(
                 _archive_bridged_file,
@@ -228,15 +270,7 @@ def start_run_subprocess(
     log_path = log_dir / f"run-{batch_id}-{datetime.now():%Y%m%d-%H%M%S-%f}.log"
     log_file = log_path.open("w", encoding="utf-8")
 
-    process = subprocess.Popen(
-        args,
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        creationflags=_WINDOWS_DETACH_FLAGS,
-        close_fds=True,
-        start_new_session=sys.platform != "win32",
-    )
+    process = _popen_detached(args, env=env, log_file=log_file)
     log_file.close()
     return WorkerHandle(process=process, log_path=log_path)
 
@@ -258,15 +292,7 @@ def start_archive_subprocess(
     log_path = log_dir / f"archive-{batch_id or 'all'}-{stamp}.log"
     log_file = log_path.open("w", encoding="utf-8")
 
-    process = subprocess.Popen(
-        args,
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        creationflags=_WINDOWS_DETACH_FLAGS,
-        close_fds=True,
-        start_new_session=sys.platform != "win32",
-    )
+    process = _popen_detached(args, env=env, log_file=log_file)
     log_file.close()
     return WorkerHandle(process=process, log_path=log_path)
 
@@ -481,6 +507,9 @@ def start_migrate_source_subprocess(
         ["migrate", "--source", str(source_root)], f"migrate-{batch_id}", environment
     )
 
+def start_reap_subprocess(*, environment: str | None = None) -> WorkerHandle:
+    return _launch_cli(["reap"], "reap", environment)
+
 def start_queue_subprocess(*, environment: str | None = None) -> WorkerHandle:
     return _launch_cli(["queue"], "queue", environment)
 
@@ -606,15 +635,7 @@ def _launch_cli(cli_args: list[str], log_stem: str, environment: str | None) -> 
     log_path = log_dir / f"{log_stem}-{stamp}.log"
     log_file = log_path.open("w", encoding="utf-8")
 
-    process = subprocess.Popen(
-        args,
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        creationflags=_WINDOWS_DETACH_FLAGS,
-        close_fds=True,
-        start_new_session=sys.platform != "win32",
-    )
+    process = _popen_detached(args, env=env, log_file=log_file)
     log_file.close()
     return WorkerHandle(process=process, log_path=log_path)
 

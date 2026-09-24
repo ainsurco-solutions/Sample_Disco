@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import PureWindowsPath
 from uuid import UUID
 
-from sqlalchemy import bindparam, case, func, select, text
+from sqlalchemy import bindparam, case, func, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -302,6 +302,18 @@ class Registry:
             )
             session.expunge_all()
             return stale
+
+    def refresh_claims(self, *, worker_id: str) -> int:
+        with Session(self._engine) as session, session.begin():
+            result = session.execute(
+                update(MigrationFile)
+                .where(
+                    MigrationFile.claimed_by == worker_id,
+                    MigrationFile.state.in_([str(s) for s in CLAIMED_STATES]),
+                )
+                .values(claimed_at=datetime.now(UTC).replace(tzinfo=None))
+            )
+            return int(getattr(result, "rowcount", 0) or 0)
 
     def claimed_count(self, *, batch_id: str) -> int:
         stmt = (

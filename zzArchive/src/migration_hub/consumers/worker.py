@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import TracebackType
 
 from migration_hub.adapters.base import PlatformSession
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.adapters.databridge.errors import ImportJobFailedError
+from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.retry import FailureAction, classify
 from migration_hub.core.routing import resolve_instance
@@ -21,6 +25,39 @@ class SourceChangedSinceDiscoveryError(RuntimeError):
             f"file_id={file_id}: source size changed since discovery "
             f"(expected {expected}, now {actual}) -- it may still be being written"
         )
+
+_log = logging.getLogger(__name__)
+
+class ClaimHeartbeat:
+
+    def __init__(self, registry: Registry, worker_id: str, every_seconds: float) -> None:
+        self._registry = registry
+        self._worker_id = worker_id
+        self._every = every_seconds
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name=f"heartbeat-{worker_id}", daemon=True
+        )
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._every):
+            try:
+                self._registry.refresh_claims(worker_id=self._worker_id)
+            except Exception as exc:
+                _log.warning("%s claim heartbeat failed: %s", self._worker_id, exc)
+
+    def __enter__(self) -> ClaimHeartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
 
 class MigrationWorker:
 
@@ -38,8 +75,10 @@ class MigrationWorker:
         instances: dict[str, str] | None = None,
         group_ids: list[str] | None = None,
         archive: Callable[[int, str | None], FileState] | None = None,
+        claim_heartbeat_seconds: float = 60.0,
     ) -> None:
         self._registry = registry
+        self._claim_heartbeat_seconds = claim_heartbeat_seconds
         self._archive = archive
         self._adapter = adapter
         self._worker_id = worker_id
@@ -74,6 +113,10 @@ class MigrationWorker:
             )
             return FileState.VALIDATED
 
+        with ClaimHeartbeat(self._registry, self._worker_id, self._claim_heartbeat_seconds):
+            return self._process(file)
+
+    def _process(self, file: MigrationFile) -> FileState:
         try:
             if self._session is None:
                 self._session = self._adapter.open_session()

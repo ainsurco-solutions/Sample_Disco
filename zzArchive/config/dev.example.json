@@ -35,7 +35,7 @@
 
   "max_attempts": 3,
   "max_archive_attempts": 9,
-  "claim_timeout_minutes": 420,
+  "claim_stale_minutes": 10,
 
   "compute_checksums": false,
   "dry_run": true

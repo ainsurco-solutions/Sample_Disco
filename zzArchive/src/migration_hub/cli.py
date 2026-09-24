@@ -118,6 +118,7 @@ def run(
             instance_name=settings.databridge_instance_name,
             instances=settings.databridge_instances,
             group_ids=settings.databridge_group_ids,
+            claim_heartbeat_seconds=settings.claim_heartbeat_seconds,
         )
     finally:
         adapter.close()
@@ -172,6 +173,7 @@ def migrate(
         max_files=max_files,
         thread_count=settings.effective_worker_ceiling,
         initial_workers=max(1, settings.max_concurrent_uploads),
+        claim_heartbeat_seconds=settings.claim_heartbeat_seconds,
         dry_run=settings.dry_run,
         max_attempts=settings.max_attempts,
         poll_interval_seconds=settings.poll_interval_seconds,
@@ -216,7 +218,7 @@ def reap() -> None:
         resolved = reaper.reap_stale_claims(
             registry=registry,
             adapter=adapter,
-            timeout_minutes=settings.claim_timeout_minutes,
+            timeout_minutes=settings.claim_stale_minutes,
             max_attempts=settings.max_attempts,
         )
     finally:

@@ -22,6 +22,7 @@ from migration_hub.core.models import ApiTransaction, BatchRun, MigrationEvent, 
 from migration_hub.core.registry import Registry
 from migration_hub.core.retry import ALREADY_ON_TARGET
 from migration_hub.core.states import (
+    CLAIMED_STATES,
     SETTLED_STATES,
     BatchDestination,
     BatchState,
@@ -160,6 +161,15 @@ def render() -> None:
     if st.session_state.get("add_batch_open"):
         _add_batch_dialog(registry, settings)
 
+    if batch_ops.launches_tied_to_launcher():
+        st.warning(
+            "**Runs started from this dashboard will stop if its window is closed.** "
+            "Windows would not let them leave the job this dashboard runs in (a "
+            "terminal that closes everything it started). Keep that window open "
+            "while runs are going, or start the dashboard from a plain PowerShell "
+            "window.",
+            icon=":material/link:",
+        )
     _render_overview(registry, settings)
     st.space("medium")
 
@@ -170,7 +180,7 @@ def render() -> None:
 
     st.subheader(f"Batch {selected}")
     _live_batch_action_bar(registry, settings, selected)
-    _render_live_log(registry, selected)
+    _render_live_log(registry, settings, selected)
     st.space("small")
     _live_batch_tabs(registry, settings, selected)
 
@@ -798,6 +808,20 @@ def _render_add_batch_select(registry: Registry, settings: Settings, wiz: _AddBa
         return
     _render_add_batch_manual_select(registry, settings, wiz)
 
+def _warn_if_batch_exists(registry: Registry, batch_id: str, source_root: Path) -> None:
+    if registry.get_batch(batch_id) is None:
+        return
+    counts = registry.counts_by_state(batch_id=batch_id)
+    total = sum(counts.values())
+    finished = counts[FileState.COMPLETED] + counts[FileState.BRIDGED]
+    st.warning(
+        f"**This folder is already batch `{batch_id}`** ({total} file(s), "
+        f"{finished} on Data Bridge or in Data Vault). New files in "
+        f"`{source_root}` join it, and its run and control history continues. "
+        "To keep a new set apart, give it its own folder.",
+        icon=":material/merge:",
+    )
+
 def _render_start_migration_automated(
     registry: Registry, settings: Settings, wiz: _AddBatchWizard
 ) -> None:
@@ -811,6 +835,7 @@ def _render_start_migration_automated(
     wiz["source_root"] = source_text
     source_root = Path(source_text)
     derived_batch = derive_batch_id(source_root)
+    _warn_if_batch_exists(registry, derived_batch, source_root)
 
     destination = BatchDestination(str(wiz.get("destination", BatchDestination.VAULT)))
     preview_count: int | None = None
@@ -1449,17 +1474,17 @@ _IDLE_MINUTES = 5
 
 _LIVE_LOG_LINES = 200
 
-def _render_live_log(registry: Registry, batch: str) -> None:
+def _render_live_log(registry: Registry, settings: Settings, batch: str) -> None:
     if not st.toggle(
         "Live log",
         key=f"live_log_{batch}",
         help="Follow this batch's run log as it is written -- refreshes every 2 seconds.",
     ):
         return
-    _live_log_panel(registry, batch)
+    _live_log_panel(registry, settings, batch)
 
 @st.fragment(run_every="2s")
-def _live_log_panel(registry: Registry, batch: str) -> None:
+def _live_log_panel(registry: Registry, settings: Settings, batch: str) -> None:
     logs = batch_ops.logs_for_batch(batch)
     if not logs:
         st.info(
@@ -1492,10 +1517,23 @@ def _live_log_panel(registry: Registry, batch: str) -> None:
         f"{chosen.name} -- last written {_ago(quiet_minutes)}, "
         f"{len(problems)} warning/error line(s) in view"
     )
-    if outstanding and quiet_minutes >= _IDLE_MINUTES:
+    alive, stopped = _claims(registry, settings, batch)
+    if outstanding and quiet_minutes >= _IDLE_MINUTES and alive and not stopped:
+        st.info(
+            f"{caption}. {len(alive)} file(s) in hand and their workers are alive "
+            "(heartbeat within the last few minutes) -- a long step, not a stall."
+        )
+    elif outstanding and quiet_minutes >= _IDLE_MINUTES:
         st.warning(
             f"{caption}. {outstanding} file(s) are outstanding but this log has been "
-            f"quiet for {quiet_minutes:.0f} min -- the run may have ended or stalled."
+            f"quiet for {quiet_minutes:.0f} min"
+            + (
+                f" and {len(stopped)} file(s) are held by a stopped worker -- see the "
+                "batch bar."
+                if stopped
+                else " and no worker holds a file -- the run has ended. Continue or "
+                "Resume starts it again."
+            )
         )
     else:
         st.caption(caption)
@@ -1660,6 +1698,7 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
             )
 
         _render_workers_dial(registry, settings, batch, counts, destination)
+        _render_stopped_workers(registry, settings, batch, _claims(registry, settings, batch)[1])
 
         adopting = [f for f in retryable if _is_already_on_target(f)]
         if _retry_confirmed(f"bar_{batch}", retry_clicked, adopting):
@@ -1689,6 +1728,42 @@ def _queue_says_wait(settings: Settings) -> bool:
         in (queue_check.Recommendation.HOLD, queue_check.Recommendation.INVESTIGATE)
         for _, recommendation, _ in rows
     )
+
+def _claims(
+    registry: Registry, settings: Settings, batch: str, *, now: datetime | None = None
+) -> tuple[list[MigrationFile], list[MigrationFile]]:
+    current = now or datetime.now(UTC).replace(tzinfo=None)
+    cutoff = current - timedelta(minutes=settings.claim_stale_minutes)
+    alive: list[MigrationFile] = []
+    stopped: list[MigrationFile] = []
+    for file in registry.files_in_states(states=sorted(CLAIMED_STATES), batch_id=batch):
+        fresh = file.claimed_at is not None and file.claimed_at >= cutoff
+        (alive if fresh else stopped).append(file)
+    return alive, stopped
+
+def _render_stopped_workers(
+    registry: Registry, settings: Settings, batch: str, stopped: list[MigrationFile]
+) -> None:
+    if not stopped:
+        return
+    oldest = min((f.claimed_at for f in stopped if f.claimed_at), default=None)
+    silent = (
+        _ago((datetime.now(UTC).replace(tzinfo=None) - oldest).total_seconds() / 60)
+        if oldest
+        else "never"
+    )
+    names = ", ".join(f"{f.file_id}" for f in stopped[:8]) + (" ..." if len(stopped) > 8 else "")
+    st.error(
+        f"**{len(stopped)} file(s) are held by a worker that has stopped** (files "
+        f"{names}; last heartbeat {silent}). Nothing is uploading or importing "
+        "them. **Release them** fails each for retry (an import is checked with "
+        "Data Bridge first); then Retry, or Resume, picks them up.",
+        icon=":material/heart_broken:",
+    )
+    if st.button("Release them", icon=":material/lock_open:", key=f"release_{batch}"):
+        handle = batch_ops.start_reap_subprocess(environment=settings.environment)
+        _note_launch(batch, "Release stopped workers' files", handle)
+        st.rerun()
 
 def _render_workers_dial(
     registry: Registry,

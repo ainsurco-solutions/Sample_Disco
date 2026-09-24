@@ -48,6 +48,7 @@ def run_worker_pool(
     active_workers: Callable[[], int] | None = None,
     idle_seconds: float = IDLE_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
+    claim_heartbeat_seconds: float = 60.0,
 ) -> dict[FileState, int]:
     results: list[dict[FileState, int]] = [{} for _ in range(thread_count)]
     errors: list[BaseException] = []
@@ -80,6 +81,7 @@ def run_worker_pool(
                     archive_after_bridge=archive_after_bridge,
                     max_archive_attempts=max_archive_attempts,
                     may_claim=may_claim,
+                    claim_heartbeat_seconds=claim_heartbeat_seconds,
                 )
 
             if dial is None:

@@ -82,6 +82,7 @@ def run_automated_migration(
     compute_checksum: bool = False,
     on_progress: Callable[[str], None] | None = None,
     initial_workers: int | None = None,
+    claim_heartbeat_seconds: float = 60.0,
 ) -> AutoMigrationResult:
     starting_workers = initial_workers or thread_count
 
@@ -142,6 +143,7 @@ def run_automated_migration(
             archive_after_bridge=not dry_run,
             max_archive_attempts=max_archive_attempts,
             active_workers=lambda: workers_for(registry, batch_id, thread_count),
+            claim_heartbeat_seconds=claim_heartbeat_seconds,
         )
 
         if _is_paused(registry, batch_id):

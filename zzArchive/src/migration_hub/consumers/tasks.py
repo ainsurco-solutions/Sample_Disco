@@ -65,7 +65,7 @@ def poll_running_imports() -> int:
 
         importing = [
             f
-            for f in registry.stale_claims(timeout_minutes=settings.claim_timeout_minutes)
+            for f in registry.stale_claims(timeout_minutes=settings.claim_stale_minutes)
             if FileState(f.state) is FileState.IMPORTING and f.job_id is not None
         ]
         if not importing:
@@ -104,7 +104,7 @@ def reap(timeout_minutes: int | None = None) -> int:
                 registry=registry,
                 adapter=adapter,
                 timeout_minutes=(
-                    settings.claim_timeout_minutes if timeout_minutes is None else timeout_minutes
+                    settings.claim_stale_minutes if timeout_minutes is None else timeout_minutes
                 ),
                 max_attempts=settings.max_attempts,
                 actor="scheduler-reap",

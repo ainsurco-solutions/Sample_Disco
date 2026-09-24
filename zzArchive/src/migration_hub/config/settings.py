@@ -13,7 +13,12 @@ _CREDENTIAL_LIKE_SUBSTRINGS = ("key", "secret", "password", "token", "credential
 _ENV_ONLY_FIELDS = frozenset({"database_url"})
 
 RETIRED_FIELDS = frozenset(
-    {"max_concurrent_imports", "backoff_base_seconds", "backoff_max_seconds"}
+    {
+        "max_concurrent_imports",
+        "backoff_base_seconds",
+        "backoff_max_seconds",
+        "claim_timeout_minutes",
+    }
 )
 
 _LOG = logging.getLogger(__name__)
@@ -45,7 +50,8 @@ class Settings(BaseModel):
 
     max_attempts: int = 3
     max_archive_attempts: int = Field(default=9, ge=1)
-    claim_timeout_minutes: int = 420
+    claim_heartbeat_seconds: float = Field(default=60.0, gt=0)
+    claim_stale_minutes: int = Field(default=10, ge=2)
 
     scheduler_poll_interval_seconds: float = 60.0
     scheduler_reap_interval_seconds: float = 300.0
@@ -76,7 +82,7 @@ class Settings(BaseModel):
             for field in retired:
                 raw.pop(field)
             _LOG.warning(
-                "%s sets %s, which no longer exist and were never read -- ignored. "
+                "%s sets %s, which are no longer used -- ignored. "
                 "Remove them from the file.",
                 config_path,
                 ", ".join(retired),
@@ -101,12 +107,11 @@ class Settings(BaseModel):
         return settings
 
     @model_validator(mode="after")
-    def _claim_timeout_exceeds_poll_ceiling(self) -> Settings:
-        if self.claim_timeout_minutes <= self.max_poll_minutes:
+    def _stale_after_several_heartbeats(self) -> Settings:
+        if self.claim_stale_minutes * 60 < 3 * self.claim_heartbeat_seconds:
             raise ValueError(
-                f"claim_timeout_minutes ({self.claim_timeout_minutes}) must exceed "
-                f"max_poll_minutes ({self.max_poll_minutes}) -- otherwise reap/"
-                "poll_running_imports can reclaim a claim a live worker still owns"
+                f"claim_stale_minutes ({self.claim_stale_minutes}) must allow at least "
+                f"three claim_heartbeat_seconds ({self.claim_heartbeat_seconds:g})"
             )
         return self
 

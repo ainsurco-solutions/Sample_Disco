@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import IO
 
@@ -26,6 +28,53 @@ _REQUEST_FAULT_CODES = frozenset({"SignatureDoesNotMatch"})
 
 _XML_CODE = re.compile(r"<Code>([^<]{1,80})</Code>")
 
+_log = logging.getLogger(__name__)
+
+PROGRESS_EVERY_SECONDS = 60.0
+
+class _ProgressReader:
+
+    def __init__(
+        self,
+        handle: IO[bytes],
+        *,
+        total: int,
+        label: str,
+        file_id: int | None,
+        every_seconds: float = PROGRESS_EVERY_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._handle = handle
+        self._total = total
+        self._label = label
+        self._who = f"file {file_id}" if file_id is not None else "no file"
+        self._every = every_seconds
+        self._clock = clock
+        self._sent = 0
+        self._next = clock() + every_seconds
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._handle.read(size)
+        self._sent += len(chunk)
+        if chunk and self._clock() >= self._next:
+            self._next = self._clock() + self._every
+            mb = 1024 * 1024
+            _log.info(
+                "%s  PUT %s  %.0f/%.0f MB (%d%%)",
+                self._who,
+                self._label,
+                self._sent / mb,
+                self._total / mb,
+                int(100 * self._sent / self._total) if self._total else 100,
+            )
+        return chunk
+
+    def fileno(self) -> int:
+        return self._handle.fileno()
+
+    def __iter__(self) -> Iterator[bytes]:
+        return iter(lambda: self.read(64 * 1024), b"")
+
 def upload_via_presigned_url(
     *, source: Path, url: str, engine: Engine | None = None, file_id: int | None = None
 ) -> None:
@@ -33,7 +82,7 @@ def upload_via_presigned_url(
     with source.open("rb") as handle:
         _put(
             url,
-            handle,
+            _ProgressReader(handle, total=size, label=source.name, file_id=file_id),
             source=source,
             part=None,
             size=size,
@@ -81,7 +130,7 @@ def upload_multipart(
 
 def _put(
     url: str,
-    content: bytes | IO[bytes],
+    content: bytes | IO[bytes] | _ProgressReader,
     *,
     source: Path,
     part: int | None,

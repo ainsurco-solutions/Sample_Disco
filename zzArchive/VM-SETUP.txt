@@ -35,19 +35,28 @@ Get-NetTCPConnection -OwningProcess $id -State Established |
   About one connection per uploading file (port 443 or the proxy's).
   None at all -> the uploads have died although files show UPLOADING.
 
---- 4. If it is stalled -----------------------------------------------
-Either wait: each upload gives up by itself within 60 minutes, the file
-goes to FAILED (retryable, never ABANDONED), and a paused run stops.
+--- 4. If it is stalled or gone ---------------------------------------
+Since TASK-0106 the dashboard says so itself: files held by a worker
+that has stopped show a red "held by a worker that has stopped" box on
+the batch bar, about 10 minutes after it stops (claim_stale_minutes).
+Press Release them there -- it runs `migration-hub reap` -- then Retry
+or Resume. An upload also logs its progress once a minute now, so a
+quiet log with fresh progress lines is a slow upload, not a dead one.
 
-Or stop the migrate process now -- ONLY the migrate PID, never the
-dashboard's:
+If the process is still there but stuck: wait (each upload gives up by
+itself within 60 minutes, the file goes to FAILED, never ABANDONED), or
+stop ONLY the migrate PID -- never the dashboard's:
 
 Stop-Process -Id $id
 
-Its files stay UPLOADING with nothing working on them. Resume the batch:
-the other files go through; the stuck ones are skipped while claimed.
-`migration-hub reap` returns them once they are older than
-claim_timeout_minutes (420), and Retry then uploads them.
+then Release them once the red box appears.
+
+After this publish, config\prod.json's "claim_timeout_minutes" is
+ignored with a warning -- replace it with "claim_stale_minutes": 10.
+
+If the dashboard shows "Runs started from this dashboard will stop if
+its window is closed", keep that window open while runs are going, or
+start the dashboard from a plain PowerShell window.
 
 
 AMIGO on the POC VM -- copy-paste commands
