@@ -161,7 +161,10 @@ class DatabridgeAdapter:
 
         def get_part_url(part_number: int) -> str:
             part_response = self._request("GET", f"{base}/upload-part/{upload_id}/{part_number}")
-            return str(part_response.json())
+            try:
+                return str(part_response.json())
+            except ValueError:
+                return part_response.text.strip()
 
         etags = databridge_uploader.upload_multipart(
             source=source,
