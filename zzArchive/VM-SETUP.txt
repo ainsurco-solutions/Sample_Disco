@@ -1,3 +1,55 @@
+=======================================================================
+IS A RUN STILL WORKING? -- PowerShell checks (resmon is blocked here)
+=======================================================================
+For when a batch shows files in UPLOADING (or the Live log says "quiet
+for N min") and you cannot tell whether it is uploading or stuck. An
+upload writes nothing to the log until it finishes, so a long upload
+looks exactly like a hang. These tell them apart. Read-only except 4.
+
+--- 1. Which python.exe is which --------------------------------------
+Get-CimInstance Win32_Process -Filter "name='python.exe'" |
+  Select-Object ProcessId, @{n='MB';e={[int]($_.WorkingSetSize/1MB)}}, CommandLine |
+  Format-List
+
+  "... migration_hub.cli migrate ..."  -> the migration (note its PID)
+  "... streamlit run ..."              -> the dashboard -- leave it
+  the 24 K entries                     -> .venv launcher stubs -- ignore
+
+--- 2. Is it moving data? ---------------------------------------------
+Put the migrate PID from step 1 in $id:
+
+$id = 21176
+$a = Get-CimInstance Win32_Process -Filter "ProcessId=$id"
+Start-Sleep -Seconds 30
+$b = Get-CimInstance Win32_Process -Filter "ProcessId=$id"
+"Read  (from the share): {0:N1} MB in 30 s" -f (($b.ReadTransferCount  - $a.ReadTransferCount)  / 1MB)
+"Write (to the network): {0:N1} MB in 30 s" -f (($b.WriteTransferCount - $a.WriteTransferCount) / 1MB)
+
+  Both in the MB range  -> uploading. Leave it; the files finish.
+  Both near 0, and still near 0 a minute later -> stalled (see 4).
+
+--- 3. Are its uploads connected? -------------------------------------
+Get-NetTCPConnection -OwningProcess $id -State Established |
+  Select-Object RemoteAddress, RemotePort | Format-Table
+
+  About one connection per uploading file (port 443 or the proxy's).
+  None at all -> the uploads have died although files show UPLOADING.
+
+--- 4. If it is stalled -----------------------------------------------
+Either wait: each upload gives up by itself within 60 minutes, the file
+goes to FAILED (retryable, never ABANDONED), and a paused run stops.
+
+Or stop the migrate process now -- ONLY the migrate PID, never the
+dashboard's:
+
+Stop-Process -Id $id
+
+Its files stay UPLOADING with nothing working on them. Resume the batch:
+the other files go through; the stuck ones are skipped while claimed.
+`migration-hub reap` returns them once they are older than
+claim_timeout_minutes (420), and Retry then uploads them.
+
+
 AMIGO on the POC VM -- copy-paste commands
 ==========================================
 

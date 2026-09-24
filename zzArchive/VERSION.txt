@@ -1,3 +1,3 @@
-source commit : 82e72642e7e46a8ac01345cb53ae6f92276b9244
-               fix: push_amigo_to_demo.py's verify() never showed stderr on a sandbox crash
+source commit : e182729bbc6291dc523e4ad65d7a081d3dba1651
+               docs: VM-SETUP -- PowerShell checks for "is a run still working?" at the top
 files         : 89
