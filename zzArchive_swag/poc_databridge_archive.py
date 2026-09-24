@@ -27,6 +27,9 @@ def _ok(msg: str) -> None:
 def _fail(msg: str) -> None:
     print(f"    !! {msg}")
 
+def _parse_group_ids(raw: str) -> list[str]:
+    return [g.strip() for g in raw.split(",") if g.strip()]
+
 def _run_guarded(label: str, func: Callable[[], int]) -> int:
     try:
         return func()
@@ -92,6 +95,17 @@ def main() -> int:
         "and exit. No archive call, no risk of a duplicate. Use this to "
         "re-check verification (e.g. after a filter-syntax fix) without "
         "re-running --archive-only.",
+    )
+    parser.add_argument(
+        "--group-ids",
+        default="",
+        help="Comma-separated groupIds for the import call's body -- "
+        "access-control groups, per the vendor's importDatabase reference "
+        "(see GLOSSARY.md 'groupIds'). Production's adapter now requires a "
+        "real, non-empty value (settings.databridge_group_ids, TASK-0072) "
+        "instead of the empty-list placeholder this POC used to send "
+        "unconditionally -- pass the same real value(s) here to keep this "
+        "POC's request shape matching production. Empty by default.",
     )
     parser.add_argument(
         "--resource-group-id",
@@ -280,6 +294,7 @@ def main() -> int:
             for bak_path, database in targets:
                 print(f"    {bak_path.name} -> {database}")
         print(f"  instance          = {args.instance}")
+        print(f"  group-ids         = {_parse_group_ids(args.group_ids) or '[] (empty)'}")
         print(
             f"  resource-group-id = "
             f"{args.resource_group_id or f'(none given -- will try to resolve via {args.entitlement!r})'}"
@@ -458,12 +473,13 @@ def _migrate_one(
         return 1
     _ok("upload complete")
 
-    _step("4", "POST .../import (trigger job)")
+    group_ids = _parse_group_ids(args.group_ids)
+    _step("4", f"POST .../import (trigger job, groupIds={group_ids!r})")
     resp = session.post(
         f"{host}/databridge/v1/sql-instances/{args.instance}/Databases/{database}/import",
         params={"importFrom": _FORMAT_CODES["bak"]},
         headers={"accept": "application/json", "content-type": "application/json"},
-        json={"groupIds": []},
+        json={"groupIds": group_ids},
         timeout=30,
     )
     print(f"    status: {resp.status_code}")
