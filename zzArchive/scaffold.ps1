@@ -15,7 +15,6 @@ $Files = @(
     'src/migration_hub/adapters/databridge/__init__.py'
     'src/migration_hub/adapters/databridge/client.py'
     'src/migration_hub/adapters/databridge/errors.py'
-    'src/migration_hub/adapters/databridge/session.py'
     'src/migration_hub/adapters/storage/__init__.py'
     'src/migration_hub/adapters/storage/databridge_uploader.py'
     'src/migration_hub/adapters/storage/s3_uploader.py'

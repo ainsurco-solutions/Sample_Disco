@@ -14,6 +14,9 @@ class RateLimitedError(DatabridgeError, RetryableError):
         RuntimeError.__init__(self, message)
         self.retry_after = retry_after
 
+class RequestInterruptedError(DatabridgeError, RetryableError):
+    pass
+
 class UploadCredentialsExpiredError(DatabridgeError, RestageError):
     pass
 

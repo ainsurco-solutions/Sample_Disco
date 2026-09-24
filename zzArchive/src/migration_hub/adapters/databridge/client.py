@@ -10,13 +10,13 @@ import httpx
 from sqlalchemy.engine import Engine
 
 from migration_hub.adapters.base import PlatformSession
-from migration_hub.adapters.databridge import session as session_module
 from migration_hub.adapters.databridge.errors import (
     AuthenticationError,
     DatabridgeError,
     MissingJobIdError,
     MissingUploadUriError,
     RateLimitedError,
+    RequestInterruptedError,
     UnknownJobStatusError,
 )
 from migration_hub.adapters.storage import databridge_uploader
@@ -69,8 +69,15 @@ class DatabridgeAdapter:
     def close(self) -> None:
         self._client.close()
 
-    def open_session(self) -> PlatformSession:
-        return session_module.resolve(host=self._host, api_key=self._api_key)
+    def open_session(self, *, entitlement: str = "RI-DATAVAULT") -> PlatformSession:
+        response = self._request(
+            "GET", f"/platform/tenantdata/v1/entitlements/{entitlement}/resourcegroups"
+        )
+        resource_groups = response.json()
+        if not resource_groups:
+            raise DatabridgeError(f"No resource groups returned for entitlement {entitlement!r}")
+        resource_group_id = resource_groups[0]["resourceGroupId"]
+        return PlatformSession(resource_group_id=resource_group_id)
 
     @contextmanager
     def bound_to_file(self, file_id: int | None) -> Iterator[None]:
@@ -270,6 +277,14 @@ class DatabridgeAdapter:
             call.response_body = _safe_json(response)
         return response
 
+    def _send(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+        try:
+            return self._client.request(method, path, **kwargs)
+        except httpx.TransportError as exc:
+            raise RequestInterruptedError(
+                f"{method} {path} got no response: {type(exc).__name__}"
+            ) from exc
+
     def _request(
         self, method: str, path: str, *, store_body: bool = True, **kwargs: object
     ) -> httpx.Response:
@@ -279,14 +294,14 @@ class DatabridgeAdapter:
                 engine=self._engine, file_id=self._current_file_id, method=method, url=url
             ) as call:
                 call.request_body = kwargs.get("json")
-                response = self._client.request(method, path, **kwargs)
+                response = self._send(method, path, **kwargs)
                 call.status_code = response.status_code
                 if store_body or response.status_code >= 400:
                     call.response_body = _safe_json(response)
                 else:
                     call.response_body = f"({len(response.content):,} bytes, body not stored)"
         else:
-            response = self._client.request(method, path, **kwargs)
+            response = self._send(method, path, **kwargs)
 
         _raise_for_status(response)
         return response

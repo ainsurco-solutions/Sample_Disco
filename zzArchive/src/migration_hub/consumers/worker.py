@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from migration_hub.adapters.base import PlatformSession
 from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.adapters.databridge.errors import ImportJobFailedError
 from migration_hub.core.registry import Registry
@@ -50,6 +51,7 @@ class MigrationWorker:
         self._instances = dict(instances or {})
         self._group_ids = list(group_ids or [])
         self._dry_run_seen: set[int] = set()
+        self._session: PlatformSession | None = None
 
     def run_once(self, *, batch_id: str) -> FileState | None:
         file = self._registry.claim_next(
@@ -73,7 +75,9 @@ class MigrationWorker:
             return FileState.VALIDATED
 
         try:
-            session = self._adapter.open_session()
+            if self._session is None:
+                self._session = self._adapter.open_session()
+            session = self._session
 
             job_id = self._upload_and_import(
                 file.file_id,
