@@ -12,7 +12,11 @@ from migration_hub.core.states import BatchState, FileState
 from migration_hub.observability import controls
 from migration_hub.orchestration import archiver
 from migration_hub.orchestration.batch_identity import derive_batch_id
-from migration_hub.orchestration.batches import place_by_location, platform_locator
+from migration_hub.orchestration.batches import (
+    place_by_location,
+    platform_locator,
+    workers_for,
+)
 from migration_hub.orchestration.reconciliation import reconcile_targets
 from migration_hub.orchestration.worker_pool import run_worker_pool
 from migration_hub.producers import scanner, validator
@@ -77,7 +81,9 @@ def run_automated_migration(
     max_archive_attempts: int | None = None,
     compute_checksum: bool = False,
     on_progress: Callable[[str], None] | None = None,
+    initial_workers: int | None = None,
 ) -> AutoMigrationResult:
+    starting_workers = initial_workers or thread_count
 
     def _log(message: str) -> None:
         if on_progress is not None:
@@ -90,12 +96,12 @@ def run_automated_migration(
         check_source_folder(source_root)
         batch_id = derive_batch_id(source_root)
         _log(f"batch: {batch_id!r} (derived from {source_root})")
-        registry.ensure_batch(batch_id=batch_id, max_concurrency=thread_count)
+        registry.ensure_batch(batch_id=batch_id, max_concurrency=starting_workers)
 
         _log("discovering...")
         registered = scanner.register(
             registry=registry, source_root=source_root, batch_id=batch_id,
-            pattern=pattern, max_files=max_files, max_concurrency=thread_count,
+            pattern=pattern, max_files=max_files, max_concurrency=starting_workers,
         )
         _log(f"registered {registered} new file(s)")
     else:
@@ -135,6 +141,7 @@ def run_automated_migration(
             group_ids=group_ids,
             archive_after_bridge=not dry_run,
             max_archive_attempts=max_archive_attempts,
+            active_workers=lambda: workers_for(registry, batch_id, thread_count),
         )
 
         if _is_paused(registry, batch_id):

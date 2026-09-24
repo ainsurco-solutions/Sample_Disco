@@ -510,6 +510,13 @@ class Registry:
             if state is BatchState.DONE:
                 batch.finished_at = datetime.now(UTC).replace(tzinfo=None)
 
+    def set_batch_workers(self, *, batch_id: str, workers: int) -> None:
+        with Session(self._engine) as session, session.begin():
+            batch = session.get(Batch, batch_id)
+            if batch is None:
+                raise ValueError(f"No batch {batch_id!r}")
+            batch.max_concurrency = max(1, int(workers))
+
     def list_batches(self) -> Sequence[Batch]:
         with Session(self._engine) as session:
             results = list(session.scalars(select(Batch).order_by(Batch.created_at.desc())))

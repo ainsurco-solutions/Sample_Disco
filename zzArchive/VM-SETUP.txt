@@ -579,6 +579,26 @@ The dashboard shows the same answer in its "Data Bridge queue" card, with
 a Check now button that runs this command for you.
 
 
+MORE OR FEWER WORKERS WHILE A BATCH RUNS (TASK-0103)
+-----------------------------------------------------------------------
+The batch bar has a Workers dial: Fewer / More. A running batch follows it
+within about 15 seconds; turning it down lets the files in hand finish
+first. A Data Bridge-only batch uses it the next time its work starts.
+
+The dial cannot go above a ceiling you set once, in config\prod.json:
+
+  "worker_ceiling": 4,
+
+New batches still start at max_concurrent_uploads (keep that at 1 or 2).
+Without worker_ceiling the dial stays at max_concurrent_uploads.
+
+Go up gradually -- 2 first -- and watch the API calls panel and the Data
+Bridge queue card: the 10-import limit is shared with everyone on the
+tenant. Before raising it much, back up the registry
+(scripts\backup_registry.bat): more workers means more writes to a
+registry on OneDrive.
+
+
 =======================================================================
 HISTORIC -- TROUBLESHOOTING ALREADY DONE
 =======================================================================

@@ -974,7 +974,9 @@ def _start_add_batch(
         if batch_ops.state_of(registry=registry, batch_id=batch_id) is BatchState.PAUSED:
             batch_ops.resume(registry=registry, batch_id=batch_id)
 
-        worker_count = max(1, settings.max_concurrent_uploads)
+        worker_count = batch_ops.workers_for(
+            registry, batch_id, settings.effective_worker_ceiling
+        )
         st.write(
             f":material/rocket_launch: Starting work to **{_DESTINATION_LABEL[destination]}**..."
         )
@@ -1027,7 +1029,9 @@ def _add_batch_progress(
                 batch_ops.start_to_destination(
                     registry=registry,
                     batch_id=batch_id,
-                    count=max(1, settings.max_concurrent_uploads),
+                    count=batch_ops.workers_for(
+                        registry, batch_id, settings.effective_worker_ceiling
+                    ),
                     environment=settings.environment,
                 )
         else:
@@ -1555,7 +1559,7 @@ def _launch_continue(registry: Registry, settings: Settings, batch: str) -> None
         handles = batch_ops.start_to_destination(
             registry=registry,
             batch_id=batch,
-            count=max(1, settings.max_concurrent_uploads),
+            count=batch_ops.workers_for(registry, batch, settings.effective_worker_ceiling),
             environment=settings.environment,
         )
         handle = handles[0]
@@ -1655,6 +1659,8 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                 key=f"retry_{batch}",
             )
 
+        _render_workers_dial(registry, settings, batch, counts, destination)
+
         adopting = [f for f in retryable if _is_already_on_target(f)]
         if _retry_confirmed(f"bar_{batch}", retry_clicked, adopting):
             with st.status("Retrying", expanded=True) as status:
@@ -1665,6 +1671,73 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                 _note_launch(batch, "Retry", handle)
                 status.update(label="Handed off to the retry", state="complete", expanded=False)
             st.rerun()
+
+_IN_FLIGHT = (
+    FileState.UPLOADING,
+    FileState.UPLOADED,
+    FileState.IMPORTING,
+    FileState.VERIFYING,
+    FileState.ARCHIVING,
+)
+
+def _queue_says_wait(settings: Settings) -> bool:
+    _, rows = _queue_view(
+        queue_check.read_snapshot(settings.queue_snapshot_path), now=datetime.now(UTC)
+    )
+    return any(
+        recommendation
+        in (queue_check.Recommendation.HOLD, queue_check.Recommendation.INVESTIGATE)
+        for _, recommendation, _ in rows
+    )
+
+def _render_workers_dial(
+    registry: Registry,
+    settings: Settings,
+    batch: str,
+    counts: dict[FileState, int],
+    destination: BatchDestination,
+) -> None:
+    ceiling = settings.effective_worker_ceiling
+    current = batch_ops.workers_for(registry, batch, ceiling)
+    busy = sum(counts[state] for state in _IN_FLIGHT)
+    with st.container(horizontal=True, vertical_alignment="center"):
+        if st.button(
+            "Fewer",
+            icon=":material/remove:",
+            key=f"workers_down_{batch}",
+            disabled=current <= 1,
+            help="One fewer worker. The files in hand finish first.",
+        ):
+            registry.set_batch_workers(batch_id=batch, workers=current - 1)
+            st.rerun()
+        st.write(f"**Workers {current}** (max {ceiling})")
+        if st.button(
+            "More",
+            icon=":material/add:",
+            key=f"workers_up_{batch}",
+            disabled=current >= ceiling,
+            help=(
+                f"One more worker, up to {ceiling}."
+                if current < ceiling
+                else "At the ceiling -- raise worker_ceiling in the config to allow more."
+            ),
+        ):
+            registry.set_batch_workers(batch_id=batch, workers=current + 1)
+            st.rerun()
+        st.caption(f"{busy} file(s) in flight")
+    if ceiling == 1:
+        st.caption(
+            "Dialling up needs a ceiling: set `worker_ceiling` in `config\\prod.json` "
+            "(e.g. 4). New batches still start at `max_concurrent_uploads`."
+        )
+    elif destination is BatchDestination.BRIDGE:
+        st.caption("Data Bridge-only batch: the dial applies the next time its work starts.")
+    if current > 1 and _queue_says_wait(settings):
+        st.warning(
+            "The Data Bridge queue says **HOLD** or **INVESTIGATE** -- more workers "
+            "add load to a busy platform.",
+            icon=":material/warning:",
+        )
 
 def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
     files_tab, activity_tab, controls_tab, diagnostics_tab = st.tabs(

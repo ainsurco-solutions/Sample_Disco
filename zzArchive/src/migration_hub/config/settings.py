@@ -39,6 +39,7 @@ class Settings(BaseModel):
     databridge_group_ids: list[str]
 
     max_concurrent_uploads: int = 1
+    worker_ceiling: int | None = Field(default=None, ge=1)
     poll_interval_seconds: int = 60
     max_poll_minutes: int = 360
 
@@ -117,6 +118,10 @@ class Settings(BaseModel):
                 "ID(s) for this environment (see ADR-0008)"
             )
         return self
+
+    @property
+    def effective_worker_ceiling(self) -> int:
+        return max(self.worker_ceiling or 1, self.max_concurrent_uploads, 1)
 
     def api_key(self) -> str:
         return _require_env(self.api_key_env_var)

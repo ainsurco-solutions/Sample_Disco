@@ -63,6 +63,7 @@ def run_worker_loop(
     group_ids: list[str] | None = None,
     archive_after_bridge: bool = False,
     max_archive_attempts: int | None = None,
+    may_claim: Callable[[], bool] | None = None,
 ) -> dict[FileState, int]:
     worker = MigrationWorker(
         registry=registry,
@@ -93,6 +94,8 @@ def run_worker_loop(
     outcomes: dict[FileState, int] = {}
     while max_files is None or sum(outcomes.values()) < max_files:
         if state_of(registry=registry, batch_id=batch_id) is BatchState.PAUSED:
+            break
+        if may_claim is not None and not may_claim():
             break
         outcome = worker.run_once(batch_id=batch_id)
         if outcome is None:
@@ -136,6 +139,11 @@ def split_pending_archives(
         )
         (in_hand if busy else ready).append(file)
     return ready, in_hand
+
+def workers_for(registry: Registry, batch_id: str, ceiling: int) -> int:
+    batch = registry.get_batch(batch_id)
+    dialled = ceiling if batch is None else batch.max_concurrency
+    return max(1, min(int(dialled), max(ceiling, 1)))
 
 def state_of(*, registry: Registry, batch_id: str) -> BatchState:
     batch = registry.get_batch(batch_id)
