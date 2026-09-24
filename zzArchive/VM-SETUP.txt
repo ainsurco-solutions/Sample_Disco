@@ -575,6 +575,9 @@ Each read downloads the instance's whole job history (several MB), so it
 reads at most once every 5 minutes; run it again sooner and it shows the
 last result instead. Needs dry_run false in config\prod.json.
 
+The dashboard shows the same answer in its "Data Bridge queue" card, with
+a Check now button that runs this command for you.
+
 
 =======================================================================
 HISTORIC -- TROUBLESHOOTING ALREADY DONE

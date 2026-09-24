@@ -1,3 +1,3 @@
-source commit : 86eb57f63773af384b3ac7be26e561989d86b75a
-               Merge pull request #40 from ainsurco-solutions/task-0101-retryable-transport-errors
+source commit : 08044ec2fe5add3966ec7ad9c66c424c6f7ae968
+               feat: Data Bridge queue card on the dashboard; BRIDGED is finished on a Bridge-only batch; Open says when the batch is already open (TASK-0096, TASK-0092, TASK-0095)
 files         : 89

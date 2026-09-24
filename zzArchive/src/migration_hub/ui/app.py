@@ -29,6 +29,7 @@ from migration_hub.core.states import (
 )
 from migration_hub.observability import audit, controls, metrics
 from migration_hub.orchestration import batches as batch_ops
+from migration_hub.orchestration import queue_check
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
 
@@ -158,7 +159,7 @@ def render() -> None:
     if st.session_state.get("add_batch_open"):
         _add_batch_dialog(registry, settings)
 
-    _render_overview(registry)
+    _render_overview(registry, settings)
     st.space("medium")
 
     selected = st.session_state.get("selected_batch")
@@ -184,13 +185,97 @@ def _live_batch_tabs(registry: Registry, settings: Settings, batch: str) -> None
     _render_tabs(registry, settings, batch)
 
 @st.fragment(run_every="8s")
-def _render_overview(registry: Registry) -> None:
+def _render_overview(registry: Registry, settings: Settings) -> None:
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
+    st.space("small")
+    _render_queue_panel(settings)
     st.space("small")
     _render_operational_observability(registry, batch_id=None)
     st.space("small")
     _render_batch_log(registry)
+
+_RECOMMENDATION_COLOR: dict[queue_check.Recommendation, _BadgeColor] = {
+    queue_check.Recommendation.PUSH: "green",
+    queue_check.Recommendation.HOLD: "orange",
+    queue_check.Recommendation.INVESTIGATE: "red",
+    queue_check.Recommendation.UNKNOWN: "gray",
+}
+
+_QUEUE_STALE_TTLS = 3
+
+_QUEUE_LAUNCH_GRACE_SECONDS = 30
+
+def _queue_view(
+    snapshot: queue_check.Snapshot | None, *, now: datetime
+) -> tuple[str, list[tuple[str, queue_check.Recommendation, str]]]:
+    if snapshot is None:
+        return "Not checked yet", []
+    age_minutes = max(0, int((now - snapshot.written_at).total_seconds() // 60))
+    stale = age_minutes >= snapshot.ttl_minutes * _QUEUE_STALE_TTLS
+    headline = f"Read {_ago(age_minutes)}" + (" -- stale, check again" if stale else "")
+    rows = []
+    for q in snapshot.instances:
+        recommendation = queue_check.Recommendation.UNKNOWN if stale else q.recommendation
+        if q.read_ok:
+            oldest = (
+                f"oldest {q.oldest_active_minutes} min"
+                if q.oldest_active_minutes is not None
+                else "none active"
+            )
+            detail = (
+                f"{sum(q.queued.values())} queued, {sum(q.running.values())} running "
+                f"({q.active_imports} imports, {q.ours_active} ours) -- {oldest}; "
+                f"{q.failed_last_24h} failed in 24 h"
+            )
+        else:
+            detail = q.error or "the job list could not be read"
+        rows.append((q.instance, recommendation, detail))
+    return headline, rows
+
+def _render_queue_panel(settings: Settings) -> None:
+    now = datetime.now(UTC)
+    snapshot = queue_check.read_snapshot(settings.queue_snapshot_path)
+    headline, rows = _queue_view(snapshot, now=now)
+
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.subheader("Data Bridge queue")
+            st.caption(headline)
+            launched = st.session_state.get("queue_check_launched_at")
+            recently = (
+                launched is not None
+                and (now - launched).total_seconds() < _QUEUE_LAUNCH_GRACE_SECONDS
+            )
+            fresh = snapshot is not None and now < snapshot.fresh_until()
+            if settings.dry_run:
+                reason = "dry_run is on -- no vendor calls"
+            elif fresh and snapshot is not None:
+                reason = f"next read allowed from {snapshot.fresh_until():%H:%M:%S} UTC"
+            elif recently:
+                reason = "a check is already running"
+            else:
+                reason = "read each instance's job list now"
+            if st.button(
+                "Check now",
+                icon=":material/sync:",
+                key="queue_check_now",
+                disabled=settings.dry_run or fresh or recently,
+                help=reason,
+            ):
+                handle = batch_ops.start_queue_subprocess(environment=settings.environment)
+                st.session_state["queue_check_launched_at"] = now
+                st.caption(f"Started (pid `{handle.pid}`); output in `{handle.log_path}`.")
+        if not rows:
+            st.caption(
+                "Press **Check now** before starting a batch: it shows whether Data "
+                "Bridge is already busy."
+            )
+        for instance, recommendation, detail in rows:
+            with st.container(horizontal=True, vertical_alignment="center"):
+                st.badge(str(recommendation), color=_RECOMMENDATION_COLOR[recommendation])
+                st.write(f"**{instance}**")
+                st.caption(detail)
 
 def _render_unknown_states(registry: Registry) -> None:
     unknown = registry.unknown_states()
@@ -491,8 +576,17 @@ def _render_needs_action_rows(rows: list[dict[str, str | int]], *, offset: int) 
                 key=f"needs_action_open_{i}_{row['batch']}",
                 icon=":material/open_in_new:",
             ):
-                st.session_state["selected_batch"] = row["batch"]
-                st.rerun()
+                _open_batch(str(row["batch"]))
+
+def _open_batch(batch: str) -> None:
+    if st.session_state.get("selected_batch") == batch:
+        st.toast(
+            f"**{batch}** is already open -- scroll down to **Batch {batch}**.",
+            icon=":material/arrow_downward:",
+        )
+        return
+    st.session_state["selected_batch"] = batch
+    st.rerun()
 
 def _render_batch_log(registry: Registry) -> None:
     batches = registry.list_batches()
@@ -1103,17 +1197,24 @@ def _known_file_state(raw: str) -> FileState | None:
     except ValueError:
         return None
 
-def _file_progress(raw: str) -> int:
-    state = _known_file_state(raw)
-    return _STATE_PROGRESS[state] if state is not None else 0
+def _is_done(state: FileState, destination: BatchDestination) -> bool:
+    return state in done_states(destination)
 
-def _file_state_color(raw: str) -> _BadgeColor:
+def _file_progress(raw: str, destination: BatchDestination = BatchDestination.VAULT) -> int:
+    state = _known_file_state(raw)
+    if state is None:
+        return 0
+    return 100 if _is_done(state, destination) else _STATE_PROGRESS[state]
+
+def _file_state_color(
+    raw: str, destination: BatchDestination = BatchDestination.VAULT
+) -> _BadgeColor:
     state = _known_file_state(raw)
     if state is None:
         return "gray"
     if state in _PROBLEM_STATES:
         return "red"
-    if state is FileState.COMPLETED:
+    if _is_done(state, destination):
         return "green"
     if state is FileState.BRIDGED:
         return "orange"
@@ -1121,21 +1222,26 @@ def _file_state_color(raw: str) -> _BadgeColor:
         return "gray"
     return "blue"
 
-def _file_state_priority(raw: str) -> int:
+def _file_state_priority(raw: str, destination: BatchDestination = BatchDestination.VAULT) -> int:
     state = _known_file_state(raw)
     if state is None:
         return 5
     if state in _PROBLEM_STATES:
         return 1
+    if _is_done(state, destination):
+        return 4
     if state is FileState.BRIDGED:
         return 2
     if state in (FileState.DISCOVERED, FileState.VALIDATED):
         return 3
-    if state is FileState.COMPLETED:
-        return 4
     return 0
 
-def _file_table_style(rows: list[dict[str, object]], *, dark: bool) -> Styler:
+def _file_table_style(
+    rows: list[dict[str, object]],
+    *,
+    dark: bool,
+    destination: BatchDestination = BatchDestination.VAULT,
+) -> Styler:
     tones = {
         "green": ("#1F5B41", "#E4F3EA") if not dark else ("#8FDBB6", "#113023"),
         "orange": ("#7A4E0A", "#FBF0DF") if not dark else ("#EFC978", "#302610"),
@@ -1145,13 +1251,15 @@ def _file_table_style(rows: list[dict[str, object]], *, dark: bool) -> Styler:
     }
 
     def state_style(value: object) -> str:
-        foreground, background = tones[_file_state_color(str(value))]
+        foreground, background = tones[_file_state_color(str(value), destination)]
         return f"color: {foreground}; background-color: {background}; font-weight: 600"
 
     return pd.DataFrame(rows).style.set_uuid("file_progress").map(state_style, subset=["state"])
 
 def _file_table_rows(
-    files: Sequence[MigrationFile], terminal_times: dict[int, datetime]
+    files: Sequence[MigrationFile],
+    terminal_times: dict[int, datetime],
+    destination: BatchDestination = BatchDestination.VAULT,
 ) -> list[dict[str, object]]:
     return [
         {
@@ -1159,7 +1267,7 @@ def _file_table_rows(
             "source_database": f.source_database,
             "target_exposure_name": f.target_exposure_name,
             "state": f.state,
-            "progress": _file_progress(f.state),
+            "progress": _file_progress(f.state, destination),
             "size_mb": round(f.size_bytes / (1024 * 1024), 1),
             "attempts": f.attempts,
             "archive_attempts": f.archive_attempts,
@@ -1168,7 +1276,9 @@ def _file_table_rows(
             "duration": _format_duration(f.created_at, terminal_times.get(f.file_id)),
             "last_error": f.last_error,
         }
-        for f in sorted(files, key=lambda file: (_file_state_priority(file.state), file.file_id))
+        for f in sorted(
+            files, key=lambda file: (_file_state_priority(file.state, destination), file.file_id)
+        )
     ]
 
 def _support_bundle_filename(file: MigrationFile) -> str:
@@ -1478,7 +1588,8 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
             _render_archive_action(registry, settings, batch)
             _render_retry_action(registry, settings, batch, files)
             terminal_times = registry.file_terminal_times(batch_id=batch)
-            rows = _file_table_rows(files, terminal_times)
+            destination = registry.batch_destination(batch)
+            rows = _file_table_rows(files, terminal_times, destination)
             selected_key = f"selected_file_{batch}"
             file_by_id = {f.file_id: f for f in files}
             if st.session_state.get(selected_key) not in file_by_id:
@@ -1489,7 +1600,9 @@ def _render_tabs(registry: Registry, settings: Settings, batch: str) -> None:
             table_key = f"files_table_{batch}_{snapshot}"
             st.session_state[f"active_files_table_{batch}"] = table_key
             st.dataframe(
-                _file_table_style(rows, dark=st.context.theme.type == "dark"),
+                _file_table_style(
+                    rows, dark=st.context.theme.type == "dark", destination=destination
+                ),
                 column_config={
                     "file_id": st.column_config.NumberColumn("ID", pinned=True),
                     "source_database": st.column_config.TextColumn("Source EDM"),
@@ -1567,7 +1680,10 @@ def _render_file_detail_panel(
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Selected file")
-            st.badge(file.state, color=_file_state_color(file.state))
+            st.badge(
+                file.state,
+                color=_file_state_color(file.state, registry.batch_destination(file.batch_id)),
+            )
             st.caption(f"ID {file.file_id}")
 
         metric_cols = st.columns(3)
@@ -2011,7 +2127,8 @@ def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> N
             st.caption(f"Notes: {run.notes}")
 
 def _render_control_issues(registry: Registry, run: BatchRun) -> None:
-    settled = SETTLED_STATES | done_states(registry.batch_destination(run.batch_id))
+    destination = registry.batch_destination(run.batch_id)
+    settled = SETTLED_STATES | done_states(destination)
     files = registry.batch_files(batch_id=run.batch_id)
     running = run.status == str(controls.RunStatus.RUNNING)
     issues = [file for file in files if file.state not in settled or file.state in _PROBLEM_STATES]
@@ -2028,7 +2145,8 @@ def _render_control_issues(registry: Registry, run: BatchRun) -> None:
                     "Recorded reason": file.last_error or "Not recorded",
                 }
                 for file in sorted(
-                    issues, key=lambda file: (_file_state_priority(file.state), file.file_id)
+                    issues,
+                    key=lambda file: (_file_state_priority(file.state, destination), file.file_id),
                 )
             ],
             hide_index=True,
@@ -2227,7 +2345,8 @@ def _default_operator() -> str:
 def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
     counts = registry.counts_by_state(batch_id=batch)
     pending_archive = len(registry.pending_archives(batch_id=batch))
-    outstanding = _outstanding(counts, registry.batch_destination(batch))
+    destination = registry.batch_destination(batch)
+    outstanding = _outstanding(counts, destination)
     failures = (
         counts[FileState.FAILED]
         + counts[FileState.ABANDONED]
@@ -2267,7 +2386,7 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
         st.caption("Files by state:")
         for state in FileState:
             if counts[state]:
-                st.badge(f"{state} {counts[state]}", color=_file_state_color(state))
+                st.badge(f"{state} {counts[state]}", color=_file_state_color(state, destination))
 
     st.space("small")
     _render_operational_observability(registry, batch_id=batch)

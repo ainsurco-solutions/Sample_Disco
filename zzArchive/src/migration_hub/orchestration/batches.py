@@ -461,6 +461,9 @@ def start_migrate_source_subprocess(
         ["migrate", "--source", str(source_root)], f"migrate-{batch_id}", environment
     )
 
+def start_queue_subprocess(*, environment: str | None = None) -> WorkerHandle:
+    return _launch_cli(["queue"], "queue", environment)
+
 def start_controls_open_subprocess(
     *,
     batch_id: str,
