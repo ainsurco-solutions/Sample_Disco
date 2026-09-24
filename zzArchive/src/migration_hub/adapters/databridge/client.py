@@ -12,6 +12,7 @@ from sqlalchemy.engine import Engine
 from migration_hub.adapters.base import PlatformSession
 from migration_hub.adapters.databridge.errors import (
     AuthenticationError,
+    DatabaseAlreadyExistsError,
     DatabridgeError,
     MissingJobIdError,
     MissingUploadUriError,
@@ -340,6 +341,19 @@ def _job_from_item(item: dict[str, object]) -> DatabridgeJob:
         resource_type=text("resourceType"),
     )
 
+def _is_import_call(response: httpx.Response) -> bool:
+    path = response.request.url.path.lower()
+    return path.endswith("/import") or path.endswith("/init-upload")
+
+def _vendor_message(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text
+    if isinstance(body, dict) and isinstance(body.get("message"), str):
+        return str(body["message"])
+    return response.text
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code == 401:
         raise AuthenticationError(f"401 from {response.request.url}")
@@ -349,6 +363,10 @@ def _raise_for_status(response: httpx.Response) -> None:
             f"429 from {response.request.url}",
             retry_after=float(retry_after) if retry_after else None,
         )
+    if response.status_code == 409 and _is_import_call(response) and (
+        "already exists" in response.text.lower()
+    ):
+        raise DatabaseAlreadyExistsError(str(response.request.url), _vendor_message(response))
     if response.status_code >= 400:
         raise DatabridgeError(
             f"{response.status_code} from {response.request.url}: {response.text}"

@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from migration_hub.core.retry import AbandonError, HaltError, RestageError, RetryableError
+from migration_hub.core.retry import (
+    ALREADY_ON_TARGET,
+    AbandonError,
+    AlreadyOnTargetError,
+    HaltError,
+    RestageError,
+    RetryableError,
+)
 
 class DatabridgeError(RuntimeError):
     pass
@@ -25,6 +32,16 @@ class UploadServerError(DatabridgeError, RetryableError):
 
 class UploadInterruptedError(DatabridgeError, RetryableError):
     pass
+
+class DatabaseAlreadyExistsError(DatabridgeError, AlreadyOnTargetError):
+
+    def __init__(self, url: str, vendor_message: str) -> None:
+        super().__init__(
+            f"{ALREADY_ON_TARGET} -- not uploaded. A database with this name is "
+            "already there (earlier run, another developer, or a manual import). "
+            "Retry adopts it: checks Data Vault, then archives only. "
+            f"Vendor: 409 {vendor_message.strip()[:200]} ({url})"
+        )
 
 class UploadRejectedError(DatabridgeError, AbandonError):
     pass

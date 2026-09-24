@@ -38,6 +38,11 @@ class RestageError(Exception):
 class AbandonError(Exception):
     pass
 
+ALREADY_ON_TARGET = "Already on Data Bridge"
+
+class AlreadyOnTargetError(AbandonError):
+    pass
+
 class HaltError(Exception):
     pass
 

@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from migration_hub.config.settings import Settings
 from migration_hub.core.models import ApiTransaction, BatchRun, MigrationEvent, MigrationFile
 from migration_hub.core.registry import Registry
+from migration_hub.core.retry import ALREADY_ON_TARGET
 from migration_hub.core.states import (
     SETTLED_STATES,
     BatchDestination,
@@ -510,10 +511,12 @@ def _render_needs_action_queue(registry: Registry, settings: Settings | None = N
             if settings is not None
             else len(registry.pending_archives(batch_id=batch.batch_id))
         )
+        already_there = _already_on_target(registry, batch.batch_id)
         failed = (
             counts[FileState.FAILED]
             + counts[FileState.ABANDONED]
             + counts[FileState.ARCHIVE_FAILED]
+            - already_there
         )
         destination = BatchDestination(batch.destination)
         outstanding = _outstanding(counts, destination)
@@ -534,6 +537,15 @@ def _render_needs_action_queue(registry: Registry, settings: Settings | None = N
                     "batch": batch.batch_id,
                     "finding": f"{pending_archive} file(s) on Data Bridge (its destination)",
                     "next_action": "Archive into Data Vault when ready",
+                }
+            )
+        if already_there:
+            rows.append(
+                {
+                    "priority": 2,
+                    "batch": batch.batch_id,
+                    "finding": f"{already_there} file(s) already on Data Bridge",
+                    "next_action": "Not uploaded -- Retry adopts them (archive only)",
                 }
             )
         if failed:
@@ -568,6 +580,13 @@ def _render_needs_action_queue(registry: Registry, settings: Settings | None = N
                     _render_needs_action_rows(rows[3:], offset=3)
                 break
             _render_needs_action_rows([row], offset=i)
+
+def _already_on_target(registry: Registry, batch_id: str) -> int:
+    return sum(
+        1
+        for file in registry.files_in_states(states=[FileState.ABANDONED], batch_id=batch_id)
+        if (file.last_error or "").startswith(ALREADY_ON_TARGET)
+    )
 
 def _render_needs_action_rows(rows: list[dict[str, str | int]], *, offset: int) -> None:
     for i, row in enumerate(rows, start=offset):
