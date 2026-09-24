@@ -2014,85 +2014,6 @@ with report_tab:
     )
 
     st.divider()
-    st.subheader("Earlier runs")
-
-    history = store.runs()
-    if len(history) < 2:
-        st.caption(
-            "Only this run so far. Reconcile again and earlier runs can be "
-            "reopened and compared here."
-        )
-    else:
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Run": r.id,
-                        "Ran at (UTC)": r.ran_at,
-                        "Source": r.master_label,
-                        "Data Bridge": r.target_label,
-                        "Rows (src/bridge/vault)": (
-                            f"{r.master_count}/{r.target_count}/"
-                            f"{'—' if r.vault_count is None else r.vault_count}"
-                        ),
-                        "Inputs": r.fingerprint,
-                        "Viewing": "←" if r.id == st.session_state.run_id else "",
-                    }
-                    for r in history
-                ]
-            ),
-            hide_index=True,
-            width="stretch",
-        )
-
-        run_ids = [r.id for r in history]
-        reopen_col, compare_col = st.columns(2)
-
-        with reopen_col:
-            st.markdown("**Reopen a run**")
-            chosen_run = st.selectbox(
-                "Run to reopen",
-                run_ids,
-                index=run_ids.index(st.session_state.run_id)
-                if st.session_state.run_id in run_ids
-                else 0,
-                key="reopen_run",
-                label_visibility="collapsed",
-            )
-            if st.button("Reopen", width="stretch"):
-                st.session_state.result = store.load_run(int(chosen_run))
-                st.session_state.run_id = int(chosen_run)
-                st.session_state.outcome_filter = None
-                st.rerun()
-
-        with compare_col:
-            st.markdown("**Compare two runs**")
-            earlier = st.selectbox(
-                "Earlier run",
-                run_ids,
-                index=min(1, len(run_ids) - 1),
-                key="cmp_earlier",
-            )
-            later = st.selectbox(
-                "Later run", run_ids, index=0, key="cmp_later"
-            )
-            if st.button("Compare", width="stretch"):
-                if earlier == later:
-                    st.info("Pick two different runs.")
-                else:
-                    diff = store.compare_runs(int(earlier), int(later))
-                    changed, appeared, gone = st.columns(3)
-                    with changed:
-                        st.markdown("**Changed outcome**")
-                        st.write(diff["changed"] or "—")
-                    with appeared:
-                        st.markdown("**Newly appeared**")
-                        st.write(diff["appeared"] or "—")
-                    with gone:
-                        st.markdown("**No longer present**")
-                        st.write(diff["disappeared"] or "—")
-
-    st.divider()
     st.subheader("Data Vault activity")
 
     vault_activity = rows_to_frame(st.session_state.get("vault_rows"))
@@ -2187,6 +2108,27 @@ with report_tab:
                 else ""
             )
 
+            chart_window = st.radio(
+                "Chart range",
+                ["Last 30 days", "Last 90 days", "All"],
+                index=0,
+                horizontal=True,
+                key="vault_activity_window",
+            )
+            window_days = {"Last 30 days": 30, "Last 90 days": 90}.get(chart_window)
+            since = (
+                pd.Timestamp.now(tz="UTC").tz_localize(None).floor("D")
+                - pd.Timedelta(days=window_days - 1)
+                if window_days
+                else None
+            )
+
+            def _windowed(frame: pd.DataFrame) -> pd.DataFrame:
+                if since is None:
+                    return frame
+                days = pd.date_range(since, since + pd.Timedelta(days=window_days - 1))
+                return frame.reindex(days, fill_value=0)
+
             st.markdown("**DB Archived per day**")
             per_day_split = (
                 activity.groupby(["_day", "_source"]).size().unstack(fill_value=0)
@@ -2195,7 +2137,7 @@ with report_tab:
                 if column not in per_day_split.columns:
                     per_day_split[column] = 0
             per_day_split = per_day_split[["Manual", "Automation"]]
-            st.bar_chart(per_day_split, height=240)
+            st.bar_chart(_windowed(per_day_split), height=400)
 
             if _size_col is not None:
                 st.markdown("**GB per day**")
@@ -2206,7 +2148,7 @@ with report_tab:
                 for column in ("Manual", "Automation"):
                     if column not in gb_split.columns:
                         gb_split[column] = 0.0
-                st.bar_chart(gb_split[["Manual", "Automation"]], height=240)
+                st.bar_chart(_windowed(gb_split[["Manual", "Automation"]]), height=400)
 
             table = per_day_split.copy()
             table["Total"] = table["Manual"] + table["Automation"]
@@ -2214,6 +2156,7 @@ with report_tab:
                 table["GB"] = (
                     activity.groupby("_day")["_mb"].sum() / 1024
                 ).round(2)
+            table = table.sort_index(ascending=False)
             st.dataframe(table.reset_index().rename(columns={"_day": "day"}),
                          hide_index=True, width="stretch")
 
@@ -2331,6 +2274,81 @@ with report_tab:
                 "contents compare against the estate they came from. Sizes read "
                 f"from {_size_col!r}."
             )
+
+    st.divider()
+    st.subheader("Earlier runs")
+
+    history = store.runs()
+    if len(history) < 2:
+        st.caption(
+            "Only this run so far. Reconcile again and earlier runs can be "
+            "reopened and compared here."
+        )
+    else:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Run": r.id,
+                        "Ran at (UTC)": r.ran_at,
+                        "Source": r.master_label,
+                        "Data Bridge": r.target_label,
+                        "Rows (src/bridge/vault)": (
+                            f"{r.master_count}/{r.target_count}/"
+                            f"{'—' if r.vault_count is None else r.vault_count}"
+                        ),
+                        "Inputs": r.fingerprint,
+                        "Viewing": "←" if r.id == st.session_state.run_id else "",
+                    }
+                    for r in history
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+        run_ids = [r.id for r in history]
+        reopen_col, earlier_col, later_col = st.columns(3)
+        with reopen_col:
+            chosen_run = st.selectbox(
+                "Reopen a run",
+                run_ids,
+                index=run_ids.index(st.session_state.run_id)
+                if st.session_state.run_id in run_ids
+                else 0,
+                key="reopen_run",
+            )
+            if st.button("Reopen", width="stretch"):
+                st.session_state.result = store.load_run(int(chosen_run))
+                st.session_state.run_id = int(chosen_run)
+                st.session_state.outcome_filter = None
+                st.rerun()
+        with earlier_col:
+            earlier = st.selectbox(
+                "Compare -- earlier run",
+                run_ids,
+                index=min(1, len(run_ids) - 1),
+                key="cmp_earlier",
+            )
+        with later_col:
+            later = st.selectbox("Compare -- later run", run_ids, index=0, key="cmp_later")
+            compare = st.button("Compare", width="stretch")
+
+        if compare:
+            if earlier == later:
+                st.info("Pick two different runs.")
+            else:
+                diff = store.compare_runs(int(earlier), int(later))
+                changed, appeared, gone = st.columns(3)
+                with changed:
+                    st.markdown("**Changed outcome**")
+                    st.write(diff["changed"] or "—")
+                with appeared:
+                    st.markdown("**Newly appeared**")
+                    st.write(diff["appeared"] or "—")
+                with gone:
+                    st.markdown("**No longer present**")
+                    st.write(diff["disappeared"] or "—")
 
 with results_tab:
     frame = results_frame(result)
