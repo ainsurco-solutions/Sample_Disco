@@ -1,44 +1,17 @@
-# Migration Hub theme -- the MS Amlin web palette. THIS IS THE ACTIVE THEME.
-#
-# Chosen by the operator on the VM, 2026-09-21, over the teal variant kept
-# beside it as config.teal.toml. Streamlit only ever reads config.toml; to go
-# back, copy config.teal.toml over this file, restart Streamlit, and move
-# _TRACKER_PALETTE in ui/app.py to the values its comment lists.
-#
-# Where the colours come from: MS Amlin's own site (www.msamlin.com), read
-# from its stylesheet rather than eyeballed. This is the same palette the
-# Reconcile tool uses, so the two tools in front of the client match.
-#
-#     --blue        #1B1464   primary
-#     --blue-light  #271D8F   hover / lighter primary
-#     --cyan        #00E6F0   accent
-#     --grey-50     #F8F8F8   page background
-#     --grey-light  #D8D9DB   borders
-#     --red         #FF1F27   their red -- deliberately NOT used
-#
-# The client's own red is left out on purpose, for the reason Reconcile's
-# theme gives: red already means "needs action" here -- FAILED, ABANDONED, the
-# PROD badge -- and a brand red on a button would put the same colour on a
-# thing to press and a thing that is wrong. The navy carries the brand; red
-# keeps its job.
-#
-# What is KEPT from the teal theme, deliberately:
-#   - IBM Plex Sans/Mono, the radii, the border settings
-#   - both light and dark modes
-#   - the state badge colours (green/red/orange/gray), which are semantic
-#     rather than brand: they mean done / failed / needs review / inert, and
-#     repainting them in brand colours would cost the reader information
-# Only primaryColor, links and the blue family move to navy.
-#
-# NOTE: blueColor moves to navy too. Blue is the "in flight" badge, and the
-# original theme pinned it to the accent on purpose so "in progress" read as
-# "the same system that is the brand". That reasoning still holds -- the brand
-# is just navy now instead of teal.
-
+# Shared application theme. Keep in sync with the other app's config.toml.
+# tests/unit/test_ui_visual_parity.py enforces deployment parity.
 [theme]
-baseFontSize = 14
+font = "sans-serif"
+codeFont = "monospace"
+baseFontSize = 16
 baseFontWeight = 400
+headingFontSizes = ["2.75rem", "1.75rem", "1.25rem", "1.1rem", "1rem", "1rem"]
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
 showSidebarBorder = true
+linkUnderline = false
 
 [theme.light]
 primaryColor = "#1B1464"
@@ -49,79 +22,47 @@ borderColor = "#D8D9DB"
 linkColor = "#1B1464"
 codeBackgroundColor = "#F8F8F8"
 codeTextColor = "#1a1a1a"
-
-greenColor = "#2E7D5B"
+greenColor = "#1E7B34"
 greenBackgroundColor = "#E4F3EA"
 greenTextColor = "#1F5B41"
-
-redColor = "#B23A3A"
+redColor = "#B3261E"
 redBackgroundColor = "#FBE9E9"
 redTextColor = "#8A2C2C"
-
-orangeColor = "#A6690E"
+orangeColor = "#B26A00"
 orangeBackgroundColor = "#FBF0DF"
 orangeTextColor = "#7A4E0A"
-
 blueColor = "#1B1464"
 blueBackgroundColor = "#E8E7F2"
 blueTextColor = "#141052"
-
 grayColor = "#5B6B78"
 grayBackgroundColor = "#F8F8F8"
 grayTextColor = "#3F4C57"
-
 dataframeBorderColor = "#D8D9DB"
 dataframeHeaderBackgroundColor = "#F8F8F8"
 
-font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
-codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
-
-baseRadius = "10px"
-buttonRadius = "8px"
-showWidgetBorder = true
-linkUnderline = false
-
 [theme.dark]
-# Navy at #1B1464 is too dark to read against a dark background, so dark mode
-# uses the brand's cyan accent instead. This is the same decision the light
-# mode makes in reverse: the brand colour that carries, on the background it
-# has to carry against.
 primaryColor = "#00E6F0"
 backgroundColor = "#0B0F13"
 secondaryBackgroundColor = "#161D24"
 textColor = "#E7ECEF"
-borderColor = "#232D35"
+borderColor = "#313D46"
 linkColor = "#00E6F0"
 codeBackgroundColor = "#161D24"
 codeTextColor = "#E7ECEF"
-
 greenColor = "#57B98A"
 greenBackgroundColor = "#113023"
 greenTextColor = "#8FDBB6"
-
 redColor = "#E2726B"
 redBackgroundColor = "#33191A"
 redTextColor = "#F1A9A4"
-
 orangeColor = "#D9A441"
 orangeBackgroundColor = "#302610"
 orangeTextColor = "#EFC978"
-
 blueColor = "#00E6F0"
 blueBackgroundColor = "#0E2A2D"
 blueTextColor = "#7FEFF5"
-
 grayColor = "#92A2AC"
 grayBackgroundColor = "#161D24"
 grayTextColor = "#B7C2CA"
-
-dataframeBorderColor = "#232D35"
+dataframeBorderColor = "#313D46"
 dataframeHeaderBackgroundColor = "#161D24"
-
-font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
-codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
-
-baseRadius = "10px"
-buttonRadius = "8px"
-showWidgetBorder = true
-linkUnderline = false

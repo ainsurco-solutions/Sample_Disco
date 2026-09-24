@@ -1,3 +1,3 @@
-source commit : 3dc9ee7592016bece26892db80a263dbcea609d4
-               feat: know whether a run is alive -- runs outlive the dashboard, claims have a heartbeat (TASK-0106)
-files         : 89
+source commit : ec4e54691f1d40373ce62369e3261d750e606d65
+               test: visual-parity tests that read Reconcile's source skip in the published copy (TASK-0095)
+files         : 90

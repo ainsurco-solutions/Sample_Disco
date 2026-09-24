@@ -34,6 +34,7 @@ from migration_hub.orchestration import batches as batch_ops
 from migration_hub.orchestration import queue_check
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
+from migration_hub.ui.visual_style import stylesheet
 
 load_dotenv()
 
@@ -129,6 +130,7 @@ def _load_settings() -> Settings:
 def render() -> None:
     st.set_page_config(page_title="Migration Hub", page_icon="🧭", layout="wide")
 
+    st.markdown(stylesheet(st.context.theme.type), unsafe_allow_html=True)
     settings = _load_settings()
     registry = Registry(_engine(settings.database_url))
 
@@ -171,7 +173,7 @@ def render() -> None:
             icon=":material/link:",
         )
     _render_overview(registry, settings)
-    st.space("medium")
+    st.divider()
 
     selected = st.session_state.get("selected_batch")
     if not selected:
@@ -181,7 +183,6 @@ def render() -> None:
     st.subheader(f"Batch {selected}")
     _live_batch_action_bar(registry, settings, selected)
     _render_live_log(registry, settings, selected)
-    st.space("small")
     _live_batch_tabs(registry, settings, selected)
 
 _BATCH_REFRESH = "8s"
@@ -199,11 +200,8 @@ def _live_batch_tabs(registry: Registry, settings: Settings, batch: str) -> None
 def _render_overview(registry: Registry, settings: Settings) -> None:
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
-    st.space("small")
     _render_queue_panel(settings)
-    st.space("small")
     _render_operational_observability(registry, batch_id=None, settings=settings)
-    st.space("small")
     _render_batch_log(registry)
 
 _RECOMMENDATION_COLOR: dict[queue_check.Recommendation, _BadgeColor] = {
@@ -305,9 +303,9 @@ def _kpi_strip_global(registry: Registry) -> None:
     counts = registry.counts_by_state(batch_id=None)
     in_flight = (
         counts[FileState.UPLOADING]
+        + counts[FileState.UPLOADED]
         + counts[FileState.IMPORTING]
         + counts[FileState.VERIFYING]
-        + counts[FileState.BRIDGED]
         + counts[FileState.ARCHIVING]
     )
     issues = (
@@ -341,7 +339,7 @@ def _kpi_strip_global(registry: Registry) -> None:
             "red",
             "Failed / abandoned",
             issues,
-            "needs attention" if issues else "none",
+            "all batches, including closed" if issues else "none",
         ),
     ]
     st.markdown(
@@ -349,33 +347,14 @@ def _kpi_strip_global(registry: Registry) -> None:
         <style>
           .mh-summary-row { display:flex; flex-wrap:wrap; gap:.6rem; margin:.15rem 0 .25rem; }
           .mh-summary-card {
-            flex:1 1 150px; min-width:150px; padding:.5rem .7rem;
-            border:1px solid rgba(128,128,128,.28); border-radius:8px;
-            background:rgba(128,128,128,.06);
+            flex:1 1 150px; min-width:0;
           }
           .mh-summary-value {
-            font-size:1.5rem; font-weight:700; line-height:1.05;
+            font-weight:700; line-height:1.05;
             font-variant-numeric:tabular-nums;
           }
-          .mh-summary-title { font-size:.88rem; font-weight:600; margin-top:.1rem; }
-          .mh-summary-note { font-size:.74rem; opacity:.7; margin-top:.15rem; }
-          .mh-summary-card[data-tone="green"] .mh-summary-value { color:#2E7D5B; }
-          .mh-summary-card[data-tone="orange"] .mh-summary-value { color:#A6690E; }
-          .mh-summary-card[data-tone="red"] .mh-summary-value { color:#B23A3A; }
-          .mh-summary-card[data-tone="blue"] .mh-summary-value { color:#1B1464; }
-          .mh-summary-card[data-empty="true"] { opacity:.6; }
-          .mh-summary-row[data-theme="dark"] [data-tone="green"] .mh-summary-value {
-            color:#57B98A;
-          }
-          .mh-summary-row[data-theme="dark"] [data-tone="orange"] .mh-summary-value {
-            color:#D9A441;
-          }
-          .mh-summary-row[data-theme="dark"] [data-tone="red"] .mh-summary-value {
-            color:#E2726B;
-          }
-          .mh-summary-row[data-theme="dark"] [data-tone="blue"] .mh-summary-value {
-            color:#00E6F0;
-          }
+          .mh-summary-title { font-weight:600; margin-top:.1rem; }
+          .mh-summary-note { margin-top:.15rem; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -407,11 +386,16 @@ def _render_operational_observability(
 def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> None:
     snapshot = metrics.throughput(registry=registry, batch_id=batch_id, window_hours=24)
     file_metrics = registry.file_metrics(batch_id=batch_id)
-    remaining_bytes = max(0, file_metrics["total_bytes"] - file_metrics["completed_bytes"])
-    eta = metrics.projected_completion(remaining_bytes=remaining_bytes, snapshot=snapshot)
+    work = registry.remaining_work_metrics(batch_id=batch_id)
+    remaining_bytes = work["remaining_bytes"]
+    eta = (
+        metrics.projected_completion(remaining_bytes=remaining_bytes, snapshot=snapshot)
+        if work["remaining_count"] and not work["review_count"]
+        else None
+    )
     failure_rate = metrics.failure_rate(registry=registry, batch_id=batch_id)
 
-    with st.container(border=True):
+    with st.container(border=False):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Throughput / ETA")
             st.badge("Registry measured", color="green", icon=":material/speed:")
@@ -424,17 +408,33 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
             st.caption(f"{file_metrics['total_count']} file(s) in scope")
         with cols[2]:
             st.metric("Remaining", _format_bytes(remaining_bytes))
-            st.caption("by registered file size")
+            st.caption(f"{work['remaining_count']} file(s) in open batches")
         with cols[3]:
-            eta_text = _format_timedelta(eta) if eta is not None else "Pending"
+            eta_text = (
+                "None"
+                if not work["remaining_count"]
+                else "Review"
+                if work["review_count"]
+                else _format_timedelta(eta)
+                if eta is not None
+                else "Pending"
+            )
             st.metric("ETA", eta_text)
-            if eta is None:
-                st.caption(
-                    f"needs {metrics.MIN_COMPLETIONS_FOR_ETA}+ completions in 24h -- "
-                    f"failure rate {failure_rate:.1%}"
-                )
-            else:
-                st.caption(f"projection, not a commitment -- failure rate {failure_rate:.1%}")
+            st.caption("estimated duration")
+        if not work["remaining_count"]:
+            st.caption("No outstanding work. Historical file outcomes remain in the totals.")
+        elif work["review_count"]:
+            st.caption(
+                f"ETA withheld: {work['review_count']} file(s) paused, awaiting validation "
+                "or needing review."
+            )
+        elif eta is None:
+            st.caption(
+                f"ETA needs {metrics.MIN_COMPLETIONS_FOR_ETA}+ completions in 24h. "
+                f"Failure rate: {failure_rate:.1%}."
+            )
+        else:
+            st.caption(f"ETA is a projection. Failure rate: {failure_rate:.1%}.")
 
 def _render_api_call_panel(registry: Registry, *, batch_id: str | None) -> None:
     summary = metrics.api_call_summary(registry=registry, batch_id=batch_id, window_minutes=15)
@@ -444,7 +444,7 @@ def _render_api_call_panel(registry: Registry, *, batch_id: str | None) -> None:
         "investigate": "red",
     }
 
-    with st.container(border=True):
+    with st.container(border=False):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("API calls")
             st.badge(
@@ -497,7 +497,7 @@ def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
                 "errors": st.column_config.NumberColumn("Errors"),
             },
             hide_index=True,
-            height=180,
+            height=min(180, 36 + 35 * len(endpoint_rows)),
         )
     with right:
         st.dataframe(
@@ -507,7 +507,7 @@ def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
                 "calls": st.column_config.NumberColumn("Calls"),
             },
             hide_index=True,
-            height=180,
+            height=min(180, 36 + 35 * len(status_rows)),
         )
 
 def _render_needs_action_queue(registry: Registry, settings: Settings | None = None) -> None:
@@ -578,7 +578,7 @@ def _render_needs_action_queue(registry: Registry, settings: Settings | None = N
             )
 
     rows = sorted(rows, key=lambda r: (int(r["priority"]), str(r["batch"])))
-    with st.container(border=True):
+    with st.container(border=False):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Needs action")
             st.badge(str(len(rows)), color="orange" if rows else "green")

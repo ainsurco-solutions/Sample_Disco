@@ -47,6 +47,7 @@ from settings import (
     load_sql_settings,
 )
 from store import DEFAULT_DB_PATH, Store
+from visual_style import semantic_colour, stylesheet
 
 API = load_settings()
 SQL = load_sql_settings()
@@ -163,35 +164,6 @@ st.markdown(
       }
       .sp-req { background:rgba(179,38,30,.13); color:#b3261e; }
 
-      button[data-testid="stBaseButton-primary"],
-      .stButton button[kind="primary"] {
-        background:transparent;
-        color:#1B1464;
-        border:1.5px solid #1B1464;
-        font-weight:600;
-      }
-      button[data-testid="stBaseButton-primary"]:hover,
-      .stButton button[kind="primary"]:hover {
-        background:rgba(27,20,100,.07);
-        color:#271D8F;
-        border-color:#271D8F;
-      }
-      button[data-testid="stBaseButton-primary"]:disabled,
-      .stButton button[kind="primary"]:disabled {
-        background:transparent; color:#9aa0a6; border-color:#d3d6da;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        button[data-testid="stBaseButton-primary"],
-        .stButton button[kind="primary"] {
-          color:#9b93e8; border-color:#9b93e8;
-        }
-        button[data-testid="stBaseButton-primary"]:hover,
-        .stButton button[kind="primary"]:hover {
-          background:rgba(155,147,232,.14);
-          color:#b5aef0; border-color:#b5aef0;
-        }
-      }
       .sp-opt { background:rgba(128,128,128,.18); color:#5f6368; }
       .sp-label { font-size:.82rem; font-weight:600; margin-top:.2rem; }
       .sp-purpose { font-size:.75rem; opacity:.62; line-height:1.3; }
@@ -343,10 +315,11 @@ st.markdown(
 
 MINUS = "\u2212"
 
-RED = "#b3261e"
-AMBER = "#b26a00"
-GREEN = "#1e7b34"
-GREY = "#5f6368"
+st.markdown(stylesheet(st.context.theme.type), unsafe_allow_html=True)
+RED = semantic_colour("red")
+AMBER = semantic_colour("orange")
+GREEN = semantic_colour("green")
+GREY = semantic_colour("muted")
 
 OUTCOME_COLOUR: dict[Outcome, str] = {
     Outcome.MISSING: RED,

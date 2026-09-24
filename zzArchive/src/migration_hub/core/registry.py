@@ -739,6 +739,45 @@ class Registry:
             "attempted_count": attempted_count,
         }
 
+    def remaining_work_metrics(self, *, batch_id: str | None) -> dict[str, int]:
+        progress_states = (
+            FileState.VALIDATED,
+            FileState.UPLOADING,
+            FileState.UPLOADED,
+            FileState.IMPORTING,
+            FileState.VERIFYING,
+            FileState.BRIDGED,
+            FileState.ARCHIVING,
+        )
+        needs_review = (
+            ~MigrationFile.state.in_([str(state) for state in progress_states])
+            | ~Batch.state.in_([str(BatchState.PLANNED), str(BatchState.RUNNING)])
+            | ~Batch.destination.in_([str(destination) for destination in BatchDestination])
+            | (MigrationFile.size_bytes <= 0)
+        )
+        stmt = (
+            select(
+                func.count(),
+                func.coalesce(func.sum(MigrationFile.size_bytes), 0),
+                func.coalesce(func.sum(case((needs_review, 1), else_=0)), 0),
+            )
+            .select_from(MigrationFile)
+            .join(Batch, Batch.batch_id == MigrationFile.batch_id)
+            .where(
+                Batch.state != str(BatchState.DONE),
+                MigrationFile.state != str(FileState.COMPLETED),
+                ~(
+                    (Batch.destination == str(BatchDestination.BRIDGE))
+                    & (MigrationFile.state == str(FileState.BRIDGED))
+                ),
+            )
+        )
+        if batch_id is not None:
+            stmt = stmt.where(MigrationFile.batch_id == batch_id)
+        with Session(self._engine) as session:
+            count, size, review = session.execute(stmt).one()
+        return {"remaining_count": count, "remaining_bytes": size, "review_count": review}
+
     def create_batch_run(self, *, run: BatchRun) -> None:
         with Session(self._engine) as session, session.begin():
             session.add(run)

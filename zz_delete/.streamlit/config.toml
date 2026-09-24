@@ -1,25 +1,68 @@
-# Theme taken from MS Amlin's own site (www.msamlin.com), read from its
-# stylesheet rather than eyeballed:
-#
-#     --blue        #1B1464   primary
-#     --blue-light  #271D8F   hover / lighter primary
-#     --cyan        #00E6F0   accent
-#     --grey-50     #F8F8F8   page background
-#     --grey-light  #D8D9DB   borders
-#     --red         #FF1F27   their red -- deliberately NOT used here
-#
-# Streamlit's default primaryColor is red (#FF4B4B), which painted every
-# type="primary" button: Run reconciliation, Show all, and the selected
-# finding filter. Red on a control somebody is meant to press reads as a
-# warning rather than an invitation.
-#
-# The client's own red is left out on purpose. This tool already spends red on
-# a meaning -- Missing and Duplicate, the outcomes that need acting on -- and
-# a brand red on a button would put the same colour on a thing to press and a
-# thing that is wrong. The navy carries the brand; red keeps its job.
-
+# Shared application theme. Keep in sync with the other app's config.toml.
+# tests/unit/test_ui_visual_parity.py enforces deployment parity.
 [theme]
+font = "sans-serif"
+codeFont = "monospace"
+baseFontSize = 16
+baseFontWeight = 400
+headingFontSizes = ["2.75rem", "1.75rem", "1.25rem", "1.1rem", "1rem", "1rem"]
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
+showSidebarBorder = true
+linkUnderline = false
+
+[theme.light]
 primaryColor = "#1B1464"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F8F8F8"
 textColor = "#1a1a1a"
+borderColor = "#D8D9DB"
+linkColor = "#1B1464"
+codeBackgroundColor = "#F8F8F8"
+codeTextColor = "#1a1a1a"
+greenColor = "#1E7B34"
+greenBackgroundColor = "#E4F3EA"
+greenTextColor = "#1F5B41"
+redColor = "#B3261E"
+redBackgroundColor = "#FBE9E9"
+redTextColor = "#8A2C2C"
+orangeColor = "#B26A00"
+orangeBackgroundColor = "#FBF0DF"
+orangeTextColor = "#7A4E0A"
+blueColor = "#1B1464"
+blueBackgroundColor = "#E8E7F2"
+blueTextColor = "#141052"
+grayColor = "#5B6B78"
+grayBackgroundColor = "#F8F8F8"
+grayTextColor = "#3F4C57"
+dataframeBorderColor = "#D8D9DB"
+dataframeHeaderBackgroundColor = "#F8F8F8"
+
+[theme.dark]
+primaryColor = "#00E6F0"
+backgroundColor = "#0B0F13"
+secondaryBackgroundColor = "#161D24"
+textColor = "#E7ECEF"
+borderColor = "#313D46"
+linkColor = "#00E6F0"
+codeBackgroundColor = "#161D24"
+codeTextColor = "#E7ECEF"
+greenColor = "#57B98A"
+greenBackgroundColor = "#113023"
+greenTextColor = "#8FDBB6"
+redColor = "#E2726B"
+redBackgroundColor = "#33191A"
+redTextColor = "#F1A9A4"
+orangeColor = "#D9A441"
+orangeBackgroundColor = "#302610"
+orangeTextColor = "#EFC978"
+blueColor = "#00E6F0"
+blueBackgroundColor = "#0E2A2D"
+blueTextColor = "#7FEFF5"
+grayColor = "#92A2AC"
+grayBackgroundColor = "#161D24"
+grayTextColor = "#B7C2CA"
+dataframeBorderColor = "#313D46"
+dataframeHeaderBackgroundColor = "#161D24"

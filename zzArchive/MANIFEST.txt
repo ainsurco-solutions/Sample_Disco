@@ -1,9 +1,9 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 3dc9ee7592016bece26892db80a263dbcea609d4
+# source commit: ec4e54691f1d40373ce62369e3261d750e606d65
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
-config	4290	127	91664a4eb136b9fb598bbf672753861cacc6892b1ed1086697e5141ee7dc75e2	.streamlit/config.toml
+config	1898	68	e4f9676d7b91e74374c4db01eb558cf343db52b577325ace8a49a4d9a67ab971	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
 config	38761	829	aa4cfe23f6014f88b78ebfaa5a8efb93032eb239ec6d7646a114b4567f146c66	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
@@ -59,7 +59,7 @@ code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/mi
 code	554	18	c88d3130f22e0a36946f9fd1ed1bb711766b23f243a8018635594de2251832df	src/migration_hub/core/checksum.py
 code	5996	162	1aeaa165382b9809643a26881245445d2700c3919d3f276848c055dd5a736548	src/migration_hub/core/engine.py
 code	8063	174	a091e55c0648f88accad6d1be537318ecd8c7fa2490254647404ad923d0d4f7b	src/migration_hub/core/models.py
-code	29036	780	36142dbb75ff606941caa165d26ef6a5cbfaa02a1ff30dbd4b0c92f83e255af0	src/migration_hub/core/registry.py
+code	30698	819	a5700b30a73486ca23c81b44f54ebcc84b7f866a7d5842a953f6f4f27cd04285	src/migration_hub/core/registry.py
 code	2171	74	9229fe723e2d3f013f8c15da6a8ea32c4f32fd5b8558e55de729f614cb8e41e9	src/migration_hub/core/retry.py
 code	1434	41	0ae8263a84d530c8897957b38d4c4c5d6772ee79b4317425c09fd5e4e0c9a21a	src/migration_hub/core/routing.py
 code	781	29	472b2625664100d0c4611312ef93ecb49f699aba30bb2ed611e8b2c7c3325ba0	src/migration_hub/core/scrub.py
@@ -88,5 +88,6 @@ code	1617	49	533b8c387935cab51297f95635fe5a872eec75656300bab71ec29edc6914bf3b	sr
 code	1306	43	4ac8b295ebb93eef97be718a44cfc11f8ea924b08816253a9f534ba6770c4062	src/migration_hub/producers/target_list.py
 code	3157	93	8e572d63c62dcec6acecee26e3250e3fa5adcd23cc25560572983a8837da0869	src/migration_hub/producers/validator.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/ui/__init__.py
-code	108906	2650	69edf3ac4cbaa56915364f129be8a9a8fe0cb33f92142206b5562b39f377b77e	src/migration_hub/ui/app.py
+code	108633	2650	cc5ad82e21593ec1090a550bccf62d692b3c84a9b9e211f18ddd5d87ee5a4843	src/migration_hub/ui/app.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/ui/pages/__init__.py
+code	4525	98	3bc14951c5cadecd7cce1f971b09a394866c38120250cfe47bfe6934d8d55bf2	src/migration_hub/ui/visual_style.py
