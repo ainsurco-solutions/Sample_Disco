@@ -18,6 +18,7 @@ from reconcile import (
     SIZE_FIELDS_MB,
     SIZE_UNITS_TO_MB,
     SizeMatch,
+    SizeTotal,
     apply_size_reference,
     load_size_reference,
     size_columns_guess,
@@ -31,6 +32,7 @@ from reconcile import (
     funnel,
     funnel_to_csv,
     guess_key_column,
+    match_key,
     load_bridge_from_api,
     load_inventory_from_sql,
     load_source_list,
@@ -43,6 +45,7 @@ from reconcile import (
     SERVER_FIELD,
     rows_per_server,
     size_of,
+    snapshot_size,
     target_headers,
     to_csv,
 )
@@ -1382,6 +1385,22 @@ st.subheader("Summary")
 headline_stages = {s.name: s for s in funnel(result)}
 
 archived_size = size_of(result, Outcome.ARCHIVED)
+
+_sized_inventory, _ = _with_reference_sizes(list(st.session_state.master_rows or []))
+_out_of_scope_keys = {match_key(row.name) for row in result.of(Outcome.OUT_OF_SCOPE)}
+source_size = snapshot_size(_sized_inventory)
+not_in_scope_size = snapshot_size(
+    r for r in _sized_inventory if r.key in _out_of_scope_keys
+)
+available_size = snapshot_size(
+    r for r in _sized_inventory if r.key not in _out_of_scope_keys
+)
+scope_size = SizeTotal(
+    megabytes=available_size.megabytes,
+    rows=available_size.rows + counts[Outcome.NOT_IN_INVENTORY],
+    rows_with_size=available_size.rows_with_size,
+    field_used=available_size.field_used,
+)
 transit_size = size_of(result, Outcome.NOT_ARCHIVED)
 unchecked_size = size_of(result, Outcome.IMPORTED)
 
@@ -1436,7 +1455,7 @@ render_headline_cards(
             result.master_count,
             "databases on the on-prem SQL servers",
             "",
-            "",
+            _card_volume(source_size),
             _source_breakdown(),
         ),
         (
@@ -1446,6 +1465,7 @@ render_headline_cards(
             if result.scope_checked
             else "no scope list supplied — every on-prem row treated as wanted",
             "",
+            _card_volume(scope_size),
         ),
         (
             "TARGET (Archive)",
@@ -1492,6 +1512,7 @@ render_headline_cards(
             counts[Outcome.OUT_OF_SCOPE],
             "on prem, but not on the scope list",
             "",
+            _card_volume(not_in_scope_size),
         ),
         (
             "In Scope, Missing",
@@ -1504,6 +1525,7 @@ render_headline_cards(
             headline_stages["In scope"].count,
             "wanted and on prem — movable today",
             "",
+            _card_volume(available_size),
         ),
         (
             "In Transit",

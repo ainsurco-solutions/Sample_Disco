@@ -865,6 +865,25 @@ class SizeTotal:
     def missing_rows(self) -> int:
         return max(self.rows - self.rows_with_size, 0)
 
+def snapshot_size(rows: Iterable[Row]) -> SizeTotal:
+    total = 0.0
+    count = with_size = 0
+    for row in rows:
+        count += 1
+        raw = row.data.get(SNAPSHOT_SIZE_FIELD)
+        try:
+            value = float(str(raw))
+        except (TypeError, ValueError):
+            continue
+        total += value
+        with_size += 1
+    return SizeTotal(
+        megabytes=total,
+        rows=count,
+        rows_with_size=with_size,
+        field_used=SNAPSHOT_SIZE_FIELD if with_size else "",
+    )
+
 SERVER_FIELD = "server"
 
 def rows_per_server(rows: Sequence[Row]) -> list[tuple[str, int]]:
