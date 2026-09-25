@@ -107,6 +107,12 @@ the import request itself changed.
 -----------------------------------------------------------------------
 RUNNING THE AMIGO SCREENS (Streamlit UI)
 -----------------------------------------------------------------------
+EASIEST: double-click scriptsmigo.bat in Explorer (not from a VS Code
+terminal). D opens the Migration Hub dashboard, R opens Reconcile (from
+the Reconcile folder beside this one), each in its own window -- keep
+those windows open while runs are going. The menu also runs every
+migration-hub command. The rest of this section is the manual way.
+
 This is the review UI for the Migration Hub itself -- batches, files and
 their states. It is NOT the Reconcile tool, which is a separate app in
 its own folder.

@@ -1,11 +1,11 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: ec4e54691f1d40373ce62369e3261d750e606d65
+# source commit: 37369145cda60ce6f11f071240f348264e9486f9
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
 config	1898	68	e4f9676d7b91e74374c4db01eb558cf343db52b577325ace8a49a4d9a67ab971	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
-config	38761	829	aa4cfe23f6014f88b78ebfaa5a8efb93032eb239ec6d7646a114b4567f146c66	VM-SETUP.txt
+config	39108	835	e81328b96dbabeff28b5249ebc8bc37c6a72d8f2166ec63592e29e89840c078f	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
 config	1464	42	00e687b912cf5aca693458afb6bad636cfc03de671ca5585494b6bd1c44e86e8	config/dev.example.json
 config	3304	74	38a3b665cea53b3ee1c97bc29742d8d00efb6bf964b94ba5ac04e0ae017433fa	config/prod.example.json
@@ -24,7 +24,7 @@ code	1686	57	c925a46d609943b2dc2d89f66b0bf4cbe3fdb80662c7db7ec8203666b207d068	mi
 config	2339	79	0b835faee459e6fe074528e9275739c1867f4a0ca8d300c9160467d9cc320da9	pyproject.toml
 code	1292	38	8d3fac69ec76082736a98d8a4f084abb60e8df4e5ffaa76861638908a0b7eb3d	requirements.txt
 code	2493	76	345b1747b35c5f5e34c45a02eddd15743fb88ffe8627eff4d4476cf9935d41e6	scripts/_backup_registry.py
-code	9712	304	e09f5c5194c537333b633f3bb0bf3643d542709fb264aa65880b2065b8fc4d61	scripts/amigo.bat
+code	12133	365	33550cf110b00f00d3a67393882d929d71540340f020fd1353e86cf0b1e70ef2	scripts/amigo.bat
 code	3544	97	b0c59b3f4282f00403f90976617babcf42c0cef0a282a99b67c7b0c7d9245b8e	scripts/backup_registry.bat
 code	3387	89	cf6ced2ea5c5b5ab132407ea131b0bd663c03cef331207733f9f4074c42c136e	scripts/check_copy.bat
 code	5520	168	eb29dd11ba6feec3812369fadccf3309b7ec85fdeef1239b3e597221234438ea	scripts/check_copy.py

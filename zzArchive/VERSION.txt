@@ -1,3 +1,3 @@
-source commit : ec4e54691f1d40373ce62369e3261d750e606d65
-               test: visual-parity tests that read Reconcile's source skip in the published copy (TASK-0095)
+source commit : 37369145cda60ce6f11f071240f348264e9486f9
+               feat: amigo.bat opens the Migration Hub dashboard and Reconcile, reads .env for its checks (TASK-0071)
 files         : 90
