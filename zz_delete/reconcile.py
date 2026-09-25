@@ -426,8 +426,8 @@ SIZE_UNITS_TO_MB = {"MB": 1.0, "GB": 1024.0, "KB": 1 / 1024, "bytes": 1 / (1024 
 SIZE_NAME_COLUMNS = (*MASTER_NAME_COLUMNS, "database", "databasename", "dbname")
 SIZE_SERVER_COLUMNS = ("server", "server name", "server_name", "servername", "instance", "host")
 SIZE_VALUE_COLUMNS = (
-    "size_mb", "size mb", "sizemb", "size (mb)", "size_in_mb", "database_size_mb",
-    "size_gb", "size gb", "sizegb", "size (gb)",
+    "size_mb", "size mb", "sizemb", "size (mb)", "size_in_mb", "size in mb", "database_size_mb",
+    "size_gb", "size gb", "sizegb", "size (gb)", "size_in_gb", "size in gb",
     "size", "db_size", "database_size", "total_size",
 )
 

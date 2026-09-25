@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import io
+import warnings
 from datetime import date
 from dataclasses import dataclass
 from pathlib import Path
@@ -503,6 +504,11 @@ def render_outcome_cards(outcomes: list[Outcome], counts: dict[Outcome, int]) ->
         f"<div class='rc-row'>{''.join(cards)}</div>", unsafe_allow_html=True
     )
 
+def _parse_stamps(values: pd.Series) -> pd.Series:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Could not infer format")
+        return pd.to_datetime(values, errors="coerce", utc=True)
+
 def rows_to_frame(fetched: object) -> pd.DataFrame:
     if isinstance(fetched, pd.DataFrame):
         return fetched
@@ -595,7 +601,7 @@ def render_file_tab(
                 )
         if date_column is not None:
             with right_f:
-                stamps = pd.to_datetime(rows[date_column], errors="coerce", utc=True)
+                stamps = _parse_stamps(rows[date_column])
                 if stamps.notna().any():
                     earliest = stamps.min().date()
                     latest = stamps.max().date()
@@ -637,7 +643,7 @@ def render_file_tab(
         and len(date_range) == 2
     ):
         start, end = date_range
-        stamps = pd.to_datetime(view[date_column], errors="coerce", utc=True)
+        stamps = _parse_stamps(view[date_column])
         within = (stamps.dt.date >= start) & (stamps.dt.date <= end)
         view = view[within | stamps.isna()]
 
@@ -2144,7 +2150,7 @@ with report_tab:
             )
         else:
             activity = vault_activity.copy()
-            stamps = pd.to_datetime(activity[created_col], errors="coerce", utc=True)
+            stamps = _parse_stamps(activity[created_col])
             unparsed = int(stamps.isna().sum())
             activity = activity[stamps.notna()].copy()
             activity["_day"] = (
