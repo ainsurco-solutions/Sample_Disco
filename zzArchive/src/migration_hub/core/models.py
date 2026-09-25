@@ -82,6 +82,10 @@ class MigrationFile(Base):
     archive_expiration_date: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     archive_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
 
+    bytes_sent: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    upload_started_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
+    bytes_sent_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
+
     last_error: Mapped[str | None] = mapped_column(String(None), default=None)
     created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, server_default=UTC_NOW)
     updated_at: Mapped[datetime] = mapped_column(

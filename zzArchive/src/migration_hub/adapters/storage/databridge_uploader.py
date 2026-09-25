@@ -32,6 +32,18 @@ _log = logging.getLogger(__name__)
 
 PROGRESS_EVERY_SECONDS = 60.0
 
+REPORT_EVERY_SECONDS = 10.0
+
+ProgressCallback = Callable[[int], None]
+
+def _report(on_progress: ProgressCallback | None, sent: int) -> None:
+    if on_progress is None:
+        return
+    try:
+        on_progress(sent)
+    except Exception as exc:
+        _log.warning("upload progress not recorded: %s", exc)
+
 class _ProgressReader:
 
     def __init__(
@@ -43,6 +55,8 @@ class _ProgressReader:
         file_id: int | None,
         every_seconds: float = PROGRESS_EVERY_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        on_progress: ProgressCallback | None = None,
+        report_every_seconds: float = REPORT_EVERY_SECONDS,
     ) -> None:
         self._handle = handle
         self._total = total
@@ -52,10 +66,16 @@ class _ProgressReader:
         self._clock = clock
         self._sent = 0
         self._next = clock() + every_seconds
+        self._on_progress = on_progress
+        self._report_every = report_every_seconds
+        self._next_report = clock() + report_every_seconds
 
     def read(self, size: int = -1) -> bytes:
         chunk = self._handle.read(size)
         self._sent += len(chunk)
+        if chunk and self._on_progress is not None and self._clock() >= self._next_report:
+            self._next_report = self._clock() + self._report_every
+            _report(self._on_progress, self._sent)
         if chunk and self._clock() >= self._next:
             self._next = self._clock() + self._every
             mb = 1024 * 1024
@@ -76,13 +96,20 @@ class _ProgressReader:
         return iter(lambda: self.read(64 * 1024), b"")
 
 def upload_via_presigned_url(
-    *, source: Path, url: str, engine: Engine | None = None, file_id: int | None = None
+    *,
+    source: Path,
+    url: str,
+    engine: Engine | None = None,
+    file_id: int | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> None:
     size = source.stat().st_size
     with source.open("rb") as handle:
         _put(
             url,
-            _ProgressReader(handle, total=size, label=source.name, file_id=file_id),
+            _ProgressReader(
+                handle, total=size, label=source.name, file_id=file_id, on_progress=on_progress
+            ),
             source=source,
             part=None,
             size=size,
@@ -99,6 +126,7 @@ def upload_multipart(
     engine: Engine | None = None,
     file_id: int | None = None,
     clock: Callable[[], float] = time.monotonic,
+    on_progress: ProgressCallback | None = None,
 ) -> dict[int, str]:
     size = source.stat().st_size
     chunk = chunk_size if chunk_size is not None else multipart_chunksize(size)
@@ -130,6 +158,7 @@ def upload_multipart(
             etags[part_number] = etag
             sent += len(data)
             _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
+            _report(on_progress, sent)
             part_number += 1
 
     return etags

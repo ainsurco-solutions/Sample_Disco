@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -104,6 +104,7 @@ class DatabridgeAdapter:
         file_extension: str,
         source: Path,
         group_ids: list[str] | None = None,
+        on_progress: Callable[[int], None] | None = None,
     ) -> str:
         if file_extension not in _FORMAT_CODES:
             raise ValueError(f"unsupported file_extension: {file_extension!r}")
@@ -116,6 +117,7 @@ class DatabridgeAdapter:
                 database_name=database_name,
                 format_code=format_code,
                 source=source,
+                on_progress=on_progress,
             )
         else:
             self._upload_large(
@@ -123,6 +125,7 @@ class DatabridgeAdapter:
                 database_name=database_name,
                 file_extension=file_extension,
                 source=source,
+                on_progress=on_progress,
             )
 
         return self._trigger_import(
@@ -133,7 +136,13 @@ class DatabridgeAdapter:
         )
 
     def _upload_small(
-        self, *, instance_name: str, database_name: str, format_code: int, source: Path
+        self,
+        *,
+        instance_name: str,
+        database_name: str,
+        format_code: int,
+        source: Path,
+        on_progress: Callable[[int], None] | None = None,
     ) -> None:
         response = self._request(
             "GET",
@@ -145,11 +154,21 @@ class DatabridgeAdapter:
         if not upload_url:
             raise MissingUploadUriError(sorted(body))
         databridge_uploader.upload_via_presigned_url(
-            source=source, url=upload_url, engine=self._engine, file_id=self._current_file_id
+            source=source,
+            url=upload_url,
+            engine=self._engine,
+            file_id=self._current_file_id,
+            on_progress=on_progress,
         )
 
     def _upload_large(
-        self, *, instance_name: str, database_name: str, file_extension: str, source: Path
+        self,
+        *,
+        instance_name: str,
+        database_name: str,
+        file_extension: str,
+        source: Path,
+        on_progress: Callable[[int], None] | None = None,
     ) -> None:
         base = (
             f"/databridge/v1/sql-instances/{instance_name}/databases/"
@@ -171,6 +190,7 @@ class DatabridgeAdapter:
             get_part_url=get_part_url,
             engine=self._engine,
             file_id=self._current_file_id,
+            on_progress=on_progress,
         )
 
         self._request(

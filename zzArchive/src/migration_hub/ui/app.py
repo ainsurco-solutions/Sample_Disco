@@ -388,8 +388,11 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
     file_metrics = registry.file_metrics(batch_id=batch_id)
     work = registry.remaining_work_metrics(batch_id=batch_id)
     remaining_bytes = work["remaining_bytes"]
+    overview_leaves_out = batch_id is None and work["review_count"] and work["ready_count"]
     eta = (
-        metrics.projected_completion(remaining_bytes=remaining_bytes, snapshot=snapshot)
+        metrics.projected_completion(remaining_bytes=work["ready_bytes"], snapshot=snapshot)
+        if overview_leaves_out
+        else metrics.projected_completion(remaining_bytes=remaining_bytes, snapshot=snapshot)
         if work["remaining_count"] and not work["review_count"]
         else None
     )
@@ -413,6 +416,8 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
             eta_text = (
                 "None"
                 if not work["remaining_count"]
+                else (_format_timedelta(eta) if eta is not None else "Pending")
+                if overview_leaves_out
                 else "Review"
                 if work["review_count"]
                 else _format_timedelta(eta)
@@ -423,6 +428,11 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
             st.caption("estimated duration")
         if not work["remaining_count"]:
             st.caption("No outstanding work. Historical file outcomes remain in the totals.")
+        elif overview_leaves_out:
+            st.caption(
+                f"ETA covers {work['ready_count']} file(s); {work['review_count']} "
+                "paused, awaiting validation or needing review are left out."
+            )
         elif work["review_count"]:
             st.caption(
                 f"ETA withheld: {work['review_count']} file(s) paused, awaiting validation "
@@ -1298,6 +1308,96 @@ def _file_progress(raw: str, destination: BatchDestination = BatchDestination.VA
         return 0
     return 100 if _is_done(state, destination) else _STATE_PROGRESS[state]
 
+_UPLOAD_BAR = (25, 60)
+
+def _upload_progress(file: MigrationFile) -> int | None:
+    if (
+        _known_file_state(file.state) is not FileState.UPLOADING
+        or file.bytes_sent is None
+        or file.size_bytes <= 0
+    ):
+        return None
+    low, high = _UPLOAD_BAR
+    return low + int((high - low) * min(1.0, file.bytes_sent / file.size_bytes))
+
+def _upload_rows(
+    files: Sequence[MigrationFile], *, now: datetime, stalled_minutes: float = 3.0
+) -> tuple[list[dict[str, object]], float, int]:
+    rows: list[dict[str, object]] = []
+    total_rate = 0.0
+    to_send = 0
+    for f in files:
+        if _known_file_state(f.state) is not FileState.UPLOADING:
+            continue
+        sent = f.bytes_sent or 0
+        left = max(0, f.size_bytes - sent)
+        to_send += left
+        rate = 0.0
+        if f.upload_started_at and f.bytes_sent_at and f.bytes_sent_at > f.upload_started_at:
+            rate = sent / (f.bytes_sent_at - f.upload_started_at).total_seconds()
+        quiet = (now - f.bytes_sent_at).total_seconds() / 60 if f.bytes_sent_at else None
+        stalled = quiet is not None and quiet >= stalled_minutes
+        if not stalled:
+            total_rate += rate
+        rows.append(
+            {
+                "file_id": f.file_id,
+                "source_database": f.source_database,
+                "done": round(100 * sent / f.size_bytes) if f.size_bytes else 0,
+                "sent": f"{sent / 1024**2:,.0f} / {f.size_bytes / 1024**2:,.0f} MB",
+                "rate": f"{_format_bytes(rate)}/s" if rate else "-",
+                "left": (
+                    f"no progress for {quiet:.0f} min"
+                    if stalled and quiet is not None
+                    else _format_timedelta(timedelta(seconds=left / rate))
+                    if rate
+                    else "starting"
+                ),
+            }
+        )
+    return rows, total_rate, to_send
+
+def _render_uploads_in_progress(registry: Registry, batch: str) -> None:
+    files = registry.files_in_states(states=[FileState.UPLOADING], batch_id=batch)
+    if not files:
+        return
+    rows, rate, to_send = _upload_rows(files, now=datetime.now(UTC).replace(tzinfo=None))
+    waiting = registry.files_in_states(states=[FileState.VALIDATED], batch_id=batch)
+    waiting_bytes = sum(f.size_bytes for f in waiting)
+
+    st.subheader("Uploads in progress")
+    cols = st.columns(3)
+    cols[0].metric("Upload rate", f"{_format_bytes(rate)}/s" if rate else "-")
+    cols[0].caption(f"{len(rows)} file(s) uploading, all together")
+    cols[1].metric(
+        "These uploads finish in",
+        _format_timedelta(timedelta(seconds=to_send / rate)) if rate else "-",
+    )
+    cols[1].caption(f"{_format_bytes(to_send)} still to send")
+    cols[2].metric(
+        "All uploads in ~",
+        _format_timedelta(timedelta(seconds=(to_send + waiting_bytes) / rate)) if rate else "-",
+    )
+    cols[2].caption(
+        f"with {len(waiting)} file(s) waiting -- at today's rate and workers; "
+        "imports and archives come after"
+    )
+    st.dataframe(
+        rows,
+        column_config={
+            "file_id": st.column_config.NumberColumn("ID"),
+            "source_database": st.column_config.TextColumn("Source EDM"),
+            "done": st.column_config.ProgressColumn(
+                "Uploaded", min_value=0, max_value=100, format="%d%%"
+            ),
+            "sent": st.column_config.TextColumn("Sent"),
+            "rate": st.column_config.TextColumn("Rate"),
+            "left": st.column_config.TextColumn("Time left"),
+        },
+        hide_index=True,
+        height=min(250, 38 + 35 * len(rows)),
+    )
+
 def _file_state_color(
     raw: str, destination: BatchDestination = BatchDestination.VAULT
 ) -> _BadgeColor:
@@ -1359,7 +1459,7 @@ def _file_table_rows(
             "source_database": f.source_database,
             "target_exposure_name": f.target_exposure_name,
             "state": f.state,
-            "progress": _file_progress(f.state, destination),
+            "progress": _upload_progress(f) or _file_progress(f.state, destination),
             "size_mb": round(f.size_bytes / (1024 * 1024), 1),
             "attempts": f.attempts,
             "archive_attempts": f.archive_attempts,
@@ -2643,6 +2743,8 @@ def _render_diagnostics_tab(registry: Registry, batch: str) -> None:
             if counts[state]:
                 st.badge(f"{state} {counts[state]}", color=_file_state_color(state, destination))
 
+    st.space("small")
+    _render_uploads_in_progress(registry, batch)
     st.space("small")
     _render_operational_observability(registry, batch_id=batch)
 

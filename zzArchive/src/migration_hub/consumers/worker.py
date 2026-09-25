@@ -170,6 +170,7 @@ class MigrationWorker:
             database_name=database_name,
         )
 
+        self._progress(file_id, 0, start=True)
         with self._adapter.bound_to_file(file_id):
             job_id = self._adapter.upload_and_import(
                 instance_name=instance_name,
@@ -177,6 +178,7 @@ class MigrationWorker:
                 file_extension="bak",
                 source=Path(source_path),
                 group_ids=self._group_ids,
+                on_progress=lambda sent: self._progress(file_id, sent),
             )
 
         self._registry.transition(
@@ -189,6 +191,12 @@ class MigrationWorker:
             file_id=file_id, to_state=FileState.IMPORTING, actor=self._worker_id, job_id=job_id
         )
         return job_id
+
+    def _progress(self, file_id: int, sent: int, *, start: bool = False) -> None:
+        try:
+            self._registry.record_upload_progress(file_id=file_id, bytes_sent=sent, start=start)
+        except Exception as exc:
+            _log.debug("file %s: upload progress not recorded: %s", file_id, exc)
 
     def _poll(self, file_id: int, *, job_id: str) -> None:
         deadline = time.monotonic() + self._max_poll_minutes * 60

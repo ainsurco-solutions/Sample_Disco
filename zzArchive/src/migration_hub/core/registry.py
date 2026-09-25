@@ -303,6 +303,16 @@ class Registry:
             session.expunge_all()
             return stale
 
+    def record_upload_progress(self, *, file_id: int, bytes_sent: int, start: bool = False) -> None:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        values: dict[str, object] = {"bytes_sent": bytes_sent, "bytes_sent_at": now}
+        if start:
+            values["upload_started_at"] = now
+        with Session(self._engine) as session, session.begin():
+            session.execute(
+                update(MigrationFile).where(MigrationFile.file_id == file_id).values(**values)
+            )
+
     def refresh_claims(self, *, worker_id: str) -> int:
         with Session(self._engine) as session, session.begin():
             result = session.execute(
@@ -760,6 +770,9 @@ class Registry:
                 func.count(),
                 func.coalesce(func.sum(MigrationFile.size_bytes), 0),
                 func.coalesce(func.sum(case((needs_review, 1), else_=0)), 0),
+                func.coalesce(
+                    func.sum(case((needs_review, 0), else_=MigrationFile.size_bytes)), 0
+                ),
             )
             .select_from(MigrationFile)
             .join(Batch, Batch.batch_id == MigrationFile.batch_id)
@@ -775,8 +788,14 @@ class Registry:
         if batch_id is not None:
             stmt = stmt.where(MigrationFile.batch_id == batch_id)
         with Session(self._engine) as session:
-            count, size, review = session.execute(stmt).one()
-        return {"remaining_count": count, "remaining_bytes": size, "review_count": review}
+            count, size, review, ready_bytes = session.execute(stmt).one()
+        return {
+            "remaining_count": count,
+            "remaining_bytes": size,
+            "review_count": review,
+            "ready_count": count - review,
+            "ready_bytes": ready_bytes,
+        }
 
     def create_batch_run(self, *, run: BatchRun) -> None:
         with Session(self._engine) as session, session.begin():
