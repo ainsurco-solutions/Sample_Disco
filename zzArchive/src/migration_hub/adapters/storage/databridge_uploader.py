@@ -98,9 +98,13 @@ def upload_multipart(
     chunk_size: int | None = None,
     engine: Engine | None = None,
     file_id: int | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[int, str]:
     size = source.stat().st_size
     chunk = chunk_size if chunk_size is not None else multipart_chunksize(size)
+    parts = max(1, -(-size // chunk))
+    started = clock()
+    sent = 0
 
     etags: dict[int, str] = {}
     with source.open("rb") as handle:
@@ -124,9 +128,41 @@ def upload_multipart(
             if not etag:
                 raise MissingPartETagError(part_number)
             etags[part_number] = etag
+            sent += len(data)
+            _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
             part_number += 1
 
     return etags
+
+def _log_part(
+    file_id: int | None,
+    name: str,
+    part: int,
+    parts: int,
+    sent: int,
+    size: int,
+    elapsed: float,
+) -> None:
+    mb = 1024 * 1024
+    left = ""
+    if part >= 2 and part < parts and sent:
+        remaining = elapsed * (size - sent) / sent
+        left = (
+            f"  ~{remaining / 60:.0f} min left"
+            if remaining >= 60
+            else f"  ~{remaining:.0f} s left"
+        )
+    _log.info(
+        "%s  part %d/%d uploaded  %s/%s MB (%d%%)%s  %s",
+        f"file {file_id}" if file_id is not None else "no file",
+        part,
+        parts,
+        f"{sent / mb:,.0f}",
+        f"{size / mb:,.0f}",
+        int(100 * sent / size) if size else 100,
+        left,
+        name,
+    )
 
 def _put(
     url: str,
