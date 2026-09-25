@@ -283,10 +283,18 @@ st.markdown(
       .fn-gap {
         position:absolute; top:0; bottom:0;
         display:flex; align-items:center;
-        padding-left:.5rem; font-size:.8rem; font-weight:600;
-        color:#b3261e; opacity:.85; white-space:nowrap; pointer-events:none;
+        padding-left:.5rem; font-size:.8rem; font-weight:700;
+        white-space:nowrap; pointer-events:none;
       }
-      .fn-gap-kept { font-weight:400; opacity:.75; margin-left:.4rem; }
+      .fn-gap-num { color:#a61b1b; }
+
+      .fn-gap-kept { font-weight:400; opacity:.72; margin-left:.4rem; }
+
+      .fn-seg-label {
+        position:absolute; top:0; bottom:0; display:flex; align-items:center;
+        justify-content:center; color:#fff; font-weight:700; font-size:.85rem;
+        text-shadow:0 1px 2px rgba(0,0,0,.55); pointer-events:none; white-space:nowrap;
+      }
       .fn-legend {
         display:flex; gap:.9rem; flex-wrap:wrap;
         font-size:.75rem; opacity:.75; margin:-.2rem 0 .8rem 8.25rem;
@@ -2000,11 +2008,9 @@ with report_tab:
                 f"<span class='fn-kept'>{stage.percent_of_previous:.0f}% of "
                 f"{html.escape(previous_name)}</span>"
             )
-        done_seg_pct = 0.0
+        done_seg_pct = pct
         done = stage.name == "Data Vault" and report_result.vault_checked
         bar_class = "fn-bar fn-bar-done" if done else "fn-bar"
-        if done:
-            done_seg_pct = pct
 
         bar_end_pct = pct
 
@@ -2044,6 +2050,11 @@ with report_tab:
                 f"width:{absent_pct:.1f}%'"
                 f" title='{stage.unreachable} wanted but not on prem'></div>"
             )
+            if absent_pct >= 4.0:
+                bar_html += (
+                    f"<div class='fn-seg-label' style='left:{pct:.1f}%;"
+                    f"width:{absent_pct:.1f}%'>{stage.unreachable:,}</div>"
+                )
 
         gap_html = ""
         room = 100.0 - bar_end_pct
@@ -2053,11 +2064,16 @@ with report_tab:
                 if stage.of_previous
                 else ""
             )
+            share_in_gap = (
+                f"<span class='fn-gap-kept'>· {share}</span>" if share else ""
+            )
             gap_html = (
                 f"<div class='fn-gap' style='left:{bar_end_pct:.1f}%'>"
-                f"{MINUS}{stage.lost:,}{kept}</div>"
+                f"<span class='fn-gap-num'>{MINUS}{stage.lost:,}</span>"
+                f"{kept}{share_in_gap}</div>"
             )
             lost = ""
+            share = ""
 
         value_inside = done_seg_pct >= 9.0
         if value_inside:
