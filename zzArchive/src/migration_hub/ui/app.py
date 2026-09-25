@@ -671,6 +671,25 @@ def _open_batch(batch: str) -> None:
     st.session_state["selected_batch"] = batch
     st.rerun()
 
+def _batch_volume(
+    by_state: dict[str, int],
+    destination: BatchDestination,
+    started_at: datetime | None,
+    ended_at: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[float, float, str | None]:
+    gib = 1024**3
+    size = sum(by_state.values())
+    moved = sum(by_state.get(str(state), 0) for state in done_states(destination))
+    rate = None
+    if moved and started_at is not None:
+        until = ended_at or now or datetime.now(UTC).replace(tzinfo=None)
+        hours = (until - started_at).total_seconds() / 3600
+        if hours > 0:
+            rate = f"{moved / gib / hours:,.1f} GB/h"
+    return round(size / gib, 1), round(moved / gib, 1), rate
+
 def _render_batch_log(registry: Registry) -> None:
     batches = registry.list_batches()
     if not batches:
@@ -705,17 +724,26 @@ def _render_batch_log(registry: Registry) -> None:
         if is_done:
             terminal_times = registry.file_terminal_times(batch_id=b.batch_id)
             ended_at = max(terminal_times.values()) if terminal_times else None
+        size_gb, moved_gb, rate = _batch_volume(
+            registry.bytes_by_state(batch_id=b.batch_id),
+            BatchDestination(b.destination),
+            started_at,
+            ended_at,
+        )
 
         rows.append(
             {
                 "batch_id": b.batch_id,
                 "state": label,
                 "files": total,
+                "size_gb": size_gb,
+                "moved_gb": moved_gb,
                 "completed": counts[FileState.COMPLETED],
                 "failed": failed,
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "duration": _format_duration(started_at, ended_at) if ended_at else None,
+                "rate": rate,
             }
         )
 
@@ -739,11 +767,23 @@ def _render_batch_log(registry: Registry) -> None:
             "batch_id": st.column_config.TextColumn("Batch"),
             "state": st.column_config.TextColumn("State"),
             "files": st.column_config.NumberColumn("Files"),
+            "size_gb": st.column_config.NumberColumn(
+                "Size", format="%.1f GB", help="All the batch's files, as registered."
+            ),
+            "moved_gb": st.column_config.NumberColumn(
+                "Moved",
+                format="%.1f GB",
+                help="Reached the batch's destination: Data Vault, or Data Bridge for a "
+                "Data Bridge-only batch.",
+            ),
             "completed": st.column_config.NumberColumn("Completed"),
             "failed": st.column_config.NumberColumn("Failed"),
             "started_at": st.column_config.DatetimeColumn("Started", format="YYYY-MM-DD HH:mm"),
             "ended_at": st.column_config.DatetimeColumn("Ended", format="YYYY-MM-DD HH:mm"),
             "duration": st.column_config.TextColumn("Duration"),
+            "rate": st.column_config.TextColumn(
+                "Rate", help="Moved over the batch's time so far, or to its end."
+            ),
         },
         hide_index=True,
         height=min(330, 38 + 35 * len(visible_rows)),

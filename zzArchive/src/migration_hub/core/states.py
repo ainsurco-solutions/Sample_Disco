@@ -34,7 +34,9 @@ def done_states(destination: BatchDestination) -> frozenset[FileState]:
         return SETTLED_STATES | {FileState.BRIDGED}
     return SETTLED_STATES
 
-CLAIMED_STATES: frozenset[FileState] = frozenset({FileState.UPLOADING, FileState.IMPORTING})
+CLAIMED_STATES: frozenset[FileState] = frozenset(
+    {FileState.UPLOADING, FileState.UPLOADED, FileState.IMPORTING}
+)
 
 LEGAL_TRANSITIONS: dict[FileState, frozenset[FileState]] = {
     FileState.DISCOVERED: frozenset({FileState.VALIDATED, FileState.REJECTED}),

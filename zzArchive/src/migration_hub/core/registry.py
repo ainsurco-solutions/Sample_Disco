@@ -749,6 +749,15 @@ class Registry:
             "attempted_count": attempted_count,
         }
 
+    def bytes_by_state(self, *, batch_id: str) -> dict[str, int]:
+        stmt = (
+            select(MigrationFile.state, func.coalesce(func.sum(MigrationFile.size_bytes), 0))
+            .where(MigrationFile.batch_id == batch_id)
+            .group_by(MigrationFile.state)
+        )
+        with Session(self._engine) as session:
+            return {str(state): int(total) for state, total in session.execute(stmt)}
+
     def remaining_work_metrics(self, *, batch_id: str | None) -> dict[str, int]:
         progress_states = (
             FileState.VALIDATED,

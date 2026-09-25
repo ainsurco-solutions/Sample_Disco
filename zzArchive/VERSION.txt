@@ -1,3 +1,3 @@
-source commit : acf4f282f2ef5e01d9908b1481ee32cc4b69f376
-               docs: VM-SETUP -- fix the migration path in the TASK-0109 upgrade note
+source commit : 8184e9a55d0037ae7b5b2a7acfcb4cadf6456f03
+               fix: a long import no longer shows as held by a stopped worker -- the claim survives UPLOADED; batch table gains Size, Moved, Rate (TASK-0106, TASK-0109)
 files         : 91
