@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -18,9 +19,11 @@ from migration_hub.adapters.databridge.errors import (
     MissingUploadUriError,
     RateLimitedError,
     RequestInterruptedError,
+    ServerError,
     UnknownJobStatusError,
 )
 from migration_hub.adapters.storage import databridge_uploader
+from migration_hub.core.retry import retry_call
 from migration_hub.observability.audit import audited_call
 
 LARGE_FILE_THRESHOLD_BYTES = 5 * 1024**3
@@ -60,12 +63,28 @@ class DatabridgeJob:
 
 class DatabridgeAdapter:
 
-    def __init__(self, *, host: str, api_key: str, engine: Engine | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        host: str,
+        api_key: str,
+        engine: Engine | None = None,
+        inline_retry_attempts: int = 1,
+        inline_retry_base_seconds: float = 2.0,
+        inline_retry_max_seconds: float = 30.0,
+        part_url_refresh_attempts: int = 1,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._host = host
         self._api_key = api_key
         self._engine = engine
         self._current_file_id: int | None = None
         self._client = httpx.Client(base_url=host, headers={"Authorization": api_key}, timeout=30.0)
+        self._inline_retry_attempts = inline_retry_attempts
+        self._inline_retry_base_seconds = inline_retry_base_seconds
+        self._inline_retry_max_seconds = inline_retry_max_seconds
+        self._part_url_refresh_attempts = part_url_refresh_attempts
+        self._sleep = sleep
 
     def close(self) -> None:
         self._client.close()
@@ -159,6 +178,10 @@ class DatabridgeAdapter:
             engine=self._engine,
             file_id=self._current_file_id,
             on_progress=on_progress,
+            retry_attempts=self._inline_retry_attempts,
+            retry_base_seconds=self._inline_retry_base_seconds,
+            retry_max_seconds=self._inline_retry_max_seconds,
+            sleep=self._sleep,
         )
 
     def _upload_large(
@@ -191,6 +214,11 @@ class DatabridgeAdapter:
             engine=self._engine,
             file_id=self._current_file_id,
             on_progress=on_progress,
+            retry_attempts=self._inline_retry_attempts,
+            retry_base_seconds=self._inline_retry_base_seconds,
+            retry_max_seconds=self._inline_retry_max_seconds,
+            part_url_refresh_attempts=self._part_url_refresh_attempts,
+            sleep=self._sleep,
         )
 
         self._request(
@@ -312,6 +340,17 @@ class DatabridgeAdapter:
     def _request(
         self, method: str, path: str, *, store_body: bool = True, **kwargs: object
     ) -> httpx.Response:
+        return retry_call(
+            lambda: self._request_once(method, path, store_body=store_body, **kwargs),
+            attempts=self._inline_retry_attempts,
+            base_seconds=self._inline_retry_base_seconds,
+            max_seconds=self._inline_retry_max_seconds,
+            sleep=self._sleep,
+        )
+
+    def _request_once(
+        self, method: str, path: str, *, store_body: bool = True, **kwargs: object
+    ) -> httpx.Response:
         url = str(self._client.base_url.join(path))
         if self._engine is not None:
             with audited_call(
@@ -390,6 +429,8 @@ def _raise_for_status(response: httpx.Response) -> None:
         "already exists" in response.text.lower()
     ):
         raise DatabaseAlreadyExistsError(str(response.request.url), _vendor_message(response))
+    if response.status_code >= 500:
+        raise ServerError(f"{response.status_code} from {response.request.url}")
     if response.status_code >= 400:
         raise DatabridgeError(
             f"{response.status_code} from {response.request.url}: {response.text}"

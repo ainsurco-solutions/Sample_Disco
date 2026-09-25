@@ -133,6 +133,9 @@ echo   --- recovery ---
 echo    11. Release files held by a stopped worker  (reap)
 echo    12. Retry failed files in a batch  (CONFIRMS FIRST)
 echo.
+echo   --- after copying a new version ---
+echo     U. Upgrade the registry  (only between runs -- CONFIRMS FIRST)
+echo.
 echo     0. Quit
 echo.
 set "CHOICE="
@@ -141,6 +144,7 @@ set /p "CHOICE=Choose: "
 if "%CHOICE%"=="0"  goto :done
 if /i "%CHOICE%"=="D" goto :hub_app
 if /i "%CHOICE%"=="R" goto :reconcile_app
+if /i "%CHOICE%"=="U" goto :upgrade_db
 if "%CHOICE%"=="1"  goto :status
 if "%CHOICE%"=="2"  goto :history
 if "%CHOICE%"=="3"  goto :plan
@@ -190,6 +194,22 @@ echo  Opening Reconcile in its own window. If the dashboard is already open,
 echo  Streamlit picks the next free port -- the window prints the URL.
 start "AMIGO -- Reconcile" /D "%RECONCILE_ROOT%" cmd /k ""%RECONCILE_PYTHON%" -m streamlit run app.py"
 goto :pause_menu
+
+:upgrade_db
+echo.
+echo  Brings the registry up to this version's schema (alembic upgrade head).
+echo  Run it after copying files that include migrations\versions\, BEFORE
+echo  opening the dashboard. It backs the registry up first and shows the
+echo  schema revision before and after.
+echo.
+echo  Only between runs: close the dashboard, and make sure no batch is
+echo  migrating -- VM-SETUP.txt (top) says how to check.
+call :confirm "Upgrade the registry now" || goto :pause_menu
+rem Its own cmd, so it starts from a clean environment -- delayed expansion
+rem off, nothing of this menu's -- exactly as when double-clicked. It pauses
+rem at its own end, so no second pause here.
+cmd /c ""%RELEASE_ROOT%\scripts\upgrade_db.bat""
+goto :menu
 
 :status
 call :ask_batch || goto :pause_menu

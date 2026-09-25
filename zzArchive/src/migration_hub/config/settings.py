@@ -53,6 +53,11 @@ class Settings(BaseModel):
     claim_heartbeat_seconds: float = Field(default=60.0, gt=0)
     claim_stale_minutes: int = Field(default=10, ge=2)
 
+    inline_retry_attempts: int = Field(default=3, ge=1)
+    inline_retry_base_seconds: float = Field(default=2.0, gt=0)
+    inline_retry_max_seconds: float = Field(default=30.0, gt=0)
+    part_url_refresh_attempts: int = Field(default=3, ge=1)
+
     scheduler_poll_interval_seconds: float = 60.0
     scheduler_reap_interval_seconds: float = 300.0
 

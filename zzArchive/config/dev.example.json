@@ -37,6 +37,11 @@
   "max_archive_attempts": 9,
   "claim_stale_minutes": 10,
 
+  "inline_retry_attempts": 3,
+  "inline_retry_base_seconds": 2.0,
+  "inline_retry_max_seconds": 30.0,
+  "part_url_refresh_attempts": 3,
+
   "compute_checksums": false,
   "dry_run": true
 }

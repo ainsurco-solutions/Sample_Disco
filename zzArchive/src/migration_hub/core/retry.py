@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import random
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -72,3 +74,28 @@ def backoff_delay(
     if jitter:
         delay = float(random.uniform(0, delay))
     return delay
+
+def retry_call[T](
+    fn: Callable[[], T],
+    *,
+    attempts: int,
+    base_seconds: float,
+    max_seconds: float,
+    sleep: Callable[[float], None] = time.sleep,
+    jitter: bool = True,
+) -> T:
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            classification = classify(exc)
+            if classification.action is not FailureAction.RETRY or attempt >= attempts:
+                raise
+            sleep(
+                classification.retry_after_seconds
+                if classification.retry_after_seconds is not None
+                else backoff_delay(
+                    attempt, base_seconds=base_seconds, max_seconds=max_seconds, jitter=jitter
+                )
+            )
+    raise AssertionError("unreachable: loop always returns or raises")

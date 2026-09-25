@@ -21,6 +21,9 @@ class RateLimitedError(DatabridgeError, RetryableError):
         RuntimeError.__init__(self, message)
         self.retry_after = retry_after
 
+class ServerError(DatabridgeError, RetryableError):
+    pass
+
 class RequestInterruptedError(DatabridgeError, RetryableError):
     pass
 

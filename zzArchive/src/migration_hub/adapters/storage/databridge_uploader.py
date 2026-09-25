@@ -18,6 +18,7 @@ from migration_hub.adapters.databridge.errors import (
     UploadServerError,
 )
 from migration_hub.adapters.storage.s3_uploader import multipart_chunksize
+from migration_hub.core.retry import retry_call
 from migration_hub.observability.audit import maybe_audited_call
 
 _UPLOAD_TIMEOUT_SECONDS = 3600.0
@@ -102,21 +103,39 @@ def upload_via_presigned_url(
     engine: Engine | None = None,
     file_id: int | None = None,
     on_progress: ProgressCallback | None = None,
+    retry_attempts: int = 1,
+    retry_base_seconds: float = 2.0,
+    retry_max_seconds: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     size = source.stat().st_size
-    with source.open("rb") as handle:
-        _put(
-            url,
-            _ProgressReader(
-                handle, total=size, label=source.name, file_id=file_id, on_progress=on_progress
-            ),
-            source=source,
-            part=None,
-            size=size,
-            engine=engine,
-            file_id=file_id,
-            headers=_PUT_HEADERS,
-        )
+
+    def attempt() -> None:
+        with source.open("rb") as handle:
+            _put(
+                url,
+                _ProgressReader(
+                    handle,
+                    total=size,
+                    label=source.name,
+                    file_id=file_id,
+                    on_progress=on_progress,
+                ),
+                source=source,
+                part=None,
+                size=size,
+                engine=engine,
+                file_id=file_id,
+                headers=_PUT_HEADERS,
+            )
+
+    retry_call(
+        attempt,
+        attempts=retry_attempts,
+        base_seconds=retry_base_seconds,
+        max_seconds=retry_max_seconds,
+        sleep=sleep,
+    )
 
 def upload_multipart(
     *,
@@ -127,6 +146,11 @@ def upload_multipart(
     file_id: int | None = None,
     clock: Callable[[], float] = time.monotonic,
     on_progress: ProgressCallback | None = None,
+    retry_attempts: int = 1,
+    retry_base_seconds: float = 2.0,
+    retry_max_seconds: float = 30.0,
+    part_url_refresh_attempts: int = 1,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[int, str]:
     size = source.stat().st_size
     chunk = chunk_size if chunk_size is not None else multipart_chunksize(size)
@@ -141,9 +165,47 @@ def upload_multipart(
             data = handle.read(chunk)
             if not data:
                 break
-            part_url = get_part_url(part_number)
-            response = _put(
-                part_url,
+            etag = _put_part_with_url_refresh(
+                get_part_url,
+                data,
+                source=source,
+                part_number=part_number,
+                engine=engine,
+                file_id=file_id,
+                retry_attempts=retry_attempts,
+                retry_base_seconds=retry_base_seconds,
+                retry_max_seconds=retry_max_seconds,
+                part_url_refresh_attempts=part_url_refresh_attempts,
+                sleep=sleep,
+            )
+            etags[part_number] = etag
+            sent += len(data)
+            _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
+            _report(on_progress, sent)
+            part_number += 1
+
+    return etags
+
+def _put_part_with_url_refresh(
+    get_part_url: Callable[[int], str],
+    data: bytes,
+    *,
+    source: Path,
+    part_number: int,
+    engine: Engine | None,
+    file_id: int | None,
+    retry_attempts: int,
+    retry_base_seconds: float,
+    retry_max_seconds: float,
+    part_url_refresh_attempts: int,
+    sleep: Callable[[float], None],
+) -> str:
+    part_url = get_part_url(part_number)
+    for refresh_attempt in range(1, part_url_refresh_attempts + 1):
+
+        def put_this_part(url: str = part_url) -> httpx.Response:
+            return _put(
+                url,
                 data,
                 source=source,
                 part=part_number,
@@ -152,16 +214,25 @@ def upload_multipart(
                 file_id=file_id,
                 headers=_PUT_HEADERS,
             )
-            etag = response.headers.get("ETag", "").strip('"')
-            if not etag:
-                raise MissingPartETagError(part_number)
-            etags[part_number] = etag
-            sent += len(data)
-            _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
-            _report(on_progress, sent)
-            part_number += 1
 
-    return etags
+        try:
+            response = retry_call(
+                put_this_part,
+                attempts=retry_attempts,
+                base_seconds=retry_base_seconds,
+                max_seconds=retry_max_seconds,
+                sleep=sleep,
+            )
+        except UploadCredentialsExpiredError:
+            if refresh_attempt >= part_url_refresh_attempts:
+                raise
+            part_url = get_part_url(part_number)
+            continue
+        etag = str(response.headers.get("ETag", "")).strip('"')
+        if not etag:
+            raise MissingPartETagError(part_number)
+        return etag
+    raise AssertionError("unreachable: loop always returns or raises")
 
 def _log_part(
     file_id: int | None,

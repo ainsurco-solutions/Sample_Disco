@@ -51,7 +51,15 @@ def _registry(settings: Settings) -> Registry:
 
 def _adapter(settings: Settings) -> DatabridgeAdapter:
     engine = create_registry_engine(settings.database_url)
-    return DatabridgeAdapter(host=settings.api_host, api_key=settings.api_key(), engine=engine)
+    return DatabridgeAdapter(
+        host=settings.api_host,
+        api_key=settings.api_key(),
+        engine=engine,
+        inline_retry_attempts=settings.inline_retry_attempts,
+        inline_retry_base_seconds=settings.inline_retry_base_seconds,
+        inline_retry_max_seconds=settings.inline_retry_max_seconds,
+        part_url_refresh_attempts=settings.part_url_refresh_attempts,
+    )
 
 @app.command()
 def plan(

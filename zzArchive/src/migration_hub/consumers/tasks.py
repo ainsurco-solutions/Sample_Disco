@@ -21,7 +21,15 @@ def _registry(settings: Settings, *, engine: Engine) -> Registry:
     return Registry(engine)
 
 def _adapter(settings: Settings, *, engine: Engine) -> DatabridgeAdapter:
-    return DatabridgeAdapter(host=settings.api_host, api_key=settings.api_key(), engine=engine)
+    return DatabridgeAdapter(
+        host=settings.api_host,
+        api_key=settings.api_key(),
+        engine=engine,
+        inline_retry_attempts=settings.inline_retry_attempts,
+        inline_retry_base_seconds=settings.inline_retry_base_seconds,
+        inline_retry_max_seconds=settings.inline_retry_max_seconds,
+        part_url_refresh_attempts=settings.part_url_refresh_attempts,
+    )
 
 def process_next(batch_id: str) -> bool:
     settings = _load_settings()
