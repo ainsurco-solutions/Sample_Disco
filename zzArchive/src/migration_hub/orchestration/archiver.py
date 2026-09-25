@@ -29,6 +29,7 @@ def archive_pending(
     poll_interval_seconds: float = 60.0,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC).replace(tzinfo=None),
 ) -> int:
     pending = registry.pending_archives(batch_id=batch_id, include_failed=include_failed)
     archived = 0
@@ -46,6 +47,7 @@ def archive_pending(
             poll_interval_seconds=poll_interval_seconds,
             sleep=sleep,
             clock=clock,
+            now=now,
         ):
             archived += 1
     return archived
@@ -62,6 +64,7 @@ def archive_one_file(
     poll_interval_seconds: float = 60.0,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC).replace(tzinfo=None),
 ) -> FileState:
     file = registry.get(file_id)
     if file is None:
@@ -77,6 +80,7 @@ def archive_one_file(
         poll_interval_seconds=poll_interval_seconds,
         sleep=sleep,
         clock=clock,
+        now=now,
     )
     final = registry.get(file_id)
     assert final is not None
@@ -94,6 +98,7 @@ def _archive_guarded(
     poll_interval_seconds: float,
     sleep: Callable[[float], None],
     clock: Callable[[], float],
+    now: Callable[[], datetime],
 ) -> bool:
     try:
         return _archive_one(
@@ -107,6 +112,7 @@ def _archive_guarded(
             poll_interval_seconds=poll_interval_seconds,
             sleep=sleep,
             clock=clock,
+            now=now,
         )
     except HaltError:
         raise
@@ -127,6 +133,7 @@ def _archive_one(
     poll_interval_seconds: float,
     sleep: Callable[[float], None],
     clock: Callable[[], float],
+    now: Callable[[], datetime],
 ) -> bool:
     assert file.instance_name is not None
     assert file.database_name is not None
@@ -206,7 +213,7 @@ def _archive_one(
         if retrying and _in_vault():
             return _complete(registry, file.file_id, actor)
 
-        expiration_date = _expiration_date(file.uploaded_at)
+        expiration_date = _expiration_date(file.uploaded_at, now=now())
         with adapter.bound_to_file(file.file_id):
             job_id = adapter.archive_database(
                 instance_name=instance_name,
@@ -218,9 +225,7 @@ def _archive_one(
             file_id=file.file_id,
             actor=actor,
             archive_job_id=job_id,
-            archive_expiration_date=(
-                datetime.fromisoformat(expiration_date) if expiration_date else None
-            ),
+            archive_expiration_date=datetime.fromisoformat(expiration_date),
         )
         status = _terminal(job_id)
         if status is None:
@@ -302,7 +307,6 @@ def _poll_until[T](
             return result
         sleep(interval)
 
-def _expiration_date(uploaded_at: datetime | None) -> str | None:
-    if uploaded_at is None:
-        return None
-    return (uploaded_at + timedelta(days=365 * RETENTION_YEARS)).isoformat(timespec="milliseconds")
+def _expiration_date(uploaded_at: datetime | None, *, now: datetime) -> str:
+    anchor = uploaded_at if uploaded_at is not None else now
+    return (anchor + timedelta(days=365 * RETENTION_YEARS)).isoformat(timespec="milliseconds")

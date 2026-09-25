@@ -1,3 +1,3 @@
-source commit : a58ed199cd653229f198e0312ce07f09e0c3a3ef
-               fix: regenerate scaffold.ps1's file list -- 3 files were missing
+source commit : 7b148f2a120f0f97148afc0ed5d747100e025806
+               test: claimed_count stays 1 through UPLOADED, matching CLAIMED_STATES
 files         : 91

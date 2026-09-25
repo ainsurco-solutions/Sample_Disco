@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: a58ed199cd653229f198e0312ce07f09e0c3a3ef
+# source commit: 7b148f2a120f0f97148afc0ed5d747100e025806
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -74,7 +74,7 @@ code	3026	96	62f33ae171e178845c41ed6463952b9fe4714b44c853f060264c273ccb534a48	sr
 code	5734	162	1977021ab0035562432affdac0b957c40388fdcfd3fde9dacd67b985d8d6f51d	src/migration_hub/observability/metrics.py
 code	2048	73	6d2510e7eeb73f04ca59e5c796ca11374f911bf9cb05744404c87fc7b2f7d65b	src/migration_hub/observability/redaction.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/orchestration/__init__.py
-code	9933	308	08d472e13abdd8ab4a6e517d85524f27594f8cd102f25936fd409d44c45e34ec	src/migration_hub/orchestration/archiver.py
+code	10191	312	eea10b74ad477f8cc1fb8b27f36dcd888983265240b8792507d434bcd55c2963	src/migration_hub/orchestration/archiver.py
 code	11927	309	ce41c14932580de8fb70c210c1661128587dbc944b67dc98f4f490fa7713c519	src/migration_hub/orchestration/auto_migrate.py
 code	794	24	9a259b40752b1633801ea9987eb79b16c382ea42fabbc58a9d0e90d4f2d1038c	src/migration_hub/orchestration/batch_identity.py
 code	21836	652	f60741a94c607981718766ae4c31ebe71fa5daa07b405f9176704e7aedbd1176	src/migration_hub/orchestration/batches.py
