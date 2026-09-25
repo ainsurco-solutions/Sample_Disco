@@ -106,13 +106,13 @@ _TRACKER_PALETTE = {
         "accent_wash": "#E8E7F2",
     },
     "dark": {
-        "surface": "#11161C",
-        "line_strong": "#313D46",
-        "ink": "#E7ECEF",
-        "faint": "#5D6C77",
-        "ok": "#57B98A",
-        "accent": "#00E6F0",
-        "accent_wash": "#0E2A2D",
+        "surface": "#2B2B2D",
+        "line_strong": "#454545",
+        "ink": "#D4D4D4",
+        "faint": "#A4A4A8",
+        "ok": "#7ABF9B",
+        "accent": "#77B7D8",
+        "accent_wash": "#263641",
     },
 }
 
@@ -1475,11 +1475,11 @@ def _file_table_style(
     destination: BatchDestination = BatchDestination.VAULT,
 ) -> Styler:
     tones = {
-        "green": ("#1F5B41", "#E4F3EA") if not dark else ("#8FDBB6", "#113023"),
-        "orange": ("#7A4E0A", "#FBF0DF") if not dark else ("#EFC978", "#302610"),
-        "red": ("#8A2C2C", "#FBE9E9") if not dark else ("#F1A9A4", "#33191A"),
-        "blue": ("#141052", "#E8E7F2") if not dark else ("#7FEFF5", "#0E2A2D"),
-        "gray": ("#3F4C57", "#F8F8F8") if not dark else ("#B7C2CA", "#161D24"),
+        "green": ("#1F5B41", "#E4F3EA") if not dark else ("#9CD7B5", "#21352B"),
+        "orange": ("#7A4E0A", "#FBF0DF") if not dark else ("#E8C58B", "#3D3224"),
+        "red": ("#8A2C2C", "#FBE9E9") if not dark else ("#F0AAA6", "#3D292A"),
+        "blue": ("#141052", "#E8E7F2") if not dark else ("#A0D0E8", "#263641"),
+        "gray": ("#3F4C57", "#F8F8F8") if not dark else ("#C2C2C5", "#303033"),
     }
 
     def state_style(value: object) -> str:

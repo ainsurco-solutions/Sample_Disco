@@ -1,9 +1,9 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 7b148f2a120f0f97148afc0ed5d747100e025806
+# source commit: 596ace1ddc7084454e3577377c8e49412a7610b3
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
-config	1898	68	e4f9676d7b91e74374c4db01eb558cf343db52b577325ace8a49a4d9a67ab971	.streamlit/config.toml
+config	1898	68	bcd7da7862108a41554cb45f5f03981c290f93a7cf0f9072cbd9a684422b6c37	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
 config	39395	839	4010662445da89a051cccdea042fc8b1abfbac579ea64d53a594dbfed142c57b	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
@@ -89,6 +89,6 @@ code	1617	49	533b8c387935cab51297f95635fe5a872eec75656300bab71ec29edc6914bf3b	sr
 code	1306	43	4ac8b295ebb93eef97be718a44cfc11f8ea924b08816253a9f534ba6770c4062	src/migration_hub/producers/target_list.py
 code	3157	93	8e572d63c62dcec6acecee26e3250e3fa5adcd23cc25560572983a8837da0869	src/migration_hub/producers/validator.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/ui/__init__.py
-code	114509	2792	bd43cd4f8c08cd04d772fa8fb89593e8f70986edcbce3d64272528444d060569	src/migration_hub/ui/app.py
+code	114509	2792	79e358d8a47252b64d95f5558798b136bfe894981d9908af06ce4cd5bdd074ba	src/migration_hub/ui/app.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/ui/pages/__init__.py
-code	4525	98	3bc14951c5cadecd7cce1f971b09a394866c38120250cfe47bfe6934d8d55bf2	src/migration_hub/ui/visual_style.py
+code	4525	98	471f12a7350ff901e810931886f35249473d89406f1447a003a4f9c997519680	src/migration_hub/ui/visual_style.py

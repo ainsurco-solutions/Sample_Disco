@@ -3,14 +3,14 @@ from __future__ import annotations
 def palette(theme: str | None) -> dict[str, str]:
     if theme == "dark":
         return {
-            "primary": "#00E6F0",
-            "hover": "#7FEFF5",
-            "green": "#57B98A",
-            "orange": "#D9A441",
-            "red": "#E2726B",
-            "muted": "#B7C2CA",
-            "border": "#313D46",
-            "disabled": "#92A2AC",
+            "primary": "#77B7D8",
+            "hover": "#A0D0E8",
+            "green": "#7ABF9B",
+            "orange": "#D8AC67",
+            "red": "#E38B87",
+            "muted": "#C2C2C5",
+            "border": "#454545",
+            "disabled": "#A4A4A8",
         }
     return {
         "primary": "#1B1464",
