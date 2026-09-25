@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from reconcile import Outcome, Reconciliation, ResultRow, Row, fingerprint
+from reconcile import Outcome, Reconciliation, ResultRow, Row, SizeEntry, fingerprint
 
 DEFAULT_DB_PATH = Path(__file__).with_name("reconcile.db")
 
@@ -60,6 +60,29 @@ CREATE TABLE IF NOT EXISTS run_result (
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_result_run ON run_result(run_id);
+
+-- Reference data (TASK-0108): a point-in-time snapshot of database sizes,
+-- laid onto each fresh inventory. Kept apart from snapshot/run on purpose:
+-- it is not an input to any one run, and purging old runs must not touch it.
+-- Every load is kept; the latest is the one applied.
+CREATE TABLE IF NOT EXISTS size_reference (
+    id          INTEGER PRIMARY KEY,
+    label       TEXT    NOT NULL,
+    source      TEXT    NOT NULL,
+    as_of       TEXT    NOT NULL,
+    loaded_at   TEXT    NOT NULL,
+    row_count   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS size_reference_row (
+    id           INTEGER PRIMARY KEY,
+    reference_id INTEGER NOT NULL REFERENCES size_reference(id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL,
+    server       TEXT    NOT NULL DEFAULT '',
+    size_mb      REAL    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_size_reference_row_ref ON size_reference_row(reference_id);
 """
 
 def _placeholders(count: int) -> str:
@@ -137,6 +160,16 @@ class RunInfo:
             f"{self.master_count} master / {platform} / "
             f"{vault} · {self.fingerprint}"
         )
+
+@dataclass(frozen=True)
+class SizeReferenceInfo:
+
+    id: int
+    label: str
+    source: str
+    as_of: str
+    loaded_at: str
+    row_count: int
 
 class Store:
 
@@ -274,6 +307,49 @@ class Store:
             )
         self._conn.commit()
         return snapshot_id
+
+    def save_size_reference(
+        self, *, label: str, source: str, as_of: str, entries: Sequence[SizeEntry]
+    ) -> int:
+        with closing(self._conn.cursor()) as cur:
+            cur.execute(
+                "INSERT INTO size_reference (label, source, as_of, loaded_at, row_count) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (label, source, as_of, _now(), len(entries)),
+            )
+            reference_id = int(cur.lastrowid or 0)
+            cur.executemany(
+                "INSERT INTO size_reference_row (reference_id, name, server, size_mb) "
+                "VALUES (?, ?, ?, ?)",
+                [(reference_id, e.name, e.server, e.size_mb) for e in entries],
+            )
+        self._conn.commit()
+        return reference_id
+
+    def latest_size_reference(self) -> tuple[SizeReferenceInfo, list[SizeEntry]] | None:
+        with closing(self._conn.cursor()) as cur:
+            cur.execute("SELECT * FROM size_reference ORDER BY id DESC LIMIT 1")
+            head = cur.fetchone()
+            if head is None:
+                return None
+            cur.execute(
+                "SELECT name, server, size_mb FROM size_reference_row "
+                "WHERE reference_id = ? ORDER BY id",
+                (head["id"],),
+            )
+            entries = [
+                SizeEntry(name=r["name"], server=r["server"], size_mb=float(r["size_mb"]))
+                for r in cur.fetchall()
+            ]
+        info = SizeReferenceInfo(
+            id=head["id"],
+            label=head["label"],
+            source=head["source"],
+            as_of=head["as_of"],
+            loaded_at=head["loaded_at"],
+            row_count=head["row_count"],
+        )
+        return info, entries
 
     def load_snapshot(self, snapshot_id: int) -> list[Row]:
         with closing(self._conn.cursor()) as cur:

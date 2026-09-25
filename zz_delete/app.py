@@ -15,6 +15,12 @@ from reconcile import (
     CREATOR_COLUMNS,
     MASTER_NAME_COLUMNS,
     SIZE_FIELDS_MB,
+    SIZE_UNITS_TO_MB,
+    SizeMatch,
+    apply_size_reference,
+    load_size_reference,
+    size_columns_guess,
+    size_unit_guess,
     LoadError,
     Outcome,
     QueryError,
@@ -1032,6 +1038,123 @@ def refresh_all_sources() -> tuple[list[str], list[str]]:
 
     return loaded, failures
 
+def _with_reference_sizes(rows: list) -> tuple[list, SizeMatch | None]:
+    reference = store.latest_size_reference()
+    if reference is None or not rows:
+        return rows, None
+    info, entries = reference
+    return apply_size_reference(rows, entries, info.as_of)
+
+def render_size_reference() -> None:
+    with st.expander("Reference: database sizes", expanded=False):
+        current = store.latest_size_reference()
+        if current is None:
+            st.caption(
+                "None loaded. Load MS Amlin's size snapshot to give each "
+                "on-prem database a size."
+            )
+        else:
+            info, _ = current
+            st.caption(
+                f"Applied: **{html.escape(info.label)}** -- {info.row_count:,} "
+                f"databases, sizes as of **{info.as_of}** (loaded "
+                f"{info.loaded_at[:16].replace('T', ' ')} UTC)."
+            )
+        match = st.session_state.get("size_match")
+        if match is not None:
+            st.caption(
+                f"Last run: {match.matched:,} of {match.live:,} on-prem "
+                f"databases got a size; {match.unmatched:,} not in the snapshot "
+                "(likely newer)"
+                + (f"; {match.ambiguous:,} ambiguous across servers" if match.ambiguous else "")
+                + (
+                    f"; {match.not_live:,} in the snapshot but no longer on prem"
+                    if match.not_live
+                    else ""
+                )
+                + "."
+            )
+
+        uploaded = st.file_uploader(
+            "Size snapshot (CSV)", type=["csv"], key="size_reference_upload"
+        )
+        if uploaded is None:
+            return
+        text = uploaded.getvalue().decode("utf-8-sig", errors="replace")
+        headers = target_headers(text)
+        if not headers:
+            st.error("That file has no header row.")
+            return
+        name_guess, size_guess, server_guess = size_columns_guess(headers)
+
+        def at(guess: str | None, options: list[str]) -> int:
+            return options.index(guess) if guess in options else 0
+
+        name_col = st.selectbox(
+            "Database name column", headers, index=at(name_guess, headers), key="size_ref_name"
+        )
+        size_col = st.selectbox(
+            "Size column", headers, index=at(size_guess, headers), key="size_ref_size"
+        )
+        server_options = ["(none)", *headers]
+        server_col = st.selectbox(
+            "Server column (optional)",
+            server_options,
+            index=at(server_guess, server_options),
+            key="size_ref_server",
+            help="Only used to tell apart the same database name on two servers.",
+        )
+        units = list(SIZE_UNITS_TO_MB)
+        unit = st.radio(
+            "Unit of the size column",
+            units,
+            index=units.index(size_unit_guess(size_col)),
+            horizontal=True,
+            key=f"size_ref_unit_{size_col}",
+        )
+        as_of = st.date_input("Sizes as of", value=date.today(), key="size_ref_as_of")
+        label = st.text_input("Label", value=uploaded.name, key="size_ref_label")
+
+        try:
+            loaded = load_size_reference(
+                text,
+                name_column=name_col,
+                size_column=size_col,
+                unit=str(unit),
+                server_column=None if server_col == "(none)" else server_col,
+            )
+        except LoadError as exc:
+            st.error(str(exc))
+            return
+        total_tb = sum(e.size_mb for e in loaded.entries) / (1024 * 1024)
+        st.caption(
+            f"{len(loaded.entries):,} databases read, {total_tb:,.2f} TB in total"
+            + (
+                f"; {loaded.skipped:,} row(s) skipped -- no name, or a size that "
+                "is not a number"
+                if loaded.skipped
+                else ""
+            )
+            + ". Check the total looks right for the unit chosen."
+        )
+        if st.button(
+            "Save as reference",
+            type="primary",
+            disabled=not loaded.entries,
+            key="size_ref_save",
+            width="stretch",
+        ):
+            store.save_size_reference(
+                label=label.strip() or uploaded.name,
+                source=uploaded.name,
+                as_of=as_of.isoformat(),
+                entries=loaded.entries,
+            )
+            st.success(
+                f"Saved {len(loaded.entries):,} sizes. They apply from the next "
+                "Run reconciliation."
+            )
+
 with st.sidebar:
     st.title("\U0001F50E Reconcile")
     st.caption("Did every in-scope database reach Data Vault?")
@@ -1082,7 +1205,9 @@ with st.sidebar:
         disabled=not ready,
         width="stretch",
     ):
-        master_rows = st.session_state.master_rows
+        master_rows, size_match = _with_reference_sizes(st.session_state.master_rows)
+        st.session_state.master_rows = master_rows
+        st.session_state.size_match = size_match
         target_rows = st.session_state.target_rows
         vault_rows = st.session_state.vault_rows
         scope_rows = st.session_state.scope_rows
@@ -1130,6 +1255,8 @@ with st.sidebar:
 
     for step in STEPS:
         render_step(step)
+
+    render_size_reference()
 
     st.divider()
     run_count = len(store.runs())

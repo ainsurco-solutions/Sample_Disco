@@ -417,6 +417,139 @@ def load_inventory_from_sql(
         rows.append(Row(name=name, data=data))
     return rows
 
+SNAPSHOT_SIZE_FIELD = "snapshot_size_mb"
+SNAPSHOT_AS_OF_FIELD = "snapshot_size_as_of"
+_SNAPSHOT_FIELDS = (SNAPSHOT_SIZE_FIELD, SNAPSHOT_AS_OF_FIELD)
+
+SIZE_UNITS_TO_MB = {"MB": 1.0, "GB": 1024.0, "KB": 1 / 1024, "bytes": 1 / (1024 * 1024)}
+
+SIZE_NAME_COLUMNS = (*MASTER_NAME_COLUMNS, "database", "databasename", "dbname")
+SIZE_SERVER_COLUMNS = ("server", "server name", "server_name", "servername", "instance", "host")
+SIZE_VALUE_COLUMNS = (
+    "size_mb", "size mb", "sizemb", "size (mb)", "size_in_mb", "database_size_mb",
+    "size_gb", "size gb", "sizegb", "size (gb)",
+    "size", "db_size", "database_size", "total_size",
+)
+
+@dataclass(frozen=True)
+class SizeEntry:
+
+    name: str
+    server: str
+    size_mb: float
+
+    @property
+    def key(self) -> str:
+        return match_key(self.name)
+
+@dataclass(frozen=True)
+class SizeLoad:
+
+    entries: tuple[SizeEntry, ...]
+    skipped: int
+
+def size_columns_guess(headers: Sequence[str]) -> tuple[str | None, str | None, str | None]:
+    return (
+        _pick_column(headers, SIZE_NAME_COLUMNS),
+        _pick_column(headers, SIZE_VALUE_COLUMNS),
+        _pick_column(headers, SIZE_SERVER_COLUMNS),
+    )
+
+def size_unit_guess(size_column: str | None) -> str:
+    label = (size_column or "").casefold()
+    if "gb" in label:
+        return "GB"
+    if "kb" in label:
+        return "KB"
+    if "byte" in label:
+        return "bytes"
+    return "MB"
+
+def load_size_reference(
+    text: str,
+    *,
+    name_column: str,
+    size_column: str,
+    unit: str = "MB",
+    server_column: str | None = None,
+) -> SizeLoad:
+    if unit not in SIZE_UNITS_TO_MB:
+        raise LoadError(f"Unknown unit {unit!r}: use one of {', '.join(SIZE_UNITS_TO_MB)}.")
+    headers, raw = _read_csv(text)
+    if not headers:
+        raise LoadError("The size file has no header row.")
+    columns = {"name": name_column, "size": size_column}
+    if server_column:
+        columns["server"] = server_column
+    resolved: dict[str, str] = {}
+    for role, wanted in columns.items():
+        found = _pick_column(headers, (wanted.strip().casefold(),))
+        if found is None:
+            raise LoadError(f"Column {wanted!r} is not in this file. Found: {', '.join(headers)}")
+        resolved[role] = found
+
+    factor = SIZE_UNITS_TO_MB[unit]
+    entries: list[SizeEntry] = []
+    skipped = 0
+    for record in raw:
+        name = (record.get(resolved["name"]) or "").strip()
+        value = (record.get(resolved["size"]) or "").strip().replace(",", "")
+        try:
+            size = float(value) * factor
+        except ValueError:
+            size = -1.0
+        if not name or size < 0:
+            skipped += 1
+            continue
+        server = (record.get(resolved["server"]) or "").strip() if "server" in resolved else ""
+        entries.append(SizeEntry(name=name, server=server, size_mb=round(size, 3)))
+    return SizeLoad(entries=tuple(entries), skipped=skipped)
+
+@dataclass(frozen=True)
+class SizeMatch:
+
+    live: int
+    matched: int
+    ambiguous: int
+    not_live: int
+
+    @property
+    def unmatched(self) -> int:
+        return self.live - self.matched - self.ambiguous
+
+def _same_server(live: str, snapshot: str) -> bool:
+    a, b = live.strip().casefold(), snapshot.strip().casefold()
+    return bool(a and b) and (a == b or a in b or b in a)
+
+def apply_size_reference(
+    rows: Sequence[Row], entries: Sequence[SizeEntry], as_of: str
+) -> tuple[list[Row], SizeMatch]:
+    by_key: dict[str, list[SizeEntry]] = {}
+    for entry in entries:
+        by_key.setdefault(entry.key, []).append(entry)
+
+    out: list[Row] = []
+    matched = ambiguous = 0
+    for row in rows:
+        data = {k: v for k, v in row.data.items() if k not in _SNAPSHOT_FIELDS}
+        candidates = by_key.get(row.key, [])
+        if len(candidates) > 1:
+            server = str(row.data.get(SERVER_FIELD, ""))
+            candidates = [c for c in candidates if _same_server(server, c.server)]
+            if len(candidates) != 1:
+                ambiguous += 1
+                out.append(Row(name=row.name, data=data))
+                continue
+        if candidates:
+            matched += 1
+            data[SNAPSHOT_SIZE_FIELD] = f"{candidates[0].size_mb:.3f}".rstrip("0").rstrip(".")
+            data[SNAPSHOT_AS_OF_FIELD] = as_of
+        out.append(Row(name=row.name, data=data))
+
+    live_keys = {r.key for r in rows}
+    not_live = sum(1 for key in by_key if key not in live_keys)
+    return out, SizeMatch(live=len(rows), matched=matched, ambiguous=ambiguous, not_live=not_live)
+
 def _duplicates(rows: Iterable[Row]) -> dict[str, list[Row]]:
     by_key: dict[str, list[Row]] = {}
     for row in rows:
@@ -700,7 +833,7 @@ class FunnelStage:
     def percent_of_previous(self) -> float:
         return 100.0 * self.count / self.of_previous if self.of_previous else 0.0
 
-SIZE_FIELDS_MB = ("sizeInMb", "metrics_dbsize_actual", "metrics_size")
+SIZE_FIELDS_MB = ("sizeInMb", "metrics_dbsize_actual", "metrics_size", "snapshot_size_mb")
 
 IMPLAUSIBLE_MB_PER_DATABASE = 10_000_000
 
