@@ -436,17 +436,11 @@ def render_headline_cards(
         breakdown = card[5] if len(card) > 5 else ""
         breakdown_html = (
             "<span class='hl-split'>"
-            + "".join(f"<span>{html.escape(part)}</span>" for part in breakdown.split(" · "))
+            + "".join(f"<span>{html.escape(part)}</span>" for part in breakdown.split("\n"))
             + "</span>"
             if breakdown
             else ""
         )
-        size_share = card[6] if len(card) > 6 else ""
-        if size_share and volume:
-            volume_html = (
-                f"<div class='hl-volume'>{html.escape(volume)}"
-                f"<span class='hl-volume-share'> · {html.escape(size_share)}</span></div>"
-            )
         html_cards.append(
             f"<div class='hl-card' style='flex-basis:calc({basis:.4f}% - .9rem)'>"
             f"<div class='hl-figure'>"
@@ -1413,6 +1407,11 @@ not_in_scope_size = snapshot_size(
 available_size = snapshot_size(
     r for r in _sized_inventory if r.key not in _out_of_scope_keys
 )
+
+def _snapshot_of(outcome: Outcome):
+    keys = {match_key(row.name) for row in result.of(outcome)}
+    return snapshot_size(r for r in _sized_inventory if r.key in keys)
+
 scope_size = SizeTotal(
     megabytes=available_size.megabytes,
     rows=available_size.rows + counts[Outcome.NOT_IN_INVENTORY],
@@ -1420,22 +1419,35 @@ scope_size = SizeTotal(
     field_used=available_size.field_used,
 )
 
-def _count_share(count: int) -> str:
-    if not result.master_count:
-        return ""
-    return f"{100 * count / result.master_count:.1f}% of databases"
+def _share_lines(count: int, size, *, of_scope: bool = True) -> str:
 
-def _size_share(size) -> str:
-    if (
-        size is None
-        or not size.rows_with_size
-        or not source_size.rows_with_size
-        or size.units_look_wrong
-        or source_size.units_look_wrong
-    ):
-        return ""
-    approx = "" if size.complete and source_size.complete else "~"
-    return f"{approx}{100 * size.megabytes / source_size.megabytes:.1f}% of size"
+    def size_part(base) -> str:
+        if (
+            size is None
+            or not size.rows_with_size
+            or not base.rows_with_size
+            or size.units_look_wrong
+            or base.units_look_wrong
+            or not base.megabytes
+        ):
+            return ""
+        approx = "" if size.complete and base.complete else "~"
+        return f" · {approx}{100 * size.megabytes / base.megabytes:.1f}%"
+
+    lines = []
+    if of_scope and result.scope_checked and result.scope_names:
+        part = size_part(scope_size)
+        lines.append(
+            f"{100 * count / result.scope_names:.1f}% of scope databases"
+            + (f"{part} of scope size" if part else "")
+        )
+    if result.master_count:
+        part = size_part(source_size)
+        lines.append(
+            f"{100 * count / result.master_count:.1f}% of source databases"
+            + (f"{part} of source size" if part else "")
+        )
+    return "\n".join(lines)
 transit_size = size_of(result, Outcome.NOT_ARCHIVED)
 unchecked_size = size_of(result, Outcome.IMPORTED)
 
@@ -1468,21 +1480,6 @@ def _source_breakdown() -> str:
         return ""
     return " + ".join(f"{label} {count:,}" for label, count in parts)
 
-def _archived_share() -> str:
-    archived = counts[Outcome.ARCHIVED]
-    if not archived:
-        return ""
-    source_total = result.master_count
-    scope_total = (
-        result.scope_names if result.scope_checked else result.master_count
-    )
-    parts = []
-    if scope_total and result.scope_checked:
-        parts.append(f"{100 * archived / scope_total:.1f}% of scope")
-    if source_total:
-        parts.append(f"{100 * archived / source_total:.1f}% of source")
-    return " · ".join(parts)
-
 render_headline_cards(
     [
         (
@@ -1501,8 +1498,11 @@ render_headline_cards(
             else "no scope list supplied — every on-prem row treated as wanted",
             "",
             _card_volume(scope_size),
-            _count_share(result.scope_names if result.scope_checked else result.master_count),
-            _size_share(scope_size),
+            _share_lines(
+                result.scope_names if result.scope_checked else result.master_count,
+                scope_size,
+                of_scope=False,
+            ),
         ),
         (
             "TARGET (Archive)",
@@ -1510,8 +1510,9 @@ render_headline_cards(
             archived_note,
             "good" if result.vault_checked else "",
             _card_volume(archived_size),
-            _archived_share(),
-            _size_share(archived_size),
+            _share_lines(counts[Outcome.ARCHIVED], _snapshot_of(Outcome.ARCHIVED))
+            if counts[Outcome.ARCHIVED]
+            else "",
         ),
     ],
     primary=True,
@@ -1551,8 +1552,7 @@ render_headline_cards(
             "on prem, but not on the scope list",
             "",
             _card_volume(not_in_scope_size),
-            _count_share(counts[Outcome.OUT_OF_SCOPE]),
-            _size_share(not_in_scope_size),
+            _share_lines(counts[Outcome.OUT_OF_SCOPE], not_in_scope_size, of_scope=False),
         ),
         (
             "In Scope, Missing",
@@ -1566,8 +1566,7 @@ render_headline_cards(
             "wanted and on prem — movable today",
             "",
             _card_volume(available_size),
-            _count_share(headline_stages["In scope"].count),
-            _size_share(available_size),
+            _share_lines(headline_stages["In scope"].count, available_size),
         ),
         (
             "In Transit",
@@ -1587,8 +1586,7 @@ render_headline_cards(
                 else ""
             ),
             _card_volume(transit_size),
-            _count_share(counts[Outcome.NOT_ARCHIVED]),
-            _size_share(transit_size),
+            _share_lines(counts[Outcome.NOT_ARCHIVED], _snapshot_of(Outcome.NOT_ARCHIVED)),
         ),
     ]
 )
