@@ -1,3 +1,3 @@
-source commit : 8bab32284eccf94828cb7dad68cad69535230dbe
-               docs: log amigo.bat option U in TASK-0071; regenerate dashboard
+source commit : a58ed199cd653229f198e0312ce07f09e0c3a3ef
+               fix: regenerate scaffold.ps1's file list -- 3 files were missing
 files         : 91
