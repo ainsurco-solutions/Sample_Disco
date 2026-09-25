@@ -124,6 +124,7 @@ st.markdown(
       .hl-figure { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
 
       .hl-split {
+        display:inline-flex; flex-direction:column; line-height:1.15;
         font-size:1rem; font-weight:600; opacity:.7;
         font-variant-numeric:tabular-nums;
       }
@@ -133,7 +134,7 @@ st.markdown(
         border-color:rgba(128,128,128,.38);
       }
       .hl-row-primary .hl-count { font-size:2.1rem; }
-      .hl-row-primary .hl-split { font-size:1.05rem; }
+      .hl-row-primary .hl-split { font-size:.95rem; }
       .hl-row-primary .hl-name { font-size:.95rem; letter-spacing:.01em; }
 
       .hl-good { color:#1e7b34; }
@@ -142,7 +143,6 @@ st.markdown(
       .hl-name {
         font-weight:600; font-size:.88rem; margin-top:.05rem; line-height:1.2;
       }
-      .hl-share { font-size:.8rem; font-weight:600; margin-top:.1rem; }
       .hl-note { font-size:.74rem; opacity:.6; margin-top:.15rem; line-height:1.25; }
 
       .dl { text-align:right; padding-top:1.1rem; line-height:1.35; }
@@ -426,13 +426,19 @@ def render_headline_cards(
             else ""
         )
         breakdown = card[5] if len(card) > 5 else ""
-        share = card[6] if len(card) > 6 else ""
-        share_html = f"<div class='hl-share'>{html.escape(share)}</div>" if share else ""
         breakdown_html = (
-            f"<span class='hl-split'>{html.escape(breakdown)}</span>"
+            "<span class='hl-split'>"
+            + "".join(f"<span>{html.escape(part)}</span>" for part in breakdown.split(" · "))
+            + "</span>"
             if breakdown
             else ""
         )
+        size_share = card[6] if len(card) > 6 else ""
+        if size_share and volume:
+            volume_html = (
+                f"<div class='hl-volume'>{html.escape(volume)}"
+                f"<span class='hl-volume-share'> · {html.escape(size_share)}</span></div>"
+            )
         html_cards.append(
             f"<div class='hl-card' style='flex-basis:calc({basis:.4f}% - .9rem)'>"
             f"<div class='hl-figure'>"
@@ -441,7 +447,6 @@ def render_headline_cards(
             f"</div>"
             f"<div class='hl-name'>{html.escape(title)}</div>"
             f"{volume_html}"
-            f"{share_html}"
             f"<div class='hl-note'>{html.escape(note)}</div>"
             "</div>"
         )
@@ -1407,20 +1412,22 @@ scope_size = SizeTotal(
     field_used=available_size.field_used,
 )
 
-def _share_of_source(count: int, size) -> str:
-    parts = []
-    if result.master_count:
-        parts.append(f"{100 * count / result.master_count:.1f}% of databases")
+def _count_share(count: int) -> str:
+    if not result.master_count:
+        return ""
+    return f"{100 * count / result.master_count:.1f}% of databases"
+
+def _size_share(size) -> str:
     if (
-        size is not None
-        and size.rows_with_size
-        and source_size.rows_with_size
-        and not size.units_look_wrong
-        and not source_size.units_look_wrong
+        size is None
+        or not size.rows_with_size
+        or not source_size.rows_with_size
+        or size.units_look_wrong
+        or source_size.units_look_wrong
     ):
-        approx = "" if size.complete and source_size.complete else "~"
-        parts.append(f"{approx}{100 * size.megabytes / source_size.megabytes:.1f}% of size")
-    return " · ".join(parts)
+        return ""
+    approx = "" if size.complete and source_size.complete else "~"
+    return f"{approx}{100 * size.megabytes / source_size.megabytes:.1f}% of size"
 transit_size = size_of(result, Outcome.NOT_ARCHIVED)
 unchecked_size = size_of(result, Outcome.IMPORTED)
 
@@ -1486,11 +1493,8 @@ render_headline_cards(
             else "no scope list supplied — every on-prem row treated as wanted",
             "",
             _card_volume(scope_size),
-            "",
-            _share_of_source(
-                result.scope_names if result.scope_checked else result.master_count,
-                scope_size,
-            ),
+            _count_share(result.scope_names if result.scope_checked else result.master_count),
+            _size_share(scope_size),
         ),
         (
             "TARGET (Archive)",
@@ -1499,7 +1503,7 @@ render_headline_cards(
             "good" if result.vault_checked else "",
             _card_volume(archived_size),
             _archived_share(),
-            _share_of_source(counts[Outcome.ARCHIVED], archived_size),
+            _size_share(archived_size),
         ),
     ],
     primary=True,
@@ -1539,8 +1543,8 @@ render_headline_cards(
             "on prem, but not on the scope list",
             "",
             _card_volume(not_in_scope_size),
-            "",
-            _share_of_source(counts[Outcome.OUT_OF_SCOPE], not_in_scope_size),
+            _count_share(counts[Outcome.OUT_OF_SCOPE]),
+            _size_share(not_in_scope_size),
         ),
         (
             "In Scope, Missing",
@@ -1554,8 +1558,8 @@ render_headline_cards(
             "wanted and on prem — movable today",
             "",
             _card_volume(available_size),
-            "",
-            _share_of_source(headline_stages["In scope"].count, available_size),
+            _count_share(headline_stages["In scope"].count),
+            _size_share(available_size),
         ),
         (
             "In Transit",
@@ -1575,8 +1579,8 @@ render_headline_cards(
                 else ""
             ),
             _card_volume(transit_size),
-            "",
-            _share_of_source(counts[Outcome.NOT_ARCHIVED], transit_size),
+            _count_share(counts[Outcome.NOT_ARCHIVED]),
+            _size_share(transit_size),
         ),
     ]
 )
