@@ -7,6 +7,7 @@ from datetime import date
 from dataclasses import dataclass
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 from reconcile import (
@@ -2269,12 +2270,17 @@ with report_tab:
 
             chart_window = st.radio(
                 "Chart range",
-                ["Last 30 days", "Last 90 days", "All"],
-                index=0,
+                ["Last 7 days", "Last 14 days", "Last 30 days", "Last 90 days", "All"],
+                index=2,
                 horizontal=True,
                 key="vault_activity_window",
             )
-            window_days = {"Last 30 days": 30, "Last 90 days": 90}.get(chart_window)
+            window_days = {
+                "Last 7 days": 7,
+                "Last 14 days": 14,
+                "Last 30 days": 30,
+                "Last 90 days": 90,
+            }.get(chart_window)
             since = (
                 pd.Timestamp.now(tz="UTC").tz_localize(None).floor("D")
                 - pd.Timedelta(days=window_days - 1)
@@ -2288,6 +2294,43 @@ with report_tab:
                 days = pd.date_range(since, since + pd.Timedelta(days=window_days - 1))
                 return frame.reindex(days, fill_value=0)
 
+            def _daily_bars(frame: pd.DataFrame, unit: str) -> None:
+                if since is None:
+                    st.bar_chart(frame, height=400)
+                    return
+                long = (
+                    frame.rename_axis("day")
+                    .reset_index()
+                    .melt(id_vars="day", var_name="Source", value_name=unit)
+                )
+                chart = (
+                    alt.Chart(long)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X(
+                            "yearmonthdate(day):O",
+                            title=None,
+                            axis=alt.Axis(
+                                format="%d %b", labelAngle=0 if window_days <= 14 else -45
+                            ),
+                        ),
+                        y=alt.Y(f"{unit}:Q", title=None, stack=True),
+                        color=alt.Color(
+                            "Source:N",
+                            sort=["Manual", "Automation"],
+                            legend=alt.Legend(orient="bottom", title=None),
+                        ),
+                        order=alt.Order("Source:N", sort="descending"),
+                        tooltip=[
+                            alt.Tooltip("yearmonthdate(day):T", title="Day", format="%a %d %b"),
+                            "Source:N",
+                            alt.Tooltip(f"{unit}:Q", format=",.2f" if unit == "GB" else ","),
+                        ],
+                    )
+                    .properties(height=400)
+                )
+                st.altair_chart(chart, width="stretch")
+
             st.markdown("**DB Archived per day**")
             per_day_split = (
                 activity.groupby(["_day", "_source"]).size().unstack(fill_value=0)
@@ -2296,7 +2339,7 @@ with report_tab:
                 if column not in per_day_split.columns:
                     per_day_split[column] = 0
             per_day_split = per_day_split[["Manual", "Automation"]]
-            st.bar_chart(_windowed(per_day_split), height=400)
+            _daily_bars(_windowed(per_day_split), "Databases")
 
             if _size_col is not None:
                 st.markdown("**GB per day**")
@@ -2307,7 +2350,7 @@ with report_tab:
                 for column in ("Manual", "Automation"):
                     if column not in gb_split.columns:
                         gb_split[column] = 0.0
-                st.bar_chart(_windowed(gb_split[["Manual", "Automation"]]), height=400)
+                _daily_bars(_windowed(gb_split[["Manual", "Automation"]]), "GB")
 
             table = per_day_split.copy()
             table["Total"] = table["Manual"] + table["Automation"]
