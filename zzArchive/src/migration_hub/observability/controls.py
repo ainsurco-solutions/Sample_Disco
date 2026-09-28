@@ -206,16 +206,18 @@ def close(
     )
     return _to_record(_require_run(registry, run_id))
 
-def abort(*, registry: Registry, run_id: UUID, reason: str) -> ControlRecord:
+def abort(*, registry: Registry, run_id: UUID, reason: str, by: str) -> ControlRecord:
     if not reason.strip():
         raise ValueError("abort requires a non-empty reason")
+    if not by.strip():
+        raise ValueError("abort requires the name of whoever is aborting")
 
     _require_run(registry, run_id)
     registry.update_batch_run(
         run_id=run_id,
         status=str(RunStatus.ABORTED),
         finished_at=datetime.now(UTC).replace(tzinfo=None),
-        notes=reason,
+        notes=f"Aborted by {by.strip()}: {reason.strip()}",
     )
     return _to_record(_require_run(registry, run_id))
 
@@ -301,6 +303,8 @@ def sign_off(*, registry: Registry, run_id: UUID, by: str) -> ControlRecord:
     run = _require_run(registry, run_id)
     if run.status == str(RunStatus.RUNNING):
         raise ValueError(f"run {run_id} is still open -- close it before sign-off")
+    if run.status == str(RunStatus.ABORTED):
+        raise ValueError(f"run {run_id} was aborted -- aborted runs are not signed off")
 
     if run.status == str(RunStatus.EXCEPTIONS):
         exceptions = registry.files_in_states(

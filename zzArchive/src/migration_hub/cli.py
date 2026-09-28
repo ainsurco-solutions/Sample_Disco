@@ -563,11 +563,15 @@ def controls_close(run_id: str = typer.Option(..., "--run-id")) -> None:
 def controls_abort(
     run_id: str = typer.Option(..., "--run-id"),
     reason: str = typer.Option(..., "--reason"),
+    by: str | None = typer.Option(None, "--by", help="Defaults to the current OS user."),
 ) -> None:
     settings = _load_settings()
     registry = _registry(settings)
-    record = controls.abort(registry=registry, run_id=UUID(run_id), reason=reason)
+    record = controls.abort(
+        registry=registry, run_id=UUID(run_id), reason=reason, by=by or getpass.getuser()
+    )
     _echo_record(record)
+    _close_batch_if_done(registry, record.batch_id)
 
 @controls_app.command("sign-off")
 def controls_sign_off(
@@ -578,13 +582,22 @@ def controls_sign_off(
     registry = _registry(settings)
     record = controls.sign_off(registry=registry, run_id=UUID(run_id), by=by or getpass.getuser())
     _echo_record(record)
+    signed = registry.get_batch_run(UUID(run_id))
+    if signed is not None and not signed.evidence_sha256:
+        typer.echo(
+            "WARNING: signed off with no exported evidence -- run "
+            "`migration-hub controls export` to give the pack a hashed report",
+            err=True,
+        )
+    _close_batch_if_done(registry, record.batch_id)
 
-    ok, reasons = batches.exit_criteria_met(registry=registry, batch_id=record.batch_id)
+def _close_batch_if_done(registry: Registry, batch_id: str) -> None:
+    ok, reasons = batches.exit_criteria_met(registry=registry, batch_id=batch_id)
     if ok:
-        batches.mark_done(registry=registry, batch_id=record.batch_id)
-        typer.echo(f"batch {record.batch_id!r} marked DONE")
+        batches.mark_done(registry=registry, batch_id=batch_id)
+        typer.echo(f"batch {batch_id!r} marked DONE")
     else:
-        typer.echo(f"batch {record.batch_id!r} not yet done: {'; '.join(reasons)}")
+        typer.echo(f"batch {batch_id!r} not yet done: {'; '.join(reasons)}")
 
 @controls_app.command("export")
 def controls_export(

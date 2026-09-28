@@ -1,3 +1,3 @@
-source commit : 596ace1ddc7084454e3577377c8e49412a7610b3
-               style(ui): soften dark theme follow-up â€” Hub and Reconcile parity (TASK-0095)
+source commit : f2e09973fd78acee61e6276db9c9e27c52ae29de
+               feat(controls): abort records who; sign-off warns without evidence (TASK-0098)
 files         : 91

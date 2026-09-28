@@ -198,11 +198,114 @@ def _live_batch_tabs(registry: Registry, settings: Settings, batch: str) -> None
 
 @st.fragment(run_every="8s")
 def _render_overview(registry: Registry, settings: Settings) -> None:
+    _render_health_strip(registry, settings)
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
     _render_queue_panel(settings)
     _render_operational_observability(registry, batch_id=None, settings=settings)
     _render_batch_log(registry)
+
+_HealthPart = tuple[str, _BadgeColor, str]
+
+_WORST_FIRST = (
+    queue_check.Recommendation.INVESTIGATE,
+    queue_check.Recommendation.HOLD,
+    queue_check.Recommendation.UNKNOWN,
+    queue_check.Recommendation.PUSH,
+)
+
+def _health_strip_parts(
+    *,
+    now: datetime,
+    registry_error: str | None,
+    claimed: Sequence[MigrationFile],
+    claim_stale_minutes: int,
+    last_call: ApiTransaction | None,
+    snapshot: queue_check.Snapshot | None,
+) -> list[_HealthPart]:
+    naive_now = now.astimezone(UTC).replace(tzinfo=None)
+
+    def minutes_since(stamp: datetime) -> float:
+        return max(0.0, (naive_now - stamp).total_seconds() / 60)
+
+    if registry_error is not None:
+        unknown: _BadgeColor = "gray"
+        return [
+            ("Registry", "red", f"unreachable -- {registry_error}"),
+            ("Workers", unknown, "unknown -- registry unreadable"),
+            ("Last vendor call", unknown, "unknown -- registry unreadable"),
+            _queue_health_part(snapshot, now=now),
+        ]
+    parts: list[_HealthPart] = [("Registry", "green", f"reachable -- read {now:%H:%M:%S} UTC")]
+
+    cutoff = naive_now - timedelta(minutes=claim_stale_minutes)
+    beats = [f.claimed_at for f in claimed if f.claimed_at is not None]
+    alive = [b for b in beats if b >= cutoff]
+    stale = len(claimed) - len(alive)
+    if not claimed:
+        parts.append(("Workers", "gray", "idle -- no file held by a worker"))
+    else:
+        newest = f"last heartbeat {_ago(minutes_since(max(beats)))}" if beats else "no heartbeat"
+        if alive and not stale:
+            parts.append(("Workers", "green", f"{len(alive)} file(s) held -- {newest}"))
+        elif alive:
+            parts.append(("Workers", "orange", f"{len(alive)} alive, {stale} stopped -- {newest}"))
+        else:
+            parts.append(("Workers", "red", f"{stale} claim(s) with no worker -- {newest}"))
+
+    if last_call is None:
+        parts.append(("Last vendor call", "gray", "none logged"))
+    else:
+        family = metrics.status_family(last_call.status_code)
+        color: _BadgeColor = (
+            "green" if family == "2xx" else "gray" if family in ("1xx", "3xx") else "red"
+        )
+        status = str(last_call.status_code) if last_call.status_code else "no response"
+        parts.append(
+            (
+                "Last vendor call",
+                color,
+                f"{last_call.method} {metrics.endpoint_key(last_call.url)} {status} -- "
+                f"{_ago(minutes_since(last_call.occurred_at))}",
+            )
+        )
+
+    parts.append(_queue_health_part(snapshot, now=now))
+    return parts
+
+def _queue_health_part(snapshot: queue_check.Snapshot | None, *, now: datetime) -> _HealthPart:
+    if snapshot is None:
+        return ("Queue check", "gray", "not checked yet")
+    headline, rows = _queue_view(snapshot, now=now)
+    worst = next(
+        (r for r in _WORST_FIRST if any(rec == r for _, rec, _ in rows)),
+        queue_check.Recommendation.UNKNOWN,
+    )
+    color: _BadgeColor = "orange" if "stale" in headline else _RECOMMENDATION_COLOR[worst]
+    return ("Queue check", color, f"{worst} -- {headline.lower()}")
+
+def _render_health_strip(registry: Registry, settings: Settings) -> None:
+    now = datetime.now(UTC)
+    registry_error: str | None = None
+    claimed: Sequence[MigrationFile] = []
+    last_call: ApiTransaction | None = None
+    try:
+        claimed = registry.files_in_states(states=sorted(CLAIMED_STATES))
+        recent = registry.recent_transactions(limit=1)
+        last_call = recent[0] if recent else None
+    except Exception as exc:
+        registry_error = type(exc).__name__
+    parts = _health_strip_parts(
+        now=now,
+        registry_error=registry_error,
+        claimed=claimed,
+        claim_stale_minutes=settings.claim_stale_minutes,
+        last_call=last_call,
+        snapshot=queue_check.read_snapshot(settings.queue_snapshot_path),
+    )
+    with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+        for label, color, text in parts:
+            st.badge(f"{label}: {text}", color=color)
 
 _RECOMMENDATION_COLOR: dict[queue_check.Recommendation, _BadgeColor] = {
     queue_check.Recommendation.PUSH: "green",
@@ -2627,7 +2730,9 @@ def _render_control_actions(registry: Registry, settings: Settings, run: BatchRu
         and status is not controls.RunStatus.ABORTED
         and not missing_reasons
     ):
-        _render_sign_off_control_form(settings, run_id, run.batch_id)
+        _render_sign_off_control_form(
+            settings, run_id, run.batch_id, has_evidence=bool(run.evidence_sha256)
+        )
 
 def _render_controls_open_form(settings: Settings, batch: str) -> None:
     with st.form(f"controls_open_{batch}", border=True):
@@ -2654,11 +2759,12 @@ def _render_controls_open_form(settings: Settings, batch: str) -> None:
 def _render_abort_control_form(settings: Settings, run_id: str, batch: str) -> None:
     with st.popover("Abort control record", icon=":material/cancel:"):
         st.caption("The migration worker is not stopped by this action.")
+        by = st.text_input("Operator", value=_default_operator(), key=f"abort_by_{run_id}")
         reason = st.text_area("Reason", key=f"abort_reason_{run_id}")
         if st.button(
             "Abort run",
             icon=":material/cancel:",
-            disabled=not reason.strip(),
+            disabled=not reason.strip() or not by.strip(),
             key=f"abort_run_{run_id}",
         ):
             _launch_control_command(
@@ -2666,6 +2772,7 @@ def _render_abort_control_form(settings: Settings, run_id: str, batch: str) -> N
                 batch_ops.start_controls_abort_subprocess(
                     run_id=run_id,
                     reason=reason.strip(),
+                    by=by.strip(),
                     environment=settings.environment,
                     batch_id=batch,
                 ),
@@ -2694,9 +2801,18 @@ def _render_export_control_form(settings: Settings, run: BatchRun) -> None:
                 "Refresh after completion; evidence path and SHA-256 will appear here.",
             )
 
-def _render_sign_off_control_form(settings: Settings, run_id: str, batch: str) -> None:
+def _render_sign_off_control_form(
+    settings: Settings, run_id: str, batch: str, *, has_evidence: bool = True
+) -> None:
     with st.form(f"sign_off_{run_id}", border=True):
         st.write(f"**Confirm sign-off: {batch}**")
+        if not has_evidence:
+            st.warning(
+                "No evidence has been exported for this run -- the sign-off pack "
+                "will have no file whose SHA-256 proves it came from this run. "
+                "Use **Export evidence** first unless you mean to sign without it.",
+                icon=":material/warning:",
+            )
         by = st.text_input("Operator", value=_default_operator())
         left, right = st.columns(2)
         submitted = left.form_submit_button(

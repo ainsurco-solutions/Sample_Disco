@@ -541,14 +541,14 @@ def start_controls_abort_subprocess(
     *,
     run_id: str,
     reason: str,
+    by: str | None = None,
     environment: str | None = None,
     batch_id: str | None = None,
 ) -> WorkerHandle:
-    return _launch_cli(
-        ["controls", "abort", "--run-id", run_id, "--reason", reason],
-        f"controls-abort-{batch_id or run_id}",
-        environment,
-    )
+    args = ["controls", "abort", "--run-id", run_id, "--reason", reason]
+    if by:
+        args += ["--by", by]
+    return _launch_cli(args, f"controls-abort-{batch_id or run_id}", environment)
 
 def start_controls_export_subprocess(
     *,
