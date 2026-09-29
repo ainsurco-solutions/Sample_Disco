@@ -125,11 +125,42 @@ class Registry:
                     )
                 )
             )
-            new_files = [f for f in files if f.source_path not in existing_paths]
+            unseen = [f for f in files if f.source_path not in existing_paths]
+            holders = self._exposure_name_holders(
+                session, names=[f.target_exposure_name for f in unseen]
+            )
+            new_files: list[MigrationFile] = []
+            for file in unseen:
+                holder = holders.get(file.target_exposure_name)
+                if holder is not None:
+                    _log.warning(
+                        "not registering %s: target name %r is already taken by %s",
+                        file.source_path, file.target_exposure_name, holder,
+                    )
+                    continue
+                holders[file.target_exposure_name] = file.source_path
+                new_files.append(file)
             for file in new_files:
                 session.add(file)
             session.flush()
             return len(new_files)
+
+    def taken_exposure_names(self, *, names: Sequence[str]) -> dict[str, str]:
+        if not names:
+            return {}
+        with Session(self._engine) as session:
+            return self._exposure_name_holders(session, names=names)
+
+    @staticmethod
+    def _exposure_name_holders(session: Session, *, names: Sequence[str]) -> dict[str, str]:
+        if not names:
+            return {}
+        rows = session.execute(
+            select(MigrationFile.target_exposure_name, MigrationFile.source_path).where(
+                MigrationFile.target_exposure_name.in_(set(names))
+            )
+        )
+        return dict(rows.tuples().all())
 
     def known_source_paths(self, *, paths: Sequence[str]) -> set[str]:
         if not paths:

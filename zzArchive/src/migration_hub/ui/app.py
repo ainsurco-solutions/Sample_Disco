@@ -131,6 +131,16 @@ def render() -> None:
     st.set_page_config(page_title="Migration Hub", page_icon="🧭", layout="wide")
 
     st.markdown(stylesheet(st.context.theme.type), unsafe_allow_html=True)
+    st.markdown(
+        """<style>
+        .st-key-mh-health-compact { display: none; }
+        @media (max-width: 800px) {
+            .st-key-mh-health-wide { display: none; }
+            .st-key-mh-health-compact { display: flex; }
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
     settings = _load_settings()
     registry = Registry(_engine(settings.database_url))
 
@@ -160,6 +170,7 @@ def render() -> None:
             st.badge("Dry run", color="gray", icon=":material/science:")
         if st.button("Refresh now", icon=":material/refresh:"):
             st.rerun()
+        _live_health_strip(registry, settings)
     if st.session_state.get("add_batch_open"):
         _add_batch_dialog(registry, settings)
 
@@ -198,7 +209,6 @@ def _live_batch_tabs(registry: Registry, settings: Settings, batch: str) -> None
 
 @st.fragment(run_every="8s")
 def _render_overview(registry: Registry, settings: Settings) -> None:
-    _render_health_strip(registry, settings)
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
     _render_queue_panel(settings)
@@ -284,6 +294,41 @@ def _queue_health_part(snapshot: queue_check.Snapshot | None, *, now: datetime) 
     color: _BadgeColor = "orange" if "stale" in headline else _RECOMMENDATION_COLOR[worst]
     return ("Queue check", color, f"{worst} -- {headline.lower()}")
 
+def _compact_health_label(label: str, detail: str) -> str:
+    if label == "Registry":
+        return (
+            f"Registry: OK · {detail.split('read ', 1)[-1][:5]} UTC"
+            if detail.startswith("reachable")
+            else "Registry: unavailable"
+        )
+    if label == "Workers":
+        status, _, age = detail.partition(" -- ")
+        if status.startswith("idle") or status.startswith("unknown"):
+            return f"Workers: {status}"
+        if "with no worker" in status:
+            status = f"{status.split(' ', 1)[0]} stopped"
+        else:
+            status = status.replace(" file(s) held", " active").replace(" alive", " active")
+        return (
+            f"Workers: {status} · {age.replace('last heartbeat ', '')}"
+            if age
+            else f"Workers: {status}"
+        )
+    if label == "Last vendor call":
+        if detail.startswith("unknown") or detail == "none logged":
+            return f"Vendor: {detail.split(' -- ', 1)[0]}"
+        call, _, age = detail.rpartition(" -- ")
+        status = "no response" if "no response" in call else call.rsplit(" ", 1)[-1]
+        return f"Vendor: {status} · {age}"
+    status, _, age = detail.partition(" -- ")
+    if "stale" in age:
+        return f"Queue: {status} · {age.removeprefix('read ').split(' ago', 1)[0]} stale"
+    return f"Queue: {status} · {age}" if age else f"Queue: {status}"
+
+@st.fragment(run_every="8s")
+def _live_health_strip(registry: Registry, settings: Settings) -> None:
+    _render_health_strip(registry, settings)
+
 def _render_health_strip(registry: Registry, settings: Settings) -> None:
     now = datetime.now(UTC)
     registry_error: str | None = None
@@ -303,9 +348,16 @@ def _render_health_strip(registry: Registry, settings: Settings) -> None:
         last_call=last_call,
         snapshot=queue_check.read_snapshot(settings.queue_snapshot_path),
     )
-    with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+    with st.container(
+        horizontal=True, vertical_alignment="center", gap="small", key="mh-health-wide"
+    ):
         for label, color, text in parts:
-            st.badge(f"{label}: {text}", color=color)
+            st.badge(f"{label}: {text}", color=color, help=f"{label}: {text}")
+    with st.container(
+        horizontal=True, vertical_alignment="center", gap="small", key="mh-health-compact"
+    ):
+        for label, color, text in parts:
+            st.badge(_compact_health_label(label, text), color=color, help=f"{label}: {text}")
 
 _RECOMMENDATION_COLOR: dict[queue_check.Recommendation, _BadgeColor] = {
     queue_check.Recommendation.PUSH: "green",
@@ -329,7 +381,9 @@ def _queue_view(
     rows = []
     for q in snapshot.instances:
         recommendation = queue_check.Recommendation.UNKNOWN if stale else q.recommendation
-        if q.read_ok:
+        if stale:
+            detail = "Past reading only; check again for current queue depth"
+        elif q.read_ok:
             oldest = (
                 f"oldest {q.oldest_active_minutes} min"
                 if q.oldest_active_minutes is not None
@@ -440,7 +494,7 @@ def _kpi_strip_global(registry: Registry) -> None:
         ),
         (
             "red",
-            "Failed / abandoned",
+            "Historical failures",
             issues,
             "all batches, including closed" if issues else "none",
         ),
@@ -560,11 +614,14 @@ def _render_api_call_panel(registry: Registry, *, batch_id: str | None) -> None:
     with st.container(border=False):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("API calls")
-            st.badge(
-                f"Runaway risk: {summary.risk}",
-                color=risk_color[summary.risk],
-                icon=":material/network_check:",
-            )
+            if summary.calls:
+                st.badge(
+                    f"Runaway risk: {summary.risk}",
+                    color=risk_color[summary.risk],
+                    icon=":material/network_check:",
+                )
+            else:
+                st.badge("No recent calls", color="gray", icon=":material/network_check:")
         cols = st.columns(4)
         with cols[0]:
             st.metric("Calls / min", f"{summary.calls_per_minute:.1f}")
@@ -999,6 +1056,7 @@ def _render_start_migration_automated(
         candidates = list(scanner.scan(source_root=source_root, pattern=settings.file_pattern))
         known = registry.known_source_paths(paths=[c.source_path for c in candidates])
         new_files = [c for c in candidates if c.source_path not in known]
+        new_files = _drop_taken_names(registry, new_files)
         preview_count = len(new_files)
         hidden = len(candidates) - preview_count
         if hidden:
@@ -1083,6 +1141,7 @@ def _render_add_batch_manual_select(
         candidates = list(scanner.scan(source_root=source_root, pattern=settings.file_pattern))
         known = registry.known_source_paths(paths=[c.source_path for c in candidates])
         available = [c for c in candidates if c.source_path not in known]
+        available = _drop_taken_names(registry, available)
         hidden = len(candidates) - len(available)
         if hidden:
             st.caption(f"{hidden} file(s) already migrated or in progress elsewhere -- hidden.")
@@ -1123,6 +1182,21 @@ def _render_add_batch_manual_select(
         chosen = [f for f in available if f.source_path in set(selected_paths)]
         _start_add_batch(registry, settings, wiz, chosen)
         st.rerun()
+
+def _drop_taken_names(registry: Registry, files: list[MigrationFile]) -> list[MigrationFile]:
+    taken = registry.taken_exposure_names(names=[f.target_exposure_name for f in files])
+    if taken:
+        clashes = [f for f in files if f.target_exposure_name in taken]
+        st.warning(
+            f"{len(clashes)} file(s) left out: their target name is already registered "
+            "from another path.\n\n"
+            + "\n".join(
+                f"- `{f.source_path}` -- `{f.target_exposure_name}` is held by "
+                f"`{taken[f.target_exposure_name]}`"
+                for f in clashes
+            )
+        )
+    return [f for f in files if f.target_exposure_name not in taken]
 
 def _start_add_batch(
     registry: Registry, settings: Settings, wiz: _AddBatchWizard, chosen: list[MigrationFile]
@@ -1602,7 +1676,12 @@ def _file_table_rows(
             "source_database": f.source_database,
             "target_exposure_name": f.target_exposure_name,
             "state": f.state,
-            "progress": _upload_progress(f) or _file_progress(f.state, destination),
+            "progress": (
+                None
+                if f.state == str(FileState.COMPLETED)
+                or (destination is BatchDestination.BRIDGE and f.state == str(FileState.BRIDGED))
+                else _upload_progress(f) or _file_progress(f.state, destination)
+            ),
             "size_mb": round(f.size_bytes / (1024 * 1024), 1),
             "attempts": f.attempts,
             "archive_attempts": f.archive_attempts,
@@ -2538,7 +2617,7 @@ def _render_controls_tab(registry: Registry, settings: Settings, batch: str) -> 
             {
                 "run_seq": run.run_seq,
                 "trigger": run.trigger,
-                "status": run.status + (" (live)" if live else ""),
+                "status": run.status + (" (open record)" if live else ""),
                 "initiated_by": run.initiated_by,
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,
@@ -2603,7 +2682,7 @@ def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> N
                 color = "orange"
             if run.status == str(controls.RunStatus.ABORTED):
                 color = "red"
-            st.badge(run.status + (" (live)" if live else ""), color=color)
+            st.badge(run.status + (" (open record)" if live else ""), color=color)
             st.write(f"**Run {run.run_seq}** `{run.run_id}`")
         cols = st.columns(4)
         with cols[0]:
@@ -2621,6 +2700,19 @@ def _render_selected_control_run_summary(registry: Registry, run: BatchRun) -> N
 
         if run.evidence_uri:
             st.caption(f"Evidence: `{run.evidence_uri}`")
+        elif run.signed_off_at is not None:
+            st.warning(
+                "Signed off without exported evidence. The sign-off remains recorded; "
+                "export the run evidence report before relying on it for audit."
+            )
+        if live and run.started_at is not None:
+            started = run.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            minutes_open = max(0.0, (datetime.now(UTC) - started).total_seconds() / 60)
+            st.caption(
+                f"Open record for {_ago(minutes_open)}; use Abort control run below if stale."
+            )
         if run.notes:
             st.caption(f"Notes: {run.notes}")
 
@@ -2633,6 +2725,9 @@ def _render_control_issues(registry: Registry, run: BatchRun) -> None:
     if not issues:
         return
     with st.expander(f"Current file issues ({len(issues)})", expanded=running):
+        ordered = sorted(
+            issues, key=lambda file: (_file_state_priority(file.state, destination), file.file_id)
+        )
         st.dataframe(
             [
                 {
@@ -2642,14 +2737,23 @@ def _render_control_issues(registry: Registry, run: BatchRun) -> None:
                     "Closure": "Blocked" if file.state not in settled else "Settled exception",
                     "Recorded reason": file.last_error or "Not recorded",
                 }
-                for file in sorted(
-                    issues,
-                    key=lambda file: (_file_state_priority(file.state, destination), file.file_id),
-                )
+                for file in ordered
             ],
             hide_index=True,
             height=min(285, 38 + 35 * len(issues)),
         )
+        selected_id = st.selectbox(
+            "Read full recorded reason for file",
+            [file.file_id for file in ordered],
+            format_func=lambda file_id: next(
+                f"{file_id} - {file.source_database}"
+                for file in ordered
+                if file.file_id == file_id
+            ),
+            key=f"control_issue_{run.run_id}",
+        )
+        selected = next((file for file in ordered if file.file_id == selected_id), ordered[0])
+        st.text(selected.last_error or "No reason recorded.")
         if not running:
             st.caption("Current batch state; closed run totals remain frozen.")
 

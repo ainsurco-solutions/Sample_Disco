@@ -1,3 +1,3 @@
-source commit : f2e09973fd78acee61e6276db9c9e27c52ae29de
-               feat(controls): abort records who; sign-off warns without evidence (TASK-0098)
+source commit : 6c71c17052eb76be0998518771c5fb455fafe975
+               fix: plan-week test skips where the dev script is absent, unblocking the publisher (TASK-0123)
 files         : 91
