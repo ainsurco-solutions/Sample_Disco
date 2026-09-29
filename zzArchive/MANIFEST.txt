@@ -1,11 +1,11 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 6c71c17052eb76be0998518771c5fb455fafe975
+# source commit: 5289fc1ef10f0b8261a374505446ac061b68219a
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
 config	1898	68	bcd7da7862108a41554cb45f5f03981c290f93a7cf0f9072cbd9a684422b6c37	.streamlit/config.toml
 config	359	8	70ff261a08e4a689aa71f4c0ef8fbd814a216168e234d3b776624c54b847afe9	README.md
-config	39395	839	4010662445da89a051cccdea042fc8b1abfbac579ea64d53a594dbfed142c57b	VM-SETUP.txt
+config	46102	991	583e95c3097171d78bee8abf9b140942f832089f9b72ab577985311a98b9a53e	VM-SETUP.txt
 config	888	44	63989398a5656b70de669fe497c86caea04f10e9581edad17aabb3d1d1e4c232	alembic.ini
 config	1601	47	3f414dac27618c41ca7fa4c88aaf3a2fc3050ab05834ef9a4d12716a11198c56	config/dev.example.json
 config	3441	79	f75f32f13a92672151877d2c313cbfd60bb398011a4087af1c62974f1f9f1f4e	config/prod.example.json

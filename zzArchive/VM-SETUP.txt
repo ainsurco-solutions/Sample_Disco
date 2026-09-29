@@ -670,6 +670,158 @@ tenant. Before raising it much, back up the registry
 registry on OneDrive.
 
 
+-----------------------------------------------------------------------
+DATABASE SANITY CHECK -- what can we see? (exploration, read-only)
+-----------------------------------------------------------------------
+Nothing to do with a running batch, and nothing is built on it yet. These
+queries decide whether a per-file SQL check is possible: after a file
+lands on Data Bridge, compare restored state, table count, row count,
+data/log size and free space against the source, and record the result
+in the registry per file.
+
+Every query here only reads. Run them in SSMS and paste the results (or
+the error text -- a permission error IS the answer) back to the devs.
+Replace <DB_NAME> with a real database name; use one that has already
+been backed up by RatCat and imported to Data Bridge, so both sides
+exist.
+
+--- S1. On prem: which permissions do we actually have? ---------------
+Run on SRISKPD0001 (RI) and SRISKPD0101 (Direct). 1 = yes, 0 = no.
+
+  SELECT
+    HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')           AS view_server_state,
+    HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION')         AS view_any_definition,
+    HAS_PERMS_BY_NAME(NULL, NULL, 'CREATE ANY DATABASE')         AS create_any_database,
+    HAS_PERMS_BY_NAME('msdb.dbo.backupset',  'OBJECT', 'SELECT') AS msdb_backupset,
+    HAS_PERMS_BY_NAME('msdb.dbo.backupfile', 'OBJECT', 'SELECT') AS msdb_backupfile,
+    HAS_DBACCESS('ZZ_AMLIN_DBA')                                 AS ratcat_db_access;
+
+--- S2. On prem: does msdb record our backups' sizes? ------------------
+SQL Server logs every BACKUP here, whoever ran it. The file path is the
+key that would join this to the registry.
+
+  SELECT TOP 20
+         bs.backup_set_id, bs.database_name, bmf.physical_device_name,
+         bs.backup_start_date, bs.backup_finish_date,
+         bs.backup_size / 1048576.0            AS backup_mb,
+         bs.compressed_backup_size / 1048576.0 AS compressed_mb,
+         bs.is_copy_only, bs.recovery_model
+  FROM msdb.dbo.backupset bs
+  JOIN msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
+  WHERE bs.database_name = '<DB_NAME>'
+  ORDER BY bs.backup_finish_date DESC;
+
+Then, with a backup_set_id from above -- data vs log file sizes as they
+were when the backup was taken:
+
+  SELECT file_type, logical_name, physical_name,
+         file_size   / 1048576.0 AS file_mb,
+         backup_size / 1048576.0 AS backed_up_mb
+  FROM msdb.dbo.backupfile
+  WHERE backup_set_id = <BACKUP_SET_ID>;
+
+  file_type D = data, L = log.
+
+--- S3. On prem: what does RatCat keep? -------------------------------
+RatCat is Amlin's tool (docs\GLOSSARY.md). Only READ it -- never call its
+procedures from here.
+
+  USE ZZ_AMLIN_DBA;
+
+  -- what RatCat owns
+  SELECT o.type_desc, s.name + '.' + o.name AS obj
+  FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+  WHERE s.name = 'RatCat' AND o.type IN ('U', 'V', 'P')
+  ORDER BY o.type_desc, obj;
+
+  -- every column of its tables -- look for size, bytes, path, status
+  SELECT t.name AS tbl, c.name AS col, ty.name AS type
+  FROM sys.columns c
+  JOIN sys.tables  t  ON t.object_id = c.object_id
+  JOIN sys.schemas s  ON s.schema_id = t.schema_id
+  JOIN sys.types   ty ON ty.user_type_id = c.user_type_id
+  WHERE s.name = 'RatCat'
+  ORDER BY t.name, c.column_id;
+
+  -- what the queueing procedure does (and the same for whichever
+  -- procedure the first query shows processes the queue)
+  EXEC sp_helptext 'RatCat.USP_Add_WorkItem';
+
+  -- then, for the work-item table the first query found:
+  SELECT TOP 20 * FROM RatCat.<TABLE> ORDER BY <DATE_COLUMN> DESC;
+
+--- S4. On prem: profile one database (dbo is enough) ------------------
+Connect to the database itself (USE <DB_NAME>). This is the check that
+would run for every file; it needs no server-level permission.
+
+  WITH f AS (
+    SELECT
+      SUM(CASE WHEN type = 0 THEN size END) * 8 / 1024.0 AS data_alloc_mb,
+      SUM(CASE WHEN type = 0 THEN CAST(FILEPROPERTY(name, 'SpaceUsed') AS bigint) END)
+        * 8 / 1024.0                                      AS data_used_mb,
+      SUM(CASE WHEN type = 1 THEN size END) * 8 / 1024.0 AS log_alloc_mb
+    FROM sys.database_files
+  )
+  SELECT
+    DB_NAME()                                              AS db_name,
+    d.state_desc, d.recovery_model_desc,
+    (SELECT COUNT(*) FROM sys.tables WHERE is_ms_shipped = 0) AS table_count,
+    (SELECT SUM(p.rows) FROM sys.partitions p
+       JOIN sys.tables t ON t.object_id = p.object_id
+      WHERE p.index_id IN (0, 1) AND t.is_ms_shipped = 0)  AS row_count,
+    f.data_alloc_mb, f.data_used_mb,
+    f.data_alloc_mb - f.data_used_mb                       AS data_free_mb,
+    f.log_alloc_mb,
+    l.used_log_space_in_bytes / 1048576.0                  AS log_used_mb
+  FROM f
+  CROSS JOIN sys.dm_db_log_space_usage l
+  JOIN sys.databases d ON d.name = DB_NAME();
+
+Per-table row counts (the fingerprint would be built from this):
+
+  SELECT s.name + '.' + t.name AS tbl, SUM(p.rows) AS rows
+  FROM sys.tables t
+  JOIN sys.schemas s    ON s.schema_id = t.schema_id
+  JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
+  WHERE t.is_ms_shipped = 0
+  GROUP BY s.name, t.name
+  ORDER BY tbl;
+
+Row counts come from metadata, not COUNT(*), so this is instant even on
+a large EDM.
+
+--- S5. Data Bridge: can a SQL login see databases imported later? -----
+Create a SQL login on Data Bridge (the way you already do for SSMS),
+ideally one with read-only rights. Then, connected as that login:
+
+  SELECT name, create_date, state_desc, HAS_DBACCESS(name) AS can_open
+  FROM sys.databases
+  ORDER BY create_date DESC;
+
+THE QUESTION THAT MATTERS: is can_open = 1 for a database whose
+create_date is AFTER the login was created? If only older databases
+open, every new import would need a user created in it first, and the
+per-file check needs more rights than a read-only login has.
+
+Then run S4 against <DB_NAME> on Data Bridge, as the same login. Its row
+next to the on-prem S4 row is the comparison the check would make.
+
+--- S6. Data Bridge: the same, from this VM ---------------------------
+SSMS working from a dev machine does not prove this VM can reach the
+Data Bridge SQL endpoint (port 1433, possibly behind an IP allowlist).
+Repeat S5 from SSMS on this VM, or if SSMS is not installed here:
+
+  Test-NetConnection <DATA_BRIDGE_SQL_ENDPOINT> -Port 1433
+
+  TcpTestSucceeded : True is the answer we need.
+
+--- what to send back --------------------------------------------------
+  S1 both servers, S2, S3 (or its error), S4 on prem, S5 + S4 on Data
+  Bridge, S6. Say which server each came from. Do not send the SQL
+  login's password, and do not paste row data from client tables --
+  counts and sizes only.
+
+
 =======================================================================
 HISTORIC -- TROUBLESHOOTING ALREADY DONE
 =======================================================================
