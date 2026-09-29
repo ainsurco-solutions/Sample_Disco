@@ -137,6 +137,19 @@ class Reconciliation:
 class LoadError(Exception):
     pass
 
+def decode_upload(data: bytes) -> str:
+    if data.startswith(b"PK\x03\x04"):
+        raise LoadError(
+            "that file is an Excel workbook, not a CSV -- "
+            "open it in Excel and use Save As > CSV UTF-8"
+        )
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
 def _pick_column(headers: Sequence[str], candidates: Sequence[str]) -> str | None:
     folded = {h.strip().casefold(): h for h in headers if h}
     for candidate in candidates:
@@ -1096,5 +1109,179 @@ def to_csv(reconciliation: Reconciliation) -> str:
         writer.writerow(
             [row.outcome.value, row.name, row.source, row.note]
             + [row.data.get(key, "") for key in extra_keys]
+        )
+    return out.getvalue()
+
+class ScopeStatus(str, Enum):
+
+    ARCHIVED = "Archived"
+    IN_TRANSIT = "In transit"
+    NOT_STARTED = "Not started"
+    MISSING_ON_PREM = "Missing on prem"
+    UNCHECKED = "Unchecked"
+
+NOT_LOADED = "Unchecked"
+
+@dataclass(frozen=True)
+class ScopeStatusRow:
+
+    name: str
+    server: str
+    on_prem: bool
+    size_mb: float | None
+    in_vault: str
+    archives: int
+    vault_size_mb: float | None
+    created_at: str
+    created_by: str
+    automated: bool
+    bridge: str
+    status: ScopeStatus
+
+    @property
+    def size_gap_pct(self) -> float | None:
+        if self.size_mb is None or self.vault_size_mb is None or not self.size_mb:
+            return None
+        return 100.0 * (self.vault_size_mb - self.size_mb) / self.size_mb
+
+    def gap_flagged(self, threshold_pct: float) -> bool:
+        gap = self.size_gap_pct
+        return gap is not None and abs(gap) > threshold_pct
+
+def _number(raw: object) -> float | None:
+    try:
+        value = float(str(raw).replace(",", "").strip())
+    except ValueError:
+        return None
+    return value if value == value else None
+
+def _field(row: Row, candidates: Sequence[str]) -> str:
+    column = _pick_column(list(row.data), [c.casefold() for c in candidates])
+    return str(row.data.get(column, "") or "").strip() if column else ""
+
+def scope_status(
+    scope: Sequence[Row],
+    inventory: Sequence[Row],
+    platform: Sequence[Row] | None,
+    vault: Sequence[Row] | None,
+) -> list[ScopeStatusRow]:
+    inventory_by_key: dict[str, list[Row]] = {}
+    for row in inventory:
+        inventory_by_key.setdefault(row.key, []).append(row)
+    vault_by_key: dict[str, list[Row]] = {}
+    for row in vault or ():
+        vault_by_key.setdefault(row.key, []).append(row)
+    platform_keys = {row.key for row in platform or ()}
+
+    results: list[ScopeStatusRow] = []
+    seen: set[str] = set()
+    for entry in scope:
+        if entry.key in seen:
+            continue
+        seen.add(entry.key)
+
+        here = inventory_by_key.get(entry.key, [])
+        servers = [str(r.data.get(SERVER_FIELD, "") or "").strip() for r in here]
+        sizes = [_number(r.data.get(SNAPSHOT_SIZE_FIELD)) for r in here]
+        size_mb = (
+            sum(s for s in sizes if s is not None)
+            if here and all(s is not None for s in sizes)
+            else None
+        )
+
+        archives = newest_first(vault_by_key.get(entry.key, []))
+        newest = archives[0] if archives else None
+        in_vault = NOT_LOADED if vault is None else "Yes" if newest is not None else "No"
+
+        if newest is not None:
+            bridge = ""
+        elif platform is None:
+            bridge = NOT_LOADED
+        elif entry.key in platform_keys:
+            bridge = "In transit"
+        else:
+            bridge = "Not in Data Bridge"
+
+        if newest is not None:
+            status = ScopeStatus.ARCHIVED
+        elif not here:
+            status = ScopeStatus.MISSING_ON_PREM
+        elif vault is None:
+            status = ScopeStatus.UNCHECKED
+        elif bridge == "In transit":
+            status = ScopeStatus.IN_TRANSIT
+        elif platform is None:
+            status = ScopeStatus.UNCHECKED
+        else:
+            status = ScopeStatus.NOT_STARTED
+
+        created_by = _field(newest, CREATOR_COLUMNS) if newest else ""
+        results.append(
+            ScopeStatusRow(
+                name=entry.name,
+                server=", ".join(s for s in servers if s),
+                on_prem=bool(here),
+                size_mb=size_mb,
+                in_vault=in_vault,
+                archives=len(archives),
+                vault_size_mb=(
+                    _number(_field(newest, ("sizeInMb",))) if newest else None
+                ),
+                created_at=(
+                    (_field(newest, CREATED_DATE_COLUMNS) or _field(newest, ARCHIVE_TIME_FIELDS))
+                    if newest
+                    else ""
+                ),
+                created_by=created_by,
+                automated=created_by.casefold() in AUTOMATED_ACTORS,
+                bridge=bridge,
+                status=status,
+            )
+        )
+    return results
+
+def scope_status_to_csv(rows: Sequence[ScopeStatusRow], gap_threshold_pct: float) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(
+        [
+            "database_name",
+            "server",
+            "on_prem",
+            "size_on_prem_mb",
+            "in_data_vault",
+            "archives",
+            "data_vault_size_mb",
+            "size_gap_pct",
+            f"size_gap_over_{gap_threshold_pct:g}_pct",
+            "created_in_data_vault",
+            "created_by",
+            "created_by_automation",
+            "data_bridge",
+            "status",
+        ]
+    )
+
+    def blank(value: float | None, digits: int = 2) -> str:
+        return "" if value is None else f"{value:.{digits}f}"
+
+    for row in rows:
+        writer.writerow(
+            [
+                row.name,
+                row.server,
+                "Yes" if row.on_prem else "Missing",
+                blank(row.size_mb),
+                row.in_vault,
+                row.archives,
+                blank(row.vault_size_mb),
+                blank(row.size_gap_pct, 1),
+                "Yes" if row.gap_flagged(gap_threshold_pct) else "",
+                row.created_at,
+                row.created_by,
+                "Yes" if row.automated else "",
+                row.bridge,
+                row.status.value,
+            ]
         )
     return out.getvalue()

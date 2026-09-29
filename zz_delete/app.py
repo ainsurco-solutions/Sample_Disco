@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import io
 import warnings
-from datetime import date
+from datetime import date, datetime
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,10 +41,14 @@ from reconcile import (
     load_vault_from_api,
     ARCHIVE_TIME_FIELDS,
     compare_to_newest,
+    decode_upload,
     newest_first,
     reconcile,
     SERVER_FIELD,
+    ScopeStatus,
     rows_per_server,
+    scope_status,
+    scope_status_to_csv,
     size_of,
     snapshot_size,
     target_headers,
@@ -968,10 +972,9 @@ def render_step(step: Step) -> None:
                 st.session_state.raw_text.pop(step.state_rows, None)
             return
 
-        text = uploaded.getvalue().decode("utf-8-sig")
-        st.session_state.raw_text[step.state_rows] = (uploaded.name, text)
-
         try:
+            text = decode_upload(uploaded.getvalue())
+            st.session_state.raw_text[step.state_rows] = (uploaded.name, text)
             if step.kind == "target":
                 headers = target_headers(text)
                 if not headers:
@@ -1101,7 +1104,11 @@ def render_size_reference() -> None:
         )
         if uploaded is None:
             return
-        text = uploaded.getvalue().decode("utf-8-sig", errors="replace")
+        try:
+            text = decode_upload(uploaded.getvalue())
+        except LoadError as exc:
+            st.error(str(exc))
+            return
         headers = target_headers(text)
         if not headers:
             st.error("That file has no header row.")
@@ -1349,41 +1356,59 @@ with _deadline_col:
 result: Reconciliation | None = st.session_state.result
 
 if result is None:
-    st.info(
-        "Press **Refresh all** in the sidebar to fetch the Source inventory, "
-        "Data Bridge and Data Vault, then **Run reconciliation**. Source can "
-        "also be uploaded as a CSV if the servers are unreachable from here, "
-        "and the optional **Scope** list says which databases were wanted."
-    )
     past_runs = store.runs()
     if past_runs:
-        st.subheader("Earlier runs")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Run": r.id,
-                        "Ran at (UTC)": r.ran_at,
-                        "Source": r.master_label,
-                        "Data Bridge": r.target_label,
-                        "Rows (src/bridge/vault)": (
-                            f"{r.master_count}/{r.target_count}/"
-                            f"{'—' if r.vault_count is None else r.vault_count}"
-                        ),
-                        "Inputs": r.fingerprint,
-                    }
+        def run_time(value: str) -> str:
+            return datetime.fromisoformat(value).strftime("%d %b %Y, %H:%M UTC")
+
+        latest = past_runs[0]
+        st.subheader("Last reconciliation")
+        st.caption(f"Run {latest.id} · {run_time(latest.ran_at)} · {latest.inputs}")
+        with st.container(horizontal=True, vertical_alignment="center"):
+            chosen = st.selectbox(
+                "Run",
+                [r.id for r in past_runs],
+                format_func=lambda run_id: next(
+                    f"Run {r.id} · {run_time(r.ran_at)}"
                     for r in past_runs
-                ]
-            ),
-            hide_index=True,
-            width="stretch",
-        )
-        chosen = st.selectbox("Reopen a run", [r.id for r in past_runs])
-        if st.button("Open"):
+                    if r.id == run_id
+                ),
+            )
+            open_run = st.button("Open run", icon=":material/history:")
+        if open_run:
             st.session_state.result = store.load_run(int(chosen))
             st.session_state.run_id = int(chosen)
             st.session_state.outcome_filter = None
             st.rerun()
+        with st.expander(f"Saved run history ({len(past_runs)})"):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Run": r.id,
+                            "Ran at (UTC)": r.ran_at,
+                            "Source": r.master_label,
+                            "Data Bridge": r.target_label,
+                            "Rows (src/bridge/vault)": (
+                                f"{r.master_count}/{r.target_count}/"
+                                f"{'—' if r.vault_count is None else r.vault_count}"
+                            ),
+                            "Inputs": r.fingerprint[:12],
+                        }
+                        for r in past_runs
+                    ]
+                ),
+                hide_index=True,
+                width="stretch",
+                height=min(280, 38 + 35 * len(past_runs)),
+            )
+    else:
+        st.info(
+            "Press **Refresh all** in the sidebar to fetch the Source inventory, "
+            "Data Bridge and Data Vault, then **Run reconciliation**. Source can "
+            "also be uploaded as a CSV if the servers are unreachable from here, "
+            "and the optional **Scope** list says which databases were wanted."
+        )
 
     with st.expander("What the outcomes mean"):
         for outcome, text in OUTCOME_HELP.items():
@@ -1732,13 +1757,15 @@ tabs = st.tabs(
             )
             else []
         ),
+        "Scope status",
         "Report",
     ]
 )
 results_tab = tabs[0]
 report_tab = tabs[-1]
+scope_status_tab = tabs[-2]
 vault_dupes_tab = (
-    tabs[-2]
+    tabs[-3]
     if (
         st.session_state.master_rows
         or st.session_state.vault_rows
@@ -1926,6 +1953,138 @@ if vault_dupes_tab is not None:
                 file_name=f"{slug}-duplicates.csv",
                 mime="text/csv",
             )
+
+with scope_status_tab:
+    st.caption(
+        "Every database on the scope list, once, and where it is now. Read "
+        "from the lists this run was made with, so it always matches the "
+        "Results tab."
+    )
+    run_info = next(
+        (r for r in store.runs() if r.id == st.session_state.get("run_id")), None
+    )
+    if run_info is None or run_info.scope_snapshot_id is None:
+        st.info(
+            "This run had no scope list, so there is nothing to list. Load "
+            "step 2 **Scope** and press **Run reconciliation**. For the whole "
+            "estate, use the Report tab's *Everything on prem*."
+        )
+    else:
+        status_rows = scope_status(
+            store.load_snapshot(run_info.scope_snapshot_id),
+            store.load_snapshot(run_info.master_snapshot_id),
+            (
+                store.load_snapshot(run_info.target_snapshot_id)
+                if run_info.target_snapshot_id is not None
+                else None
+            ),
+            (
+                store.load_snapshot(run_info.vault_snapshot_id)
+                if run_info.vault_snapshot_id is not None
+                else None
+            ),
+        )
+
+        gap_threshold = st.number_input(
+            "Flag a size gap above (%)",
+            min_value=0.0,
+            value=1.0,
+            step=0.5,
+            key="scope_status_gap",
+            help=(
+                "Data Vault size against on-prem size. Shown only when both "
+                "are known."
+            ),
+        )
+
+        by_status = {
+            s: sum(1 for r in status_rows if r.status is s) for s in ScopeStatus
+        }
+        tiles = st.columns(len(ScopeStatus))
+        for tile, (status, count) in zip(tiles, by_status.items(), strict=True):
+            tile.metric(status.value, f"{count:,}")
+
+        def _gb_total(values: list[float | None]) -> str:
+            known = [v for v in values if v is not None]
+            text = f"{sum(known) / 1000.0:,.1f} GB"
+            return text if len(known) == len(values) else f"at least {text}"
+
+        flagged = sum(1 for r in status_rows if r.gap_flagged(gap_threshold))
+        archived_rows = [r for r in status_rows if r.status is ScopeStatus.ARCHIVED]
+        st.caption(
+            f"**{len(status_rows):,}** scoped databases. On prem: "
+            f"{_gb_total([r.size_mb for r in status_rows if r.on_prem])}. "
+            f"In Data Vault: {_gb_total([r.vault_size_mb for r in archived_rows])}. "
+            f"**{flagged:,}** with a size gap over {gap_threshold:g}%."
+        )
+
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            shown = st.multiselect(
+                "Status",
+                [s.value for s in ScopeStatus],
+                default=[s.value for s in ScopeStatus],
+                key="scope_status_filter",
+            )
+            only_gaps = st.checkbox(
+                "Only size gaps over the threshold", key="scope_status_gaps"
+            )
+        visible = [
+            r
+            for r in status_rows
+            if r.status.value in shown
+            and (not only_gaps or r.gap_flagged(gap_threshold))
+        ]
+
+        def _gb(mb: float | None) -> float | None:
+            return None if mb is None else mb / 1000.0
+
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Database name": r.name,
+                        "Server": r.server,
+                        "On prem": "Yes" if r.on_prem else "Missing",
+                        "Size on prem (GB)": _gb(r.size_mb),
+                        "In Data Vault": r.in_vault,
+                        "Archives": r.archives,
+                        "Data Vault size (GB)": _gb(r.vault_size_mb),
+                        "Size gap %": r.size_gap_pct,
+                        "Gap flagged": r.gap_flagged(gap_threshold),
+                        "Created in Data Vault": r.created_at,
+                        "Created by": (
+                            f"{r.created_by} (automation)" if r.automated else r.created_by
+                        ),
+                        "Data Bridge": r.bridge,
+                        "Status": r.status.value,
+                    }
+                    for r in visible
+                ],
+                columns=[
+                    "Database name", "Server", "On prem", "Size on prem (GB)",
+                    "In Data Vault", "Archives", "Data Vault size (GB)",
+                    "Size gap %", "Gap flagged", "Created in Data Vault",
+                    "Created by", "Data Bridge", "Status",
+                ],
+            ),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Size on prem (GB)": st.column_config.NumberColumn(format="%.2f"),
+                "Data Vault size (GB)": st.column_config.NumberColumn(format="%.2f"),
+                "Size gap %": st.column_config.NumberColumn(format="%+.1f%%"),
+            },
+        )
+        st.caption(
+            f"Showing {len(visible):,} of {len(status_rows):,}. The download "
+            "has every row, sizes in MB."
+        )
+        st.download_button(
+            "Download scope status (CSV)",
+            data=scope_status_to_csv(status_rows, gap_threshold),
+            file_name=f"scope-status-run-{run_info.id}-{run_info.ran_at[:10]}.csv",
+            mime="text/csv",
+        )
 
 with report_tab:
     st.caption(
