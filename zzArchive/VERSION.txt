@@ -1,3 +1,3 @@
-source commit : 492b912084544dfaea76c85a29a2cdd53665283c
-               feat: upload speed report from the registry's upload log, published for the VM (TASK-0125)
+source commit : 67d785089831513cc59981fed06af70fcd724659
+               feat: diagnostic per-part read/DB-write timing behind a flag (TASK-0125)
 files         : 92

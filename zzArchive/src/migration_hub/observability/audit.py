@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Iterator
@@ -16,6 +17,9 @@ from migration_hub.core.models import ApiTransaction, MigrationFile
 from migration_hub.core.scrub import scrub_credentials
 from migration_hub.observability.endpoints import endpoint_key
 from migration_hub.observability.redaction import redact_mapping, redact_text
+
+def debug_timing_enabled() -> bool:
+    return os.environ.get("MIGRATION_HUB_DEBUG_TIMING") == "1"
 
 def _serialize(body: object | None) -> str | None:
     if body is None:
@@ -72,6 +76,7 @@ def audited_call(
         raise
     finally:
         duration_ms = int((time.monotonic() - start) * 1000)
+        db_started = time.monotonic()
         record_call(
             engine=engine,
             file_id=file_id,
@@ -83,6 +88,9 @@ def audited_call(
             duration_ms=duration_ms,
             correlation_id=record.correlation_id,
         )
+        if debug_timing_enabled():
+            db_ms = (time.monotonic() - db_started) * 1000
+            _log.info("audit write file=%s method=%s db_ms=%.0f", file_id, method, db_ms)
         _log_call(
             file_id=file_id,
             method=method,

@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 492b912084544dfaea76c85a29a2cdd53665283c
+# source commit: 67d785089831513cc59981fed06af70fcd724659
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml
@@ -42,7 +42,7 @@ code	35	1	5384bfdb2df380b6557cc7a71d16891415bccaa87699406e236f752c6415389f	src/m
 code	15886	437	e3e25280a8ba620d6bdde9e0bdf047aaa4996130ca1d55e64f85e5eea23babd1	src/migration_hub/adapters/databridge/client.py
 code	2437	77	6df28f01bd19f24f343575c4b8240a4f00ffea336cedb026a0960e08a9e7db25	src/migration_hub/adapters/databridge/errors.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/adapters/storage/__init__.py
-code	10102	316	223e884ab3d432ba11031bc8450cf362e6718d07ed7b372ed83985ed8c888d56	src/migration_hub/adapters/storage/databridge_uploader.py
+code	10522	326	b96da18c3a7825867d9dab8abd669a6aef30cbec01d572e16167c7664b5bc8b7	src/migration_hub/adapters/storage/databridge_uploader.py
 code	676	23	41a2424170e15def1f433fcad7e4c512dd5b59fb6366072392871a0e29441a12	src/migration_hub/adapters/storage/s3_uploader.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/api/__init__.py
 code	339	12	e06af012a9b496bc172a6d36cb7efade87db01df42cf1b61a559f33e7dcc08a4	src/migration_hub/api/deps.py
@@ -67,7 +67,7 @@ code	1434	41	0ae8263a84d530c8897957b38d4c4c5d6772ee79b4317425c09fd5e4e0c9a21a	sr
 code	781	29	472b2625664100d0c4611312ef93ecb49f699aba30bb2ed611e8b2c7c3325ba0	src/migration_hub/core/scrub.py
 code	2817	82	c185c415e9d155b2e17b8e06444773ea86c0c1aa6708926dae2d956e6d670e77	src/migration_hub/core/states.py
 code	1	1	01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b	src/migration_hub/observability/__init__.py
-code	5850	183	87d6efc70560dc73006622200e99dea1b81ac740f32bf6bf330e76ad0dd403b8	src/migration_hub/observability/audit.py
+code	6182	191	826dd52c6c4113e135513bfb9a287fe692589ce36bcb88c0e50fa0334c0a77d0	src/migration_hub/observability/audit.py
 code	5581	204	555871fec4c4d2bdc5ae20eb376eb36c7ac14b665d5b44906891be75c41b9ae2	src/migration_hub/observability/audit_export.py
 code	13433	388	8fae5730e2a2ba6ac655c74ec8e4ec716ff39a6ece4ca2d57cdde62d5fedc80b	src/migration_hub/observability/controls.py
 code	941	32	c4cc7d5a2da6dc637f596a500439cd08aeddbd656b0f9724491d1a43d944f169	src/migration_hub/observability/endpoints.py

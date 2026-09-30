@@ -19,7 +19,7 @@ from migration_hub.adapters.databridge.errors import (
 )
 from migration_hub.adapters.storage.s3_uploader import multipart_chunksize
 from migration_hub.core.retry import retry_call
-from migration_hub.observability.audit import maybe_audited_call
+from migration_hub.observability.audit import debug_timing_enabled, maybe_audited_call
 
 _UPLOAD_TIMEOUT_SECONDS = 3600.0
 
@@ -158,11 +158,14 @@ def upload_multipart(
     started = clock()
     sent = 0
 
+    debug_timing = debug_timing_enabled()
     etags: dict[int, str] = {}
     with source.open("rb") as handle:
         part_number = 1
         while True:
+            read_started = time.monotonic()
             data = handle.read(chunk)
+            read_ms = (time.monotonic() - read_started) * 1000
             if not data:
                 break
             etag = _put_part_with_url_refresh(
@@ -180,6 +183,13 @@ def upload_multipart(
             )
             etags[part_number] = etag
             sent += len(data)
+            if debug_timing:
+                _log.info(
+                    "file %s part %d read_ms=%.0f",
+                    file_id if file_id is not None else "-",
+                    part_number,
+                    read_ms,
+                )
             _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
             _report(on_progress, sent)
             part_number += 1
