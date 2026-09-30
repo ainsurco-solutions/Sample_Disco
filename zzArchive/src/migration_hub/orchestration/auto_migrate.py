@@ -13,6 +13,7 @@ from migration_hub.observability import controls
 from migration_hub.orchestration import archiver
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.orchestration.batches import (
+    close_batch_if_done,
     place_by_location,
     platform_locator,
     workers_for,
@@ -239,6 +240,7 @@ def run_automated_migration(
         _log("run is CLEAN -- signing off automatically")
         controls.sign_off(registry=registry, run_id=closed.run_id, by=AUTO_SIGN_OFF_ACTOR)
         signed_off = True
+        close_batch_if_done(registry=registry, batch_id=batch_id, log=_log)
     else:
         _log(f"run is {closed.status.value} -- needs a human to review and sign off")
 

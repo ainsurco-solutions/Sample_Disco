@@ -231,6 +231,18 @@ def mark_done(*, registry: Registry, batch_id: str) -> None:
         raise ExitCriteriaNotMetError(batch_id, reasons)
     registry.set_batch_state(batch_id=batch_id, state=BatchState.DONE)
 
+def close_batch_if_done(
+    *, registry: Registry, batch_id: str, log: Callable[[str], None] | None = None
+) -> bool:
+    emit = log or (lambda _message: None)
+    ok, reasons = exit_criteria_met(registry=registry, batch_id=batch_id)
+    if ok:
+        mark_done(registry=registry, batch_id=batch_id)
+        emit(f"batch {batch_id!r} marked DONE")
+        return True
+    emit(f"batch {batch_id!r} not yet done: {'; '.join(reasons)}")
+    return False
+
 @dataclass(frozen=True, slots=True)
 class WorkerHandle:
 

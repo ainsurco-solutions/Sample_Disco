@@ -1,3 +1,3 @@
-source commit : 5289fc1ef10f0b8261a374505446ac061b68219a
-               docs: VM-SETUP -- read-only SQL queries to scope a per-file database sanity check
+source commit : 2a6bf018e935a87c7153be90ef2398146faa6148
+               fix: share close-batch-if-done between auto and manual sign-off (TASK-0124)
 files         : 91

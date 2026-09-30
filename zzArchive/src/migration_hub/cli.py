@@ -592,12 +592,7 @@ def controls_sign_off(
     _close_batch_if_done(registry, record.batch_id)
 
 def _close_batch_if_done(registry: Registry, batch_id: str) -> None:
-    ok, reasons = batches.exit_criteria_met(registry=registry, batch_id=batch_id)
-    if ok:
-        batches.mark_done(registry=registry, batch_id=batch_id)
-        typer.echo(f"batch {batch_id!r} marked DONE")
-    else:
-        typer.echo(f"batch {batch_id!r} not yet done: {'; '.join(reasons)}")
+    batches.close_batch_if_done(registry=registry, batch_id=batch_id, log=typer.echo)
 
 @controls_app.command("export")
 def controls_export(
