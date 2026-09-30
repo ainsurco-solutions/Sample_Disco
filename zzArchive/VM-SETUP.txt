@@ -1,4 +1,33 @@
 =======================================================================
+HOW FAST ARE UPLOADS REALLY? -- upload speed report (TASK-0125)
+=======================================================================
+The batch table's Rate is moved GB over the batch's WHOLE elapsed time
+-- upload, import, archive and idle together. This separates them. It
+reads the registry only (opened read-only) and needs no virtualenv.
+Run it on the VM that ran the batches: each registry holds only its own.
+
+--- 1. Upload speed, per file and per hour ----------------------------
+From the AMIGO folder (the one holding .env). It finds the registry
+from MIGRATION_HUB_DATABASE_URL in .env; add --db <path> to override.
+
+python scripts\measure_uploads.py BATCH10 BATCH11 b3-33586203 | Tee-Object measure-uploads.txt
+
+  No batch ids -> every batch in the registry.
+  Paste measure-uploads.txt back into TASK-0125.
+
+  wireMB/s / GB/h  the network's own speed (bytes / time inside PUTs)
+  busy%            share of the upload spent actually sending
+  urlGET s         time spent asking Moody's for each part's URL
+  badPUT           failed part PUTs (retried)
+  imp+arch h       upload finished -> archived: the Moody's side
+
+--- 2. How fast can we READ from the share? ----------------------------
+Reads the first 5 GB of one large .bak and prints MB/s. Replace the
+path. If this is close to wireMB/s above, the share is the limit.
+
+python -c "import time;f=open(r'\\sriskpd0101\Backup\...\BIG.bak','rb');t=time.time();n=sum(len(f.read(64<<20)) for _ in range(80));print(f'{n/2**20/(time.time()-t):.0f} MB/s read')"
+
+=======================================================================
 IS A RUN STILL WORKING? -- PowerShell checks (resmon is blocked here)
 =======================================================================
 For when a batch shows files in UPLOADING (or the Live log says "quiet

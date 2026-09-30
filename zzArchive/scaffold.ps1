@@ -92,6 +92,7 @@ $Files = @(
     'scripts/check_credentials.py'
     'scripts/probe_job_queue.py'
     'scripts/check_copy.py'
+    'scripts/measure_uploads.py'
     'scaffold.ps1'
     'VM-SETUP.txt'
     'scripts/check_copy.bat'
