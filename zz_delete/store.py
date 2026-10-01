@@ -135,6 +135,7 @@ class PurgeReport:
     result_rows_deleted: int
     snapshot_rows_deleted: int
     runs_kept: tuple[int, ...] = ()
+    compact_error: str = ""
 
     @property
     def nothing_to_do(self) -> bool:
@@ -690,9 +691,10 @@ class Store:
                         orphan_snapshots,
                     )
 
+        compact_error = ""
         if not dry_run:
             self._conn.commit()
-            self._conn.execute("VACUUM")
+            compact_error = self.compact()
 
         return PurgeReport(
             runs_deleted=len(doomed),
@@ -700,4 +702,16 @@ class Store:
             result_rows_deleted=results_deleted,
             snapshot_rows_deleted=snapshot_rows_deleted,
             runs_kept=survivors,
+            compact_error=compact_error,
         )
+
+    def compact(self, timeout: float = 60) -> str:
+        try:
+            if self.path == ":memory:":
+                self._conn.execute("VACUUM")
+            else:
+                with closing(sqlite3.connect(self.path, timeout=timeout)) as conn:
+                    conn.execute("VACUUM")
+        except sqlite3.OperationalError as exc:
+            return str(exc)
+        return ""

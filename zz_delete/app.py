@@ -1371,11 +1371,44 @@ with st.sidebar:
             st.warning(f"Would delete {preview.summary()}. This cannot be undone.")
             confirm = st.checkbox("Yes, delete them", key="purge_confirm")
             if st.button("Purge", disabled=not confirm, width="stretch"):
-                report = store.thin() if keep is None else store.purge(int(keep))
+                with st.spinner(
+                    "Deleting runs, then compacting the file. This can take "
+                    "several minutes on a large store; leave the page open."
+                ):
+                    report = store.thin() if keep is None else store.purge(int(keep))
                 if st.session_state.run_id not in report.runs_kept:
                     st.session_state.result = None
                     st.session_state.run_id = None
-                st.success(f"Deleted {report.summary()}.")
+                st.session_state.purge_message = (
+                    f"Deleted {report.summary()}.",
+                    report.compact_error,
+                )
+                st.rerun()
+
+        message = st.session_state.pop("purge_message", None)
+        if message:
+            done, compact_error = message
+            st.success(done)
+            if compact_error:
+                st.warning(
+                    f"The file was not compacted ({compact_error}), so it is "
+                    "no smaller yet. Nothing is lost -- press Compact file below."
+                )
+
+        st.caption(
+            f"File size: {DEFAULT_DB_PATH.stat().st_size / 1024**2:,.0f} MB"
+            if DEFAULT_DB_PATH.exists()
+            else ""
+        )
+        if st.button("Compact file", width="stretch", help=(
+            "Gives the space freed by deleted runs back to the disk. Needs free "
+            "disk roughly the file's size, and can take several minutes."
+        )):
+            with st.spinner("Compacting the file. Leave the page open."):
+                error = store.compact()
+            if error:
+                st.error(f"Not compacted: {error}. Try again in a moment.")
+            else:
                 st.rerun()
 
 _title_col, _deadline_col = st.columns([3, 1])
