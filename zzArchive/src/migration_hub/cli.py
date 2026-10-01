@@ -18,6 +18,7 @@ from migration_hub.observability import audit_export, controls
 from migration_hub.observability import logging as hub_logging
 from migration_hub.orchestration import (
     archiver,
+    batch_lock,
     batches,
     queue_check,
     reaper,
@@ -25,10 +26,12 @@ from migration_hub.orchestration import (
     scheduler,
 )
 from migration_hub.orchestration.auto_migrate import (
+    AutoMigrationResult,
     SourceFolderError,
     check_source_folder,
     run_automated_migration,
 )
+from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
 
 load_dotenv()
@@ -60,6 +63,7 @@ def _adapter(settings: Settings) -> DatabridgeAdapter:
         inline_retry_max_seconds=settings.inline_retry_max_seconds,
         part_url_refresh_attempts=settings.part_url_refresh_attempts,
         read_ahead=settings.upload_read_ahead,
+        multipart_threshold_bytes=settings.multipart_threshold_mb * 1024**2,
     )
 
 @app.command()
@@ -173,27 +177,22 @@ def migrate(
 
     registry = _registry(settings)
 
-    result = run_automated_migration(
-        registry=registry,
-        adapter_factory=lambda: _adapter(settings),
-        source_root=source,
-        batch_id=batch,
-        pattern=settings.file_pattern,
-        max_files=max_files,
-        thread_count=settings.effective_worker_ceiling,
-        initial_workers=max(1, settings.max_concurrent_uploads),
-        claim_heartbeat_seconds=settings.claim_heartbeat_seconds,
-        dry_run=settings.dry_run,
-        max_attempts=settings.max_attempts,
-        poll_interval_seconds=settings.poll_interval_seconds,
-        max_poll_minutes=settings.max_poll_minutes,
-        instance_name=settings.databridge_instance_name,
-        instances=settings.databridge_instances,
-        group_ids=settings.databridge_group_ids,
-        max_archive_attempts=settings.max_archive_attempts,
-        compute_checksum=settings.compute_checksums,
-        on_progress=lambda message: typer.echo(message),
-    )
+    if batch is not None:
+        lock_id = batch
+    else:
+        assert source is not None
+        lock_id = derive_batch_id(source)
+    try:
+        with batch_lock.hold(lock_id):
+            result = _migrate(settings, registry, source=source, batch=batch, max_files=max_files)
+    except batch_lock.BatchBusyError as exc:
+        typer.secho(
+            f"{exc} -- not starting a second one. It picks up any files sent back "
+            "to VALIDATED itself; if it has stopped, run this again.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        raise typer.Exit(1) from exc
 
     typer.echo("")
     breakdown = ", ".join(f"{count} {state}" for state, count in sorted(result.outcomes.items()))
@@ -216,6 +215,36 @@ def migrate(
             f"--run-id {result.run_id}` once dispositioned",
             fg=typer.colors.YELLOW,
         )
+
+def _migrate(
+    settings: Settings,
+    registry: Registry,
+    *,
+    source: Path | None,
+    batch: str | None,
+    max_files: int | None,
+) -> AutoMigrationResult:
+    return run_automated_migration(
+        registry=registry,
+        adapter_factory=lambda: _adapter(settings),
+        source_root=source,
+        batch_id=batch,
+        pattern=settings.file_pattern,
+        max_files=max_files,
+        thread_count=settings.effective_worker_ceiling,
+        initial_workers=max(1, settings.max_concurrent_uploads),
+        claim_heartbeat_seconds=settings.claim_heartbeat_seconds,
+        dry_run=settings.dry_run,
+        max_attempts=settings.max_attempts,
+        poll_interval_seconds=settings.poll_interval_seconds,
+        max_poll_minutes=settings.max_poll_minutes,
+        instance_name=settings.databridge_instance_name,
+        instances=settings.databridge_instances,
+        group_ids=settings.databridge_group_ids,
+        max_archive_attempts=settings.max_archive_attempts,
+        compute_checksum=settings.compute_checksums,
+        on_progress=lambda message: typer.echo(message),
+    )
 
 @app.command()
 def reap() -> None:

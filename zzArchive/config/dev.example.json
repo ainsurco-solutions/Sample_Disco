@@ -42,6 +42,7 @@
   "inline_retry_max_seconds": 60.0,
   "part_url_refresh_attempts": 3,
   "upload_read_ahead": false,
+  "multipart_threshold_mb": 5120,
 
   "compute_checksums": false,
   "dry_run": true

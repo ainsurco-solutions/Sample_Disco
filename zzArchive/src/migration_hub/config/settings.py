@@ -58,6 +58,7 @@ class Settings(BaseModel):
     inline_retry_max_seconds: float = Field(default=60.0, gt=0)
     part_url_refresh_attempts: int = Field(default=3, ge=1)
     upload_read_ahead: bool = False
+    multipart_threshold_mb: int = Field(default=5120, ge=1, le=5120)
 
     scheduler_poll_interval_seconds: float = 60.0
     scheduler_reap_interval_seconds: float = 300.0

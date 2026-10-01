@@ -30,8 +30,8 @@ from migration_hub.core.states import (
     done_states,
 )
 from migration_hub.observability import audit, controls, metrics
+from migration_hub.orchestration import batch_lock, queue_check
 from migration_hub.orchestration import batches as batch_ops
-from migration_hub.orchestration import queue_check
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
 from migration_hub.ui.visual_style import stylesheet
@@ -1276,7 +1276,11 @@ def _add_batch_progress(
 
     with st.container(horizontal=True):
         if state is BatchState.PAUSED:
-            if st.button("Resume", icon=":material/play_circle:"):
+            if st.button(
+                "Resume",
+                icon=":material/play_circle:",
+                disabled=batch_lock.holder(batch_id) is not None,
+            ):
                 batch_ops.resume(registry=registry, batch_id=batch_id)
                 batch_ops.start_to_destination(
                     registry=registry,
@@ -1965,10 +1969,26 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
                 + f"{issues} issue(s)"
             )
 
-        idle = outstanding > 0 and _minutes_since_activity(registry, batch) >= _IDLE_MINUTES
+        running_pid = batch_lock.holder(batch)
+        idle = (
+            outstanding > 0
+            and running_pid is None
+            and _minutes_since_activity(registry, batch) >= _IDLE_MINUTES
+        )
         with st.container(horizontal=True):
             if state is BatchState.PAUSED:
-                if st.button("Resume", icon=":material/play_circle:", key=f"resume_{batch}"):
+                if st.button(
+                    "Resume",
+                    icon=":material/play_circle:",
+                    key=f"resume_{batch}",
+                    disabled=running_pid is not None,
+                    help=(
+                        f"The paused pipeline (pid {running_pid}) is still finishing the "
+                        "files it holds. Resume once it has stopped."
+                        if running_pid is not None
+                        else None
+                    ),
+                ):
                     batch_ops.resume(registry=registry, batch_id=batch)
                     _launch_continue(registry, settings, batch)
             else:

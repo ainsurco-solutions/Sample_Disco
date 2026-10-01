@@ -74,6 +74,7 @@ class DatabridgeAdapter:
         inline_retry_max_seconds: float = 30.0,
         part_url_refresh_attempts: int = 1,
         read_ahead: bool = False,
+        multipart_threshold_bytes: int | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._host = host
@@ -86,6 +87,7 @@ class DatabridgeAdapter:
         self._inline_retry_max_seconds = inline_retry_max_seconds
         self._part_url_refresh_attempts = part_url_refresh_attempts
         self._read_ahead = read_ahead
+        self._multipart_threshold_bytes = multipart_threshold_bytes
         self._sleep = sleep
 
     def close(self) -> None:
@@ -131,8 +133,12 @@ class DatabridgeAdapter:
             raise ValueError(f"unsupported file_extension: {file_extension!r}")
         format_code = _FORMAT_CODES[file_extension]
         file_size = source.stat().st_size
+        threshold = min(
+            self._multipart_threshold_bytes or LARGE_FILE_THRESHOLD_BYTES,
+            LARGE_FILE_THRESHOLD_BYTES,
+        )
 
-        if file_size < LARGE_FILE_THRESHOLD_BYTES:
+        if file_size < threshold:
             self._upload_small(
                 instance_name=instance_name,
                 database_name=database_name,

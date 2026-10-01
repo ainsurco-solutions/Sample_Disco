@@ -1,3 +1,3 @@
-source commit : 31e58941734a1385f793e248bc4d597c64f8ce0b
-               feat: Reconcile thins run history and reuses unchanged snapshots (TASK-0129)
-files         : 92
+source commit : 918165b55a30594af6e8baf3695de62d600e30a2
+               fix: one pipeline per batch, and multipart below 5 GB behind a setting (TASK-0131, TASK-0132)
+files         : 93
