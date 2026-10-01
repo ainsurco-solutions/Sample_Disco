@@ -1,3 +1,3 @@
-source commit : 0532deaf88ab72ad05c0cbce6fc08ed688a6b100
-               docs: plan resuming a large-file upload from the first missing part (TASK-0128)
+source commit : 31e58941734a1385f793e248bc4d597c64f8ce0b
+               feat: Reconcile thins run history and reuses unchanged snapshots (TASK-0129)
 files         : 92

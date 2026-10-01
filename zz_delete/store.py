@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from reconcile import Outcome, Reconciliation, ResultRow, Row, SizeEntry, fingerprint
@@ -23,7 +23,12 @@ CREATE TABLE IF NOT EXISTS snapshot (
     key_column  TEXT    NOT NULL DEFAULT '',
     fingerprint TEXT    NOT NULL DEFAULT '',
     loaded_at   TEXT    NOT NULL,
-    row_count   INTEGER NOT NULL
+    row_count   INTEGER NOT NULL,
+    -- Digest of every row's name and data, not just the names the
+    -- fingerprint covers: it decides whether a new load can reuse this
+    -- snapshot, and a changed status column must not be reused (TASK-0129).
+    -- Empty on snapshots saved before it existed; those are never reused.
+    content_hash TEXT   NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS snapshot_row (
@@ -46,7 +51,9 @@ CREATE TABLE IF NOT EXISTS run (
     vault_snapshot_id  INTEGER          REFERENCES snapshot(id),
     scope_snapshot_id  INTEGER          REFERENCES snapshot(id),
     ran_at             TEXT    NOT NULL,
-    note               TEXT    NOT NULL DEFAULT ''
+    note               TEXT    NOT NULL DEFAULT '',
+    -- Marked by the operator: never purged, whichever purge is used.
+    keep               INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS run_result (
@@ -94,6 +101,15 @@ def _combine(*fingerprints: str) -> str:
         digest.update(value.encode("utf-8"))
         digest.update(b"\x00")
     return digest.hexdigest()
+
+def _content_hash(serialised: Sequence[tuple[str, str]]) -> str:
+    digest = hashlib.blake2b(digest_size=16)
+    for name, data in serialised:
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(data.encode("utf-8"))
+        digest.update(b"\x00")
+    return f"{len(serialised)}:{digest.hexdigest()}"
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -147,6 +163,7 @@ class RunInfo:
     target_count: int = 0
     vault_count: int | None = None
     fingerprint: str = ""
+    keep: bool = False
 
     @property
     def inputs(self) -> str:
@@ -264,6 +281,26 @@ class Store:
             self._conn.execute("PRAGMA legacy_alter_table = OFF")
             self._conn.execute("PRAGMA foreign_keys = ON")
 
+        with closing(self._conn.cursor()) as cur:
+            cur.execute("PRAGMA table_info(snapshot)")
+            snapshot_columns = {r["name"] for r in cur.fetchall()}
+            cur.execute("PRAGMA table_info(run)")
+            run_columns = {r["name"] for r in cur.fetchall()}
+            if "content_hash" not in snapshot_columns:
+                cur.execute(
+                    "ALTER TABLE snapshot ADD COLUMN content_hash TEXT "
+                    "NOT NULL DEFAULT ''"
+                )
+            if "keep" not in run_columns:
+                cur.execute(
+                    "ALTER TABLE run ADD COLUMN keep INTEGER NOT NULL DEFAULT 0"
+                )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_snapshot_content "
+                "ON snapshot(side, content_hash)"
+            )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()
 
@@ -285,11 +322,23 @@ class Store:
             raise ValueError(f"side must be one of {SIDES}, not {side!r}")
         if not key_column and rows:
             key_column = rows[0].data.get("_key_column", "")
+        serialised = [(row.name, json.dumps(row.data)) for row in rows]
+        content = _content_hash(serialised)
         with closing(self._conn.cursor()) as cur:
             cur.execute(
+                "SELECT id FROM snapshot WHERE side = ? AND content_hash = ? "
+                "AND label = ? AND source = ? AND key_column = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (side, content, label, source, key_column),
+            )
+            existing = cur.fetchone()
+            if existing:
+                return int(existing["id"])
+            cur.execute(
                 "INSERT INTO snapshot "
-                "(side, label, source, key_column, fingerprint, loaded_at, row_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(side, label, source, key_column, fingerprint, loaded_at, "
+                "row_count, content_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     side,
                     label,
@@ -298,12 +347,13 @@ class Store:
                     fingerprint(rows),
                     _now(),
                     len(rows),
+                    content,
                 ),
             )
             snapshot_id = int(cur.lastrowid or 0)
             cur.executemany(
                 "INSERT INTO snapshot_row (snapshot_id, name, data) VALUES (?, ?, ?)",
-                [(snapshot_id, row.name, json.dumps(row.data)) for row in rows],
+                [(snapshot_id, name, data) for name, data in serialised],
             )
         self._conn.commit()
         return snapshot_id
@@ -501,6 +551,7 @@ class Store:
                     target_count=r["target_count"],
                     vault_count=r["vault_count"],
                     fingerprint=_combine(r["mfp"], r["tfp"], r["vfp"]),
+                    keep=bool(r["keep"]),
                 )
                 for r in cur.fetchall()
             ]
@@ -518,23 +569,79 @@ class Store:
         )
         return {"appeared": appeared, "disappeared": disappeared, "changed": changed}
 
+    def set_keep(self, run_id: int, keep: bool) -> None:
+        self._conn.execute(
+            "UPDATE run SET keep = ? WHERE id = ?", (1 if keep else 0, run_id)
+        )
+        self._conn.commit()
+
     def purge_preview(self, keep: int) -> PurgeReport:
         return self._purge(keep, dry_run=True)
 
     def purge(self, keep: int) -> PurgeReport:
         return self._purge(keep, dry_run=False)
 
+    def thin_preview(self, now: datetime | None = None) -> PurgeReport:
+        return self._delete_runs(self._thin_doomed(now), dry_run=True)
+
+    def thin(self, now: datetime | None = None) -> PurgeReport:
+        return self._delete_runs(self._thin_doomed(now), dry_run=False)
+
+    def _thin_doomed(self, now: datetime | None) -> list[int]:
+        now = now or datetime.now(UTC)
+        recent_from = now - timedelta(hours=24)
+        with closing(self._conn.cursor()) as cur:
+            cur.execute(
+                "SELECT id, ran_at, keep, master_snapshot_id, target_snapshot_id, "
+                "vault_snapshot_id, scope_snapshot_id FROM run ORDER BY id DESC"
+            )
+            runs = cur.fetchall()
+
+        doomed: list[int] = []
+        days_covered: set[str] = set()
+        newer_inputs: tuple[int | None, ...] | None = None
+        for index, r in enumerate(runs):
+            inputs = (
+                r["master_snapshot_id"],
+                r["target_snapshot_id"],
+                r["vault_snapshot_id"],
+                r["scope_snapshot_id"],
+            )
+            ran_at = datetime.fromisoformat(r["ran_at"])
+            if ran_at.tzinfo is None:
+                ran_at = ran_at.replace(tzinfo=UTC)
+            ran_at = ran_at.astimezone(UTC)
+
+            if ran_at >= recent_from:
+                keep = index == 0 or bool(r["keep"]) or inputs != newer_inputs
+            else:
+                day = ran_at.date().isoformat()
+                keep = index == 0 or bool(r["keep"]) or day not in days_covered
+                if keep:
+                    days_covered.add(day)
+            if not keep:
+                doomed.append(r["id"])
+            newer_inputs = inputs
+        return doomed
+
     def _purge(self, keep: int, *, dry_run: bool) -> PurgeReport:
         if keep < 0:
             raise ValueError(f"keep must be 0 or more, not {keep}")
+        with closing(self._conn.cursor()) as cur:
+            cur.execute("SELECT id, keep FROM run ORDER BY id DESC")
+            older = cur.fetchall()[keep:]
+        return self._delete_runs(
+            [r["id"] for r in older if not r["keep"]], dry_run=dry_run
+        )
 
+    def _delete_runs(self, doomed: list[int], *, dry_run: bool) -> PurgeReport:
         with closing(self._conn.cursor()) as cur:
             cur.execute("SELECT id FROM run ORDER BY id DESC")
-            all_runs = [r["id"] for r in cur.fetchall()]
-            doomed = all_runs[keep:]
+            doomed_set = set(doomed)
+            survivors = tuple(r["id"] for r in cur.fetchall() if r["id"] not in doomed_set)
 
             if not doomed:
-                return PurgeReport(0, 0, 0, 0, tuple(all_runs))
+                return PurgeReport(0, 0, 0, 0, survivors)
 
             placeholders = _placeholders(len(doomed))
 
@@ -550,6 +657,7 @@ class Store:
                 f"({placeholders})"
                 "  UNION SELECT target_snapshot_id FROM run WHERE id NOT IN "
                 f"({placeholders})"
+                "    AND target_snapshot_id IS NOT NULL"
                 "  UNION SELECT vault_snapshot_id FROM run WHERE id NOT IN "
                 f"({placeholders})"
                 "    AND vault_snapshot_id IS NOT NULL"
@@ -591,5 +699,5 @@ class Store:
             snapshots_deleted=len(orphan_snapshots),
             result_rows_deleted=results_deleted,
             snapshot_rows_deleted=snapshot_rows_deleted,
-            runs_kept=tuple(all_runs[:keep]),
+            runs_kept=survivors,
         )

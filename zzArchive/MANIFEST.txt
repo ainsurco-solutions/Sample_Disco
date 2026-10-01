@@ -1,5 +1,5 @@
 # AMIGO published manifest -- generated, do not edit.
-# source commit: 0532deaf88ab72ad05c0cbce6fc08ed688a6b100
+# source commit: 31e58941734a1385f793e248bc4d597c64f8ce0b
 # kind	size	lines	sha256	path
 config	3413	68	cefb737466bc6973c3f8d9a90eec8dc6177840f6f4ba8774c33467db63a191f3	.env.example
 config	3373	107	0371776da867fadd2912c4376bdc6efb22801768457f08b1693f4e5f2aa66ded	.streamlit/config.teal.toml

@@ -1305,25 +1305,38 @@ with st.sidebar:
     with st.expander("Purge old runs"):
         st.caption(
             "Every press of Reconcile stores a new run, so the file grows with "
-            "clicks as much as with new data. This deletes all but the most "
-            "recent runs, and the snapshots nothing else is using."
+            "clicks as much as with new data. Runs marked to keep under "
+            "Earlier runs are never deleted."
         )
-        keep = st.number_input(
-            "Runs to keep",
-            min_value=0,
-            max_value=max(run_count, 1),
-            value=min(5, run_count) if run_count else 0,
-            step=1,
-            help="0 empties the store entirely.",
+        mode = st.radio(
+            "What to keep",
+            ["Thin history", "Keep the last N"],
+            key="purge_mode",
+            help=(
+                "Thin history keeps every distinct run from the last 24 hours "
+                "and the last run of each day before that."
+            ),
         )
-        preview = store.purge_preview(int(keep))
+        if mode == "Thin history":
+            keep = None
+            preview = store.thin_preview()
+        else:
+            keep = st.number_input(
+                "Runs to keep",
+                min_value=0,
+                max_value=max(run_count, 1),
+                value=min(5, run_count) if run_count else 0,
+                step=1,
+                help="0 deletes every run not marked to keep.",
+            )
+            preview = store.purge_preview(int(keep))
         if preview.nothing_to_do:
             st.caption("Nothing to purge at that setting.")
         else:
             st.warning(f"Would delete {preview.summary()}. This cannot be undone.")
             confirm = st.checkbox("Yes, delete them", key="purge_confirm")
             if st.button("Purge", disabled=not confirm, width="stretch"):
-                report = store.purge(int(keep))
+                report = store.thin() if keep is None else store.purge(int(keep))
                 if st.session_state.run_id not in report.runs_kept:
                     st.session_state.result = None
                     st.session_state.run_id = None
@@ -2677,6 +2690,7 @@ with report_tab:
                             f"{'—' if r.vault_count is None else r.vault_count}"
                         ),
                         "Inputs": r.fingerprint,
+                        "Kept": "✓" if r.keep else "",
                         "Viewing": "←" if r.id == st.session_state.run_id else "",
                     }
                     for r in history
@@ -2701,6 +2715,14 @@ with report_tab:
                 st.session_state.result = store.load_run(int(chosen_run))
                 st.session_state.run_id = int(chosen_run)
                 st.session_state.outcome_filter = None
+                st.rerun()
+            chosen_info = next(r for r in history if r.id == chosen_run)
+            if st.button(
+                "Unmark" if chosen_info.keep else "Mark to keep",
+                width="stretch",
+                help="A run marked to keep is never purged.",
+            ):
+                store.set_keep(int(chosen_run), not chosen_info.keep)
                 st.rerun()
         with earlier_col:
             earlier = st.selectbox(
