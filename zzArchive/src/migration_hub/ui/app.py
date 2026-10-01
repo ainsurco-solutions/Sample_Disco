@@ -30,7 +30,7 @@ from migration_hub.core.states import (
     done_states,
 )
 from migration_hub.observability import audit, controls, metrics
-from migration_hub.orchestration import batch_lock, queue_check
+from migration_hub.orchestration import batch_lock, bridged_list, queue_check
 from migration_hub.orchestration import batches as batch_ops
 from migration_hub.orchestration.batch_identity import derive_batch_id
 from migration_hub.producers import scanner, validator
@@ -1009,14 +1009,102 @@ def _render_add_batch_select(registry: Registry, settings: Settings, wiz: _AddBa
     wiz["destination"] = str(destination)
     mode = st.radio(
         "Mode",
-        ["Automated folder migration", "Advanced selected-file batch"],
+        [
+            "Automated folder migration",
+            "Advanced selected-file batch",
+            "From a list -- already on Data Bridge",
+        ],
         horizontal=True,
         key="start_migration_mode",
     )
     if mode == "Automated folder migration":
         _render_start_migration_automated(registry, settings, wiz)
         return
+    if mode.startswith("From a list"):
+        _render_start_from_list(registry, settings, wiz)
+        return
     _render_add_batch_manual_select(registry, settings, wiz)
+
+_LIST_DIR = Path("var/lists")
+
+def _render_start_from_list(registry: Registry, settings: Settings, wiz: _AddBatchWizard) -> None:
+    st.caption(
+        "For databases already on Data Bridge -- uploaded by hand or from another "
+        "machine. No local files: each name is looked up in Data Vault, then on every "
+        "Data Bridge instance. Found on Data Bridge, it is archived into Data Vault; "
+        "already in Data Vault, it is marked done. Always to Data Vault, whatever is "
+        "chosen above."
+    )
+    batch_id = str(
+        st.text_input("Batch id", value=wiz.get("batch_id") or _suggest_batch_id(registry))
+    ).strip()
+    uploaded = st.file_uploader(
+        "List of databases",
+        type=["csv", "txt"],
+        help="One database name per line, optionally followed by `,instance` "
+        "(e.g. `databridge-1`). A header row `database_name` is skipped.",
+    )
+    entries: list[bridged_list.ListEntry] = []
+    if uploaded is not None:
+        try:
+            entries = bridged_list.parse_list(uploaded.getvalue().decode("utf-8-sig"))
+        except (UnicodeDecodeError, bridged_list.ListFormatError) as exc:
+            st.error(f"Cannot read the list: {exc}", icon=":material/error:")
+    if entries:
+        taken = registry.taken_exposure_names(names=[e.database_name for e in entries])
+        st.caption(
+            f"**{len(entries)}** name(s) in the list"
+            + (f"; {len(taken)} already in this registry, left as they are." if taken else ".")
+        )
+
+    existing = registry.get_batch(batch_id) if batch_id else None
+    bridge_only = existing is not None and existing.destination != str(BatchDestination.VAULT)
+    if bridge_only:
+        st.warning(
+            f"Batch `{batch_id}` goes to Data Bridge only. Choose another id: a list "
+            "batch goes to Data Vault.",
+            icon=":material/warning:",
+        )
+    disabled = uploaded is None or not entries or not batch_id or bridge_only
+    with st.container(horizontal=True):
+        check = st.button(
+            "Check only",
+            icon=":material/fact_check:",
+            disabled=disabled,
+            help="Look every name up and report where it is. Registers nothing.",
+        )
+        go = st.button(
+            "Register and archive",
+            type="primary",
+            icon=":material/inventory_2:",
+            disabled=disabled,
+        )
+    if not (check or go) or uploaded is None:
+        return
+
+    _LIST_DIR.mkdir(parents=True, exist_ok=True)
+    safe_id = "".join(c if c.isalnum() or c in "._-" else "_" for c in batch_id)
+    list_path = _LIST_DIR / f"{safe_id}-{datetime.now():%Y%m%d-%H%M%S}.txt"
+    list_path.write_bytes(uploaded.getvalue())
+    handle = batch_ops.start_adopt_subprocess(
+        batch_id=batch_id, list_path=list_path, check_only=check, environment=settings.environment
+    )
+    _note_launch(batch_id, "Check list" if check else "Register list and archive", handle)
+    wiz["step"] = "handoff"
+    wiz["batch_id"] = batch_id
+    wiz["summary"] = {
+        "pid": handle.pid,
+        "log_path": str(handle.log_path),
+        "title": (
+            f"List check started for batch `{batch_id}` -- the result per name is in "
+            "its output."
+            if check
+            else f"List handed off for batch `{batch_id}`."
+        ),
+        "source_label": "List",
+        "source_root": uploaded.name,
+    }
+    st.rerun()
 
 def _warn_if_batch_exists(registry: Registry, batch_id: str, source_root: Path) -> None:
     if registry.get_batch(batch_id) is None:
@@ -1326,12 +1414,14 @@ def _render_add_batch_done(wiz: _AddBatchWizard) -> None:
 
 def _render_start_migration_handoff(wiz: _AddBatchWizard) -> None:
     summary: dict[str, object] = wiz.get("summary") or {}
-    st.success(f"Migration handed off for batch `{wiz.get('batch_id')}`.")
+    st.success(
+        str(summary.get("title") or f"Migration handed off for batch `{wiz.get('batch_id')}`.")
+    )
     st.caption(
         "The CLI process keeps running independently of this dialog. The dashboard "
         "will show the batch once the registry has rows for it."
     )
-    st.write(f"Source folder: `{summary.get('source_root', '-')}`")
+    st.write(f"{summary.get('source_label', 'Source folder')}: `{summary.get('source_root', '-')}`")
     st.write(f"Process id: `{summary.get('pid', '-')}`")
     st.write(f"Output: `{summary.get('log_path', '-')}`")
     st.caption(

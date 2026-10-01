@@ -145,6 +145,50 @@ class Registry:
             session.flush()
             return len(new_files)
 
+    def register_found(self, found: Sequence[tuple[MigrationFile, str]], *, actor: str) -> int:
+        allowed = {str(FileState.BRIDGED), str(FileState.COMPLETED)}
+        for file, _ in found:
+            if file.state not in allowed:
+                raise ValueError(f"register_found takes BRIDGED or COMPLETED, not {file.state}")
+        if not found:
+            return 0
+
+        with Session(self._engine) as session, session.begin():
+            existing_paths = set(
+                session.scalars(
+                    select(MigrationFile.source_path).where(
+                        MigrationFile.source_path.in_([f.source_path for f, _ in found])
+                    )
+                )
+            )
+            unseen = [(f, d) for f, d in found if f.source_path not in existing_paths]
+            holders = self._exposure_name_holders(
+                session, names=[f.target_exposure_name for f, _ in unseen]
+            )
+            inserted = 0
+            for file, detail in unseen:
+                if file.target_exposure_name in holders:
+                    _log.warning(
+                        "not registering %s: target name %r is already taken by %s",
+                        file.source_path, file.target_exposure_name,
+                        holders[file.target_exposure_name],
+                    )
+                    continue
+                holders[file.target_exposure_name] = file.source_path
+                session.add(file)
+                session.flush()
+                session.add(
+                    MigrationEvent(
+                        file_id=file.file_id,
+                        from_state=None,
+                        to_state=file.state,
+                        actor=actor,
+                        detail=detail,
+                    )
+                )
+                inserted += 1
+            return inserted
+
     def taken_exposure_names(self, *, names: Sequence[str]) -> dict[str, str]:
         if not names:
             return {}

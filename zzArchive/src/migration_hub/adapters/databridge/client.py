@@ -290,8 +290,11 @@ class DatabridgeAdapter:
         return [_job_from_item(item) for item in body if isinstance(item, dict)]
 
     def database_exists(self, *, instance_name: str, database_name: str) -> bool:
+        return database_name in self.list_databases(instance_name=instance_name)
+
+    def list_databases(self, *, instance_name: str) -> set[str]:
         response = self._request("GET", f"/databridge/v1/sql-instances/{instance_name}/databases")
-        return any(item.get("name") == database_name for item in response.json())
+        return {str(item["name"]) for item in response.json() if item.get("name")}
 
     def archive_database(
         self,

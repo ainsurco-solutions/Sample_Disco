@@ -20,6 +20,7 @@ from migration_hub.orchestration import (
     archiver,
     batch_lock,
     batches,
+    bridged_list,
     queue_check,
     reaper,
     reconciliation,
@@ -245,6 +246,81 @@ def _migrate(
         compute_checksum=settings.compute_checksums,
         on_progress=lambda message: typer.echo(message),
     )
+
+@app.command()
+def adopt(
+    batch: str = typer.Option(..., "--batch"),
+    list_path: Path = typer.Option(..., "--list", help="database_name[,instance_name] per line"),
+    check_only: bool = typer.Option(
+        False, "--check-only", help="Look every name up and report; register nothing."
+    ),
+    start: bool = typer.Option(
+        False, "--start", help="Then start `migrate --batch` to archive them into Data Vault."
+    ),
+    by: str | None = typer.Option(None, "--by", help="Defaults to the current OS user."),
+) -> None:
+    settings = _load_settings()
+    if settings.dry_run:
+        typer.echo(
+            "dry_run is on in the config, which promises no calls to Moody's -- and "
+            "every name has to be looked up. Turn it off to adopt a list.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    try:
+        entries = bridged_list.parse_list(list_path.read_text(encoding="utf-8-sig"))
+    except (OSError, bridged_list.ListFormatError) as exc:
+        typer.echo(f"cannot read {list_path}: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    instances = sorted(
+        set(settings.databridge_instances.values())
+        | ({settings.databridge_instance_name} if settings.databridge_instance_name else set())
+    )
+    registry = _registry(settings)
+    adapter = _adapter(settings)
+    try:
+        findings = bridged_list.check_list(
+            entries, registry=registry, adapter=adapter, instances=instances
+        )
+    finally:
+        adapter.close()
+
+    typer.echo(f"{len(entries)} name(s) checked against Data Vault and {', '.join(instances)}:")
+    for finding in findings:
+        where = f" ({finding.instance_name})" if finding.instance_name else ""
+        why = f" -- {finding.detail}" if finding.detail else ""
+        typer.echo(f"  {finding.entry.database_name}: {finding.outcome}{where}{why}")
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.outcome] = counts.get(finding.outcome, 0) + 1
+    typer.echo("summary: " + ", ".join(f"{n} {o}" for o, n in sorted(counts.items())))
+
+    if check_only:
+        typer.echo("check only -- nothing registered")
+        return
+    try:
+        added = bridged_list.register_findings(
+            findings,
+            registry=registry,
+            batch_id=batch,
+            actor=by or getpass.getuser(),
+            max_concurrency=settings.max_concurrent_uploads,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"registered {added} file(s) into batch {batch!r}")
+
+    if not start:
+        return
+    if registry.pending_archives(batch_id=batch):
+        handle = batches.start_migrate_subprocess(batch_id=batch, environment=settings.environment)
+        typer.echo(
+            f"archiving started in the background (pid {handle.pid}); output: {handle.log_path}"
+        )
+    else:
+        typer.echo("nothing in the batch waits to be archived -- nothing started")
 
 @app.command()
 def reap() -> None:

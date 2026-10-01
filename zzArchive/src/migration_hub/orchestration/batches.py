@@ -519,6 +519,13 @@ def start_migrate_source_subprocess(
         ["migrate", "--source", str(source_root)], f"migrate-{batch_id}", environment
     )
 
+def start_adopt_subprocess(
+    *, batch_id: str, list_path: Path, check_only: bool, environment: str | None = None
+) -> WorkerHandle:
+    args = ["adopt", "--batch", batch_id, "--list", str(list_path)]
+    args.append("--check-only" if check_only else "--start")
+    return _launch_cli(args, f"adopt-{batch_id}", environment)
+
 def start_reap_subprocess(*, environment: str | None = None) -> WorkerHandle:
     return _launch_cli(["reap"], "reap", environment)
 
