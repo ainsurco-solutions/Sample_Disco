@@ -120,12 +120,15 @@ st.markdown(
         border:1px solid rgba(128,128,128,.28); border-radius:8px;
         background:rgba(128,128,128,.06);
       }
+
       .hl-count {
         font-size:1.5rem; font-weight:700; line-height:1.05;
-        font-variant-numeric:tabular-nums;
+        font-variant-numeric:tabular-nums; opacity:.85;
       }
 
       .hl-figure { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
+      .hl-split > span { white-space:nowrap; }
+      .hl-figure > .hl-count { flex:none; white-space:nowrap; }
 
       .hl-split {
         display:inline-flex; flex-direction:column; line-height:1.15;
@@ -138,16 +141,27 @@ st.markdown(
         border-color:rgba(128,128,128,.38);
       }
       .hl-row-primary .hl-count { font-size:2.1rem; }
-      .hl-row-primary .hl-split { font-size:.95rem; }
+
+      .hl-row-primary .hl-split {
+        font-size:.95rem; flex-direction:row; flex-wrap:wrap; column-gap:1rem;
+        flex:1 1 11rem; min-width:0;
+      }
       .hl-row-primary .hl-name { font-size:.95rem; letter-spacing:.01em; }
 
       .hl-good { color:#1e7b34; }
       .hl-warn { color:#b26a00; }
       .hl-bad  { color:#b3261e; }
+
+      .hl-info { color:light-dark(#2F6DB5, #77B7D8); }
       .hl-name {
         font-weight:600; font-size:.88rem; margin-top:.05rem; line-height:1.2;
       }
-      .hl-note { font-size:.74rem; opacity:.6; margin-top:.15rem; line-height:1.25; }
+      .hl-note { font-size:.74rem; opacity:.6; line-height:1.25; }
+
+      .hl-head {
+        display:flex; justify-content:space-between; align-items:baseline;
+        flex-wrap:wrap; column-gap:.75rem; margin-bottom:.2rem;
+      }
 
       .dl { text-align:right; padding-top:1.1rem; line-height:1.35; }
       .dl-today { font-size:.95rem; font-weight:600; }
@@ -159,10 +173,10 @@ st.markdown(
       .dl-warn { color:#b26a00; }
       .dl-bad { color:#b3261e; }
 
-      .hl-volume {
-        font-size:.86rem; font-weight:600; opacity:.78; margin-top:.25rem;
-        font-variant-numeric:tabular-nums;
-      }
+      .hl-volume { margin-top:.2rem; }
+
+      .hl-caveat { font-size:.78rem; font-style:italic; opacity:.65; }
+      .hl-caveat-bad { color:light-dark(#B3261E, #E38B87); opacity:1; }
 
       .sp { padding:0; margin:0 0 .4rem; }
 
@@ -432,28 +446,49 @@ def render_headline_cards(
         title, count, note, tone = card[:4]
         volume = card[4] if len(card) > 4 else ""
         tone_class = f" hl-{tone}" if tone else ""
-        volume_html = (
-            f"<div class='hl-volume'>{html.escape(volume)}</div>"
-            if volume
-            else ""
-        )
         breakdown = card[5] if len(card) > 5 else ""
-        breakdown_html = (
-            "<span class='hl-split'>"
-            + "".join(f"<span>{html.escape(part)}</span>" for part in breakdown.split("\n"))
-            + "</span>"
-            if breakdown
+        size_breakdown = card[6] if len(card) > 6 else ""
+        size_caveat = card[7] if len(card) > 7 else ""
+
+        def split_html(text: str) -> str:
+            if not text:
+                return ""
+            return (
+                "<span class='hl-split'>"
+                + "".join(f"<span>{html.escape(part)}</span>" for part in text.split("\n"))
+                + "</span>"
+            )
+
+        caveat_text, caveat_tone = (
+            size_caveat if isinstance(size_caveat, tuple) else (size_caveat, "")
+        )
+        caveat_html = (
+            f"<span class='hl-caveat{' hl-caveat-bad' if caveat_tone == 'bad' else ''}'>"
+            f"{html.escape(caveat_text)}</span>"
+            if caveat_text
             else ""
         )
+        volume_html = f"<div class='hl-figure'>{caveat_html}</div>" if caveat_html else ""
+        if volume:
+            volume_html = (
+                f"<div class='hl-figure'>"
+                f"<span class='hl-count hl-volume{tone_class}'>"
+                f"{html.escape(volume)}</span>"
+                f"{split_html(size_breakdown)}"
+                f"{caveat_html}"
+                f"</div>"
+            )
         html_cards.append(
             f"<div class='hl-card' style='flex-basis:calc({basis:.4f}% - .9rem)'>"
+            f"<div class='hl-head'>"
+            f"<span class='hl-name'>{html.escape(title)}</span>"
+            f"<span class='hl-note'>{html.escape(note)}</span>"
+            f"</div>"
             f"<div class='hl-figure'>"
             f"<span class='hl-count{tone_class}'>{count}</span>"
-            f"{breakdown_html}"
+            f"{split_html(breakdown)}"
             f"</div>"
-            f"<div class='hl-name'>{html.escape(title)}</div>"
             f"{volume_html}"
-            f"<div class='hl-note'>{html.escape(note)}</div>"
             "</div>"
         )
     st.markdown(
@@ -1457,9 +1492,9 @@ scope_size = SizeTotal(
     field_used=available_size.field_used,
 )
 
-def _share_lines(count: int, size, *, of_scope: bool = True) -> str:
+def _share_lines(count: int, size, *, of_scope: bool = True) -> tuple[str, str]:
 
-    def size_part(base) -> str:
+    def size_share(base) -> str:
         if (
             size is None
             or not size.rows_with_size
@@ -1470,22 +1505,20 @@ def _share_lines(count: int, size, *, of_scope: bool = True) -> str:
         ):
             return ""
         approx = "" if size.complete and base.complete else "~"
-        return f" · {approx}{100 * size.megabytes / base.megabytes:.1f}%"
+        return f"{approx}{100 * size.megabytes / base.megabytes:.1f}%"
 
-    lines = []
+    count_lines, size_lines = [], []
+    bases = []
     if of_scope and result.scope_checked and result.scope_names:
-        part = size_part(scope_size)
-        lines.append(
-            f"{100 * count / result.scope_names:.1f}% of scope databases"
-            + (f"{part} of scope size" if part else "")
-        )
+        bases.append(("scope", result.scope_names, scope_size))
     if result.master_count:
-        part = size_part(source_size)
-        lines.append(
-            f"{100 * count / result.master_count:.1f}% of source databases"
-            + (f"{part} of source size" if part else "")
-        )
-    return "\n".join(lines)
+        bases.append(("source", result.master_count, source_size))
+    for name, total, base_size in bases:
+        count_lines.append(f"{100 * count / total:.1f}% of {name} databases")
+        share = size_share(base_size)
+        if share:
+            size_lines.append(f"{share} of {name} size")
+    return "\n".join(count_lines), "\n".join(size_lines)
 transit_size = size_of(result, Outcome.NOT_ARCHIVED)
 unchecked_size = size_of(result, Outcome.IMPORTED)
 
@@ -1503,7 +1536,7 @@ archived_note = (
 def _card_volume(total) -> str:
     if total.units_look_wrong or not total.rows_with_size:
         return ""
-    return _volume_phrase(total)
+    return f"{total.gigabytes:,.1f} GB"
 def _short_stamp(row) -> str:
     for field_name in ARCHIVE_TIME_FIELDS:
         value = str(row.data.get(field_name) or "").strip()
@@ -1524,9 +1557,11 @@ render_headline_cards(
             "SOURCE (On Prem)",
             result.master_count,
             "databases on the on-prem SQL servers",
-            "",
+            "info",
             _card_volume(source_size),
             _source_breakdown(),
+            "",
+            "~does not include the Missing sizes",
         ),
         (
             "THE SCOPE (Total)",
@@ -1536,7 +1571,7 @@ render_headline_cards(
             else "no scope list supplied — every on-prem row treated as wanted",
             "",
             _card_volume(scope_size),
-            _share_lines(
+            *_share_lines(
                 result.scope_names if result.scope_checked else result.master_count,
                 scope_size,
                 of_scope=False,
@@ -1548,9 +1583,11 @@ render_headline_cards(
             archived_note,
             "good" if result.vault_checked else "",
             _card_volume(archived_size),
-            _share_lines(counts[Outcome.ARCHIVED], _snapshot_of(Outcome.ARCHIVED))
-            if counts[Outcome.ARCHIVED]
-            else "",
+            *(
+                _share_lines(counts[Outcome.ARCHIVED], _snapshot_of(Outcome.ARCHIVED))
+                if counts[Outcome.ARCHIVED]
+                else ("", "")
+            ),
         ),
     ],
     primary=True,
@@ -1585,18 +1622,24 @@ else:
 render_headline_cards(
     [
         (
-            "Not in Scope",
+            "Out of Scope",
             counts[Outcome.OUT_OF_SCOPE],
             "on prem, but not on the scope list",
             "",
             _card_volume(not_in_scope_size),
-            _share_lines(counts[Outcome.OUT_OF_SCOPE], not_in_scope_size, of_scope=False),
+            *_share_lines(counts[Outcome.OUT_OF_SCOPE], not_in_scope_size, of_scope=False),
         ),
         (
             "In Scope, Missing",
             counts[Outcome.NOT_IN_INVENTORY],
             "wanted, but not found on prem",
             "warn" if counts[Outcome.NOT_IN_INVENTORY] else "",
+            "",
+            "",
+            "",
+            ("this unknown quantity is excluded from the delivery estimates", "bad")
+            if counts[Outcome.NOT_IN_INVENTORY]
+            else "",
         ),
         (
             "In Scope and Available",
@@ -1604,7 +1647,7 @@ render_headline_cards(
             "wanted and on prem — movable today",
             "",
             _card_volume(available_size),
-            _share_lines(headline_stages["In scope"].count, available_size),
+            *_share_lines(headline_stages["In scope"].count, available_size),
         ),
         (
             "In Transit",
@@ -1624,7 +1667,7 @@ render_headline_cards(
                 else ""
             ),
             _card_volume(transit_size),
-            _share_lines(counts[Outcome.NOT_ARCHIVED], _snapshot_of(Outcome.NOT_ARCHIVED)),
+            *_share_lines(counts[Outcome.NOT_ARCHIVED], _snapshot_of(Outcome.NOT_ARCHIVED)),
         ),
     ]
 )
