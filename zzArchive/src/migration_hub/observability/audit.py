@@ -18,8 +18,13 @@ from migration_hub.core.scrub import scrub_credentials
 from migration_hub.observability.endpoints import endpoint_key
 from migration_hub.observability.redaction import redact_mapping, redact_text
 
+_debug_timing_cache: bool | None = None
+
 def debug_timing_enabled() -> bool:
-    return os.environ.get("MIGRATION_HUB_DEBUG_TIMING") == "1"
+    global _debug_timing_cache
+    if _debug_timing_cache is None:
+        _debug_timing_cache = os.environ.get("MIGRATION_HUB_DEBUG_TIMING") == "1"
+    return _debug_timing_cache
 
 def _serialize(body: object | None) -> str | None:
     if body is None:
@@ -76,7 +81,9 @@ def audited_call(
         raise
     finally:
         duration_ms = int((time.monotonic() - start) * 1000)
-        db_started = time.monotonic()
+        timing = debug_timing_enabled()
+        if timing:
+            db_started = time.monotonic()
         record_call(
             engine=engine,
             file_id=file_id,
@@ -88,7 +95,7 @@ def audited_call(
             duration_ms=duration_ms,
             correlation_id=record.correlation_id,
         )
-        if debug_timing_enabled():
+        if timing:
             db_ms = (time.monotonic() - db_started) * 1000
             _log.info("audit write file=%s method=%s db_ms=%.0f", file_id, method, db_ms)
         _log_call(

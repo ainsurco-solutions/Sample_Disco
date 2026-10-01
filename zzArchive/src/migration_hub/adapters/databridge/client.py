@@ -73,6 +73,7 @@ class DatabridgeAdapter:
         inline_retry_base_seconds: float = 2.0,
         inline_retry_max_seconds: float = 30.0,
         part_url_refresh_attempts: int = 1,
+        read_ahead: bool = False,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._host = host
@@ -84,6 +85,7 @@ class DatabridgeAdapter:
         self._inline_retry_base_seconds = inline_retry_base_seconds
         self._inline_retry_max_seconds = inline_retry_max_seconds
         self._part_url_refresh_attempts = part_url_refresh_attempts
+        self._read_ahead = read_ahead
         self._sleep = sleep
 
     def close(self) -> None:
@@ -219,6 +221,7 @@ class DatabridgeAdapter:
             retry_max_seconds=self._inline_retry_max_seconds,
             part_url_refresh_attempts=self._part_url_refresh_attempts,
             sleep=self._sleep,
+            read_ahead=self._read_ahead,
         )
 
         self._request(

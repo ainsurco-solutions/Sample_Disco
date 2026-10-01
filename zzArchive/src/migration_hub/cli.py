@@ -59,6 +59,7 @@ def _adapter(settings: Settings) -> DatabridgeAdapter:
         inline_retry_base_seconds=settings.inline_retry_base_seconds,
         inline_retry_max_seconds=settings.inline_retry_max_seconds,
         part_url_refresh_attempts=settings.part_url_refresh_attempts,
+        read_ahead=settings.upload_read_ahead,
     )
 
 @app.command()

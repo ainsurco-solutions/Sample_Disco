@@ -1,3 +1,3 @@
-source commit : 67d785089831513cc59981fed06af70fcd724659
-               feat: diagnostic per-part read/DB-write timing behind a flag (TASK-0125)
+source commit : 0532deaf88ab72ad05c0cbce6fc08ed688a6b100
+               docs: plan resuming a large-file upload from the first missing part (TASK-0128)
 files         : 92

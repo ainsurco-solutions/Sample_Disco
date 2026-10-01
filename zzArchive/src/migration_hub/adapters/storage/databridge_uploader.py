@@ -4,6 +4,8 @@ import logging
 import re
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import IO
 
@@ -18,7 +20,7 @@ from migration_hub.adapters.databridge.errors import (
     UploadServerError,
 )
 from migration_hub.adapters.storage.s3_uploader import multipart_chunksize
-from migration_hub.core.retry import retry_call
+from migration_hub.core.retry import FailureAction, backoff_delay, classify, retry_call
 from migration_hub.observability.audit import debug_timing_enabled, maybe_audited_call
 
 _UPLOAD_TIMEOUT_SECONDS = 3600.0
@@ -151,6 +153,7 @@ def upload_multipart(
     retry_max_seconds: float = 30.0,
     part_url_refresh_attempts: int = 1,
     sleep: Callable[[float], None] = time.sleep,
+    read_ahead: bool = False,
 ) -> dict[int, str]:
     size = source.stat().st_size
     chunk = chunk_size if chunk_size is not None else multipart_chunksize(size)
@@ -160,12 +163,13 @@ def upload_multipart(
 
     debug_timing = debug_timing_enabled()
     etags: dict[int, str] = {}
-    with source.open("rb") as handle:
+    with (
+        source.open("rb") as handle,
+        _chunk_reader(handle, chunk, read_ahead=read_ahead, timed=debug_timing) as next_chunk,
+    ):
         part_number = 1
         while True:
-            read_started = time.monotonic()
-            data = handle.read(chunk)
-            read_ms = (time.monotonic() - read_started) * 1000
+            data, read_ms, wait_ms = next_chunk()
             if not data:
                 break
             etag = _put_part_with_url_refresh(
@@ -183,18 +187,56 @@ def upload_multipart(
             )
             etags[part_number] = etag
             sent += len(data)
+            del data
             if debug_timing:
                 _log.info(
-                    "file %s part %d read_ms=%.0f",
+                    "file %s part %d read_ms=%.0f%s",
                     file_id if file_id is not None else "-",
                     part_number,
                     read_ms,
+                    f" wait_ms={wait_ms:.0f}" if wait_ms is not None else "",
                 )
             _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
             _report(on_progress, sent)
             part_number += 1
 
     return etags
+
+_Chunk = tuple[bytes, float | None, float | None]
+
+def _read(handle: IO[bytes], size: int, timed: bool) -> tuple[bytes, float | None]:
+    if not timed:
+        return handle.read(size), None
+    started = time.monotonic()
+    data = handle.read(size)
+    return data, (time.monotonic() - started) * 1000
+
+@contextmanager
+def _chunk_reader(
+    handle: IO[bytes], size: int, *, read_ahead: bool, timed: bool
+) -> Iterator[Callable[[], _Chunk]]:
+    if not read_ahead:
+
+        def sequential() -> _Chunk:
+            data, read_ms = _read(handle, size, timed)
+            return data, read_ms, None
+
+        yield sequential
+        return
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="read-ahead") as pool:
+        pending: Future[tuple[bytes, float | None]] = pool.submit(_read, handle, size, timed)
+
+        def ahead() -> _Chunk:
+            nonlocal pending
+            waited = time.monotonic() if timed else 0.0
+            data, read_ms = pending.result()
+            wait_ms = (time.monotonic() - waited) * 1000 if timed else None
+            if data:
+                pending = pool.submit(_read, handle, size, timed)
+            return data, read_ms, wait_ms
+
+        yield ahead
 
 def _put_part_with_url_refresh(
     get_part_url: Callable[[int], str],
@@ -236,6 +278,15 @@ def _put_part_with_url_refresh(
         except UploadCredentialsExpiredError:
             if refresh_attempt >= part_url_refresh_attempts:
                 raise
+            part_url = get_part_url(part_number)
+            continue
+        except Exception as exc:
+            if (
+                classify(exc).action is not FailureAction.RETRY
+                or refresh_attempt >= part_url_refresh_attempts
+            ):
+                raise
+            sleep(backoff_delay(1, base_seconds=retry_max_seconds, max_seconds=retry_max_seconds))
             part_url = get_part_url(part_number)
             continue
         etag = str(response.headers.get("ETag", "")).strip('"')

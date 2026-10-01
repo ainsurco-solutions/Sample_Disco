@@ -70,9 +70,10 @@
   "claim_stale_minutes": 10,
 
   "inline_retry_attempts": 3,
-  "inline_retry_base_seconds": 2.0,
-  "inline_retry_max_seconds": 30.0,
+  "inline_retry_base_seconds": 10.0,
+  "inline_retry_max_seconds": 60.0,
   "part_url_refresh_attempts": 3,
+  "upload_read_ahead": false,
 
   "compute_checksums": false,
   "dry_run": true
