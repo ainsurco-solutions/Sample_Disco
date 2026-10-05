@@ -123,7 +123,10 @@ def derive(*, registry: Registry, run_id: UUID) -> ControlTotals:
     archive_failed = counts[FileState.ARCHIVE_FAILED]
     abandoned = counts[FileState.ABANDONED]
     rejected = counts[FileState.REJECTED]
-    outstanding = sum(counts.values()) - completed - archive_failed - abandoned - rejected
+    skipped = counts[FileState.REMOVED]
+    outstanding = (
+        sum(counts.values()) - completed - archive_failed - abandoned - rejected - skipped
+    )
 
     attempts_sum = metrics["attempts_sum"]
     attempted_count = metrics["attempted_count"]
@@ -136,7 +139,7 @@ def derive(*, registry: Registry, run_id: UUID) -> ControlTotals:
         completed_count=completed,
         abandoned_count=abandoned,
         rejected_count=rejected,
-        skipped_count=0,
+        skipped_count=skipped,
         outstanding_count=outstanding,
         retry_count=attempts_sum - attempted_count,
         exception_count=abandoned + rejected + archive_failed,

@@ -9,6 +9,8 @@ MAX_NAME_LENGTH = 120
 _ILLEGAL_CHARS = re.compile(r"[^A-Za-z0-9_]")
 _VALID_NAME = re.compile(r"^[A-Za-z0-9_]+$")
 
+_DATABRIDGE_NAME = re.compile(r"^[_\-A-Za-z0-9]+$")
+
 def to_exposure_name(source_database: str) -> str:
     sanitized = _ILLEGAL_CHARS.sub("_", source_database)
     return sanitized[:MAX_NAME_LENGTH]
@@ -21,3 +23,6 @@ def find_collisions(names: Iterable[str]) -> dict[str, list[str]]:
 
 def is_valid(name: str) -> bool:
     return bool(name) and len(name) <= MAX_NAME_LENGTH and _VALID_NAME.fullmatch(name) is not None
+
+def is_valid_databridge_name(name: str) -> bool:
+    return _DATABRIDGE_NAME.fullmatch(name) is not None

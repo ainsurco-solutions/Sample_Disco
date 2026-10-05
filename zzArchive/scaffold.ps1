@@ -83,6 +83,7 @@ $Files = @(
     'migrations/versions/b7e4c2d9f1a6_upload_progress.py'
     'migrations/versions/c5a7e3d91f20_archive_states.py'
     'migrations/versions/e8b2f4a6c1d3_scrub_presigned_signatures.py'
+    'migrations/versions/f3a8d6c2b9e1_removed_releases_unique_keys.py'
     'alembic.ini'
     'requirements.txt'
     'pyproject.toml'

@@ -1,3 +1,3 @@
-source commit : 87f288a4391f0c65599d9c685612085979e50591
-               chore: scaffold the multipart-resume migration on the VM (TASK-0128)
-files         : 96
+source commit : 0b1fd5b1bc4747bcafabc15fab4d8ff6c78ccf32
+               chore: scaffold the REMOVED migration on the VM (TASK-0134)
+files         : 97

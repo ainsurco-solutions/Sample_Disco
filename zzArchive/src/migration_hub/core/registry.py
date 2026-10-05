@@ -24,6 +24,7 @@ from migration_hub.core.models import (
 from migration_hub.core.scrub import scrub_credentials, scrub_optional
 from migration_hub.core.states import (
     CLAIMED_STATES,
+    REMOVABLE_STATES,
     SETTLED_STATES,
     TERMINAL_STATES,
     BatchDestination,
@@ -40,6 +41,8 @@ _LEVEL_BY_STATE: dict[FileState, int] = {
     FileState.ARCHIVE_FAILED: logging.WARNING,
     FileState.REJECTED: logging.WARNING,
 }
+
+_HOLDS_KEYS = MigrationFile.state != str(FileState.REMOVED)
 
 def _describe(file: MigrationFile) -> str:
     name = PureWindowsPath(file.source_path).name
@@ -136,7 +139,7 @@ class Registry:
             existing_paths = set(
                 session.scalars(
                     select(MigrationFile.source_path).where(
-                        MigrationFile.source_path.in_(incoming_paths)
+                        MigrationFile.source_path.in_(incoming_paths), _HOLDS_KEYS
                     )
                 )
             )
@@ -172,7 +175,8 @@ class Registry:
             existing_paths = set(
                 session.scalars(
                     select(MigrationFile.source_path).where(
-                        MigrationFile.source_path.in_([f.source_path for f, _ in found])
+                        MigrationFile.source_path.in_([f.source_path for f, _ in found]),
+                        _HOLDS_KEYS,
                     )
                 )
             )
@@ -204,6 +208,23 @@ class Registry:
                 inserted += 1
             return inserted
 
+    def remove_file(self, *, file_id: int, actor: str, reason: str | None = None) -> None:
+        file = self.get(file_id)
+        if file is None:
+            raise ValueError(f"No migration_file with file_id={file_id}")
+        if FileState(file.state) not in REMOVABLE_STATES:
+            raise ValueError(
+                f"file {file_id} is {file.state}; only REJECTED or ABANDONED files can be removed"
+            )
+        detail = (
+            f"removed by {actor} so the file can be registered again "
+            f"(was {file.source_path}, {file.size_bytes} bytes, "
+            f"target name {file.target_exposure_name})"
+        )
+        if reason:
+            detail += f": {reason}"
+        self.transition(file_id=file_id, to_state=FileState.REMOVED, actor=actor, detail=detail)
+
     def taken_exposure_names(self, *, names: Sequence[str]) -> dict[str, str]:
         if not names:
             return {}
@@ -216,7 +237,7 @@ class Registry:
             return {}
         rows = session.execute(
             select(MigrationFile.target_exposure_name, MigrationFile.source_path).where(
-                MigrationFile.target_exposure_name.in_(set(names))
+                MigrationFile.target_exposure_name.in_(set(names)), _HOLDS_KEYS
             )
         )
         return dict(rows.tuples().all())
@@ -227,7 +248,9 @@ class Registry:
         with Session(self._engine) as session:
             return set(
                 session.scalars(
-                    select(MigrationFile.source_path).where(MigrationFile.source_path.in_(paths))
+                    select(MigrationFile.source_path).where(
+                        MigrationFile.source_path.in_(paths), _HOLDS_KEYS
+                    )
                 )
             )
 

@@ -13,7 +13,7 @@ from migration_hub.adapters.databridge.client import DatabridgeAdapter
 from migration_hub.config.settings import Settings
 from migration_hub.core.engine import create_registry_engine
 from migration_hub.core.registry import Registry
-from migration_hub.core.states import BatchState, FileState
+from migration_hub.core.states import BatchState, FileState, IllegalTransitionError
 from migration_hub.observability import audit_export, controls
 from migration_hub.observability import logging as hub_logging
 from migration_hub.orchestration import (
@@ -422,6 +422,23 @@ def retry(
     finally:
         adapter.close()
     _echo_retry(outcome)
+
+@app.command()
+def remove(
+    file_id: int = typer.Option(..., "--file-id"),
+    reason: str | None = typer.Option(None, "--reason"),
+    by: str | None = typer.Option(None, "--by", help="Defaults to the current OS user."),
+) -> None:
+    settings = _load_settings()
+    registry = _registry(settings)
+    try:
+        registry.remove_file(file_id=file_id, actor=by or getpass.getuser(), reason=reason)
+    except (ValueError, IllegalTransitionError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        f"file {file_id} removed -- start a migration on its folder to register it again"
+    )
 
 def _echo_retry(outcome: batches.RetryOutcome) -> None:
     if outcome.completed_file_ids:

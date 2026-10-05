@@ -15,7 +15,12 @@ class ValidationResult:
     checksum: str | None = None
 
 def validate_source(
-    *, path: Path, expected_size: int, target_name: str, compute_checksum: bool = False
+    *,
+    path: Path,
+    expected_size: int,
+    target_name: str,
+    compute_checksum: bool = False,
+    database_name: str | None = None,
 ) -> ValidationResult:
     failures: list[str] = []
     digest: str | None = None
@@ -46,6 +51,13 @@ def validate_source(
     if not naming.is_valid(target_name):
         failures.append(f"invalid target exposure name: {target_name!r}")
 
+    if database_name is not None and not naming.is_valid_databridge_name(database_name):
+        failures.append(
+            f"Data Bridge refuses the database name {database_name!r}: only letters, "
+            "digits, _ and - are allowed. Rename the .bak file, then remove this file "
+            "from the registry and start the migration again"
+        )
+
     return ValidationResult(ok=not failures, failures=tuple(failures), checksum=digest)
 
 def validate_batch(
@@ -66,6 +78,7 @@ def validate_batch(
             expected_size=file.size_bytes,
             target_name=file.target_exposure_name,
             compute_checksum=compute_checksum,
+            database_name=file.source_database,
         )
         if result.ok and file.target_exposure_name in collisions:
             sources = collisions[file.target_exposure_name]

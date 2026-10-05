@@ -15,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.mssql import DATETIME2
 from sqlalchemy.ext.compiler import compiles
@@ -49,19 +50,35 @@ _register_sqlite_datetime_handlers()
 class Base(DeclarativeBase):
     pass
 
+_NOT_REMOVED = text("state <> 'REMOVED'")
+
 class MigrationFile(Base):
 
     __tablename__ = "migration_file"
     __table_args__ = (
         Index("ix_migration_file_state_batch_id", "state", "batch_id"),
+        Index(
+            "uq_migration_file_source_path",
+            "source_path",
+            unique=True,
+            sqlite_where=_NOT_REMOVED,
+            mssql_where=_NOT_REMOVED,
+        ),
+        Index(
+            "uq_migration_file_target_exposure_name",
+            "target_exposure_name",
+            unique=True,
+            sqlite_where=_NOT_REMOVED,
+            mssql_where=_NOT_REMOVED,
+        ),
     )
 
     file_id: Mapped[int] = mapped_column(AUTO_PK, primary_key=True, autoincrement=True)
     batch_id: Mapped[str] = mapped_column(String(64), ForeignKey("batch.batch_id"), nullable=False)
 
     source_database: Mapped[str] = mapped_column(String(256), nullable=False)
-    source_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
-    target_exposure_name: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    target_exposure_name: Mapped[str] = mapped_column(String(256), nullable=False)
 
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     checksum: Mapped[str | None] = mapped_column(String(64), default=None)

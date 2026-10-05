@@ -23,10 +23,12 @@ from migration_hub.core.registry import Registry
 from migration_hub.core.retry import ALREADY_ON_TARGET
 from migration_hub.core.states import (
     CLAIMED_STATES,
+    REMOVABLE_STATES,
     SETTLED_STATES,
     BatchDestination,
     BatchState,
     FileState,
+    IllegalTransitionError,
     done_states,
 )
 from migration_hub.observability import audit, controls, metrics
@@ -58,6 +60,7 @@ _STATE_PROGRESS = {
     FileState.COMPLETED: 100,
     FileState.FAILED: 45,
     FileState.ABANDONED: 0,
+    FileState.REMOVED: 0,
 }
 
 _BATCH_STATE_COLOR: dict[BatchState, _BadgeColor] = {
@@ -840,6 +843,7 @@ def _batch_volume(
     now: datetime | None = None,
 ) -> tuple[float, float, str | None]:
     gib = 1024**3
+    by_state = {k: v for k, v in by_state.items() if k != str(FileState.REMOVED)}
     size = sum(by_state.values())
     moved = sum(by_state.get(str(state), 0) for state in done_states(destination))
     rate = None
@@ -1615,7 +1619,7 @@ def _is_done(state: FileState, destination: BatchDestination) -> bool:
 
 def _file_progress(raw: str, destination: BatchDestination = BatchDestination.VAULT) -> int:
     state = _known_file_state(raw)
-    if state is None:
+    if state is None or state is FileState.REMOVED:
         return 0
     return 100 if _is_done(state, destination) else _STATE_PROGRESS[state]
 
@@ -1714,7 +1718,7 @@ def _file_state_color(
     raw: str, destination: BatchDestination = BatchDestination.VAULT
 ) -> _BadgeColor:
     state = _known_file_state(raw)
-    if state is None:
+    if state is None or state is FileState.REMOVED:
         return "gray"
     if state in _PROBLEM_STATES:
         return "red"
@@ -1728,7 +1732,7 @@ def _file_state_color(
 
 def _file_state_priority(raw: str, destination: BatchDestination = BatchDestination.VAULT) -> int:
     state = _known_file_state(raw)
-    if state is None:
+    if state is None or state is FileState.REMOVED:
         return 5
     if state in _PROBLEM_STATES:
         return 1
@@ -2488,7 +2492,7 @@ def _render_file_detail_panel(
                 FileState.ABANDONED,
                 FileState.ARCHIVE_FAILED,
             )
-            action_cols = st.columns(2)
+            action_cols = st.columns(3)
             with action_cols[0]:
                 retry_file_clicked = st.button(
                     "Retry file",
@@ -2515,6 +2519,8 @@ def _render_file_detail_panel(
                             expanded=False,
                         )
             with action_cols[1]:
+                _render_remove_file(registry, file, state)
+            with action_cols[2]:
                 try:
                     support_json = _support_bundle_json(settings, file.file_id)
                 except ValueError as exc:
@@ -2528,6 +2534,40 @@ def _render_file_detail_panel(
                         icon=":material/download:",
                         key=f"support_bundle_{file.file_id}",
                     )
+
+def _render_remove_file(registry: Registry, file: MigrationFile, state: FileState | None) -> None:
+    flag = f"confirm_remove_{file.file_id}"
+    if st.button(
+        "Remove from registry",
+        icon=":material/delete:",
+        disabled=state not in REMOVABLE_STATES,
+        help="Only a REJECTED or ABANDONED file can be removed.",
+        key=f"remove_file_{file.file_id}",
+    ):
+        st.session_state[flag] = True
+    if not st.session_state.get(flag):
+        return
+    with st.container(border=True):
+        st.warning(
+            f"Remove file {file.file_id} from the registry? Its history is kept, but it "
+            "stops holding its source path and target name, so the next **Start "
+            "migration** on its folder registers the file again: at its current size, "
+            "or under its new name if you renamed it.",
+            icon=":material/warning:",
+        )
+        with st.container(horizontal=True):
+            if st.button("Remove", type="primary", key=f"{flag}_yes"):
+                st.session_state.pop(flag, None)
+                try:
+                    registry.remove_file(file_id=file.file_id, actor=_default_operator())
+                except (ValueError, IllegalTransitionError) as exc:
+                    st.error(str(exc))
+                    return
+                st.toast(f"File {file.file_id} removed.", icon=":material/delete:")
+                st.rerun()
+            if st.button("Cancel", key=f"{flag}_no"):
+                st.session_state.pop(flag, None)
+                st.rerun()
 
 def _correlation_ids(registry: Registry, file_id: int) -> str:
     ids = [
