@@ -73,6 +73,7 @@ $Files = @(
     'migrations/README.md'
     'migrations/script.py.mako'
     'migrations/versions/.gitkeep'
+    'migrations/versions/05aeecdfb4f4_multipart_upload_resume.py'
     'migrations/versions/2e4122b688e7_drop_staged_path.py'
     'migrations/versions/3405822f52ca_create_registry_schema.py'
     'migrations/versions/4b8c1d5e9a02_move_staged_rows_to_validated.py'

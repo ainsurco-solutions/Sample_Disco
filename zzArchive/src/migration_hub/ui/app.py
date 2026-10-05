@@ -1645,7 +1645,8 @@ def _upload_rows(
         to_send += left
         rate = 0.0
         if f.upload_started_at and f.bytes_sent_at and f.bytes_sent_at > f.upload_started_at:
-            rate = sent / (f.bytes_sent_at - f.upload_started_at).total_seconds()
+            this_attempt = max(0, sent - (f.bytes_at_start or 0))
+            rate = this_attempt / (f.bytes_sent_at - f.upload_started_at).total_seconds()
         quiet = (now - f.bytes_sent_at).total_seconds() / 60 if f.bytes_sent_at else None
         stalled = quiet is not None and quiet >= stalled_minutes
         if not stalled:

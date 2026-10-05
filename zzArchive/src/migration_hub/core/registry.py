@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import PureWindowsPath
 from uuid import UUID
 
-from sqlalchemy import bindparam, case, func, select, text, update
+from sqlalchemy import bindparam, case, delete, func, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from migration_hub.core.models import (
     BatchRun,
     MigrationEvent,
     MigrationFile,
+    MultipartUpload,
+    MultipartUploadPart,
 )
 from migration_hub.core.scrub import scrub_credentials, scrub_optional
 from migration_hub.core.states import (
@@ -55,6 +58,18 @@ def _log_claim(
             claimed.attempts,
         )
     return claimed
+
+@dataclass(frozen=True)
+class SavedUpload:
+
+    upload_id: str
+    chunk_bytes: int
+    source_size: int
+    source_mtime_ns: int
+    instance_name: str
+    database_name: str
+    file_extension: str
+    etags: dict[int, str]
 
 class Registry:
 
@@ -383,10 +398,67 @@ class Registry:
         values: dict[str, object] = {"bytes_sent": bytes_sent, "bytes_sent_at": now}
         if start:
             values["upload_started_at"] = now
+            values["bytes_at_start"] = bytes_sent
         with Session(self._engine) as session, session.begin():
             session.execute(
                 update(MigrationFile).where(MigrationFile.file_id == file_id).values(**values)
             )
+
+    def saved_upload(self, *, file_id: int) -> SavedUpload | None:
+        with Session(self._engine) as session:
+            upload = session.get(MultipartUpload, file_id)
+            if upload is None:
+                return None
+            parts = session.execute(
+                select(MultipartUploadPart.part_number, MultipartUploadPart.etag).where(
+                    MultipartUploadPart.file_id == file_id
+                )
+            )
+            return SavedUpload(
+                upload_id=upload.upload_id,
+                chunk_bytes=upload.chunk_bytes,
+                source_size=upload.source_size,
+                source_mtime_ns=upload.source_mtime_ns,
+                instance_name=upload.instance_name,
+                database_name=upload.database_name,
+                file_extension=upload.file_extension,
+                etags={int(part): str(etag) for part, etag in parts},
+            )
+
+    def save_upload(
+        self,
+        *,
+        file_id: int,
+        upload_id: str,
+        chunk_bytes: int,
+        source_size: int,
+        source_mtime_ns: int,
+        instance_name: str,
+        database_name: str,
+        file_extension: str,
+    ) -> None:
+        with Session(self._engine) as session, session.begin():
+            _delete_saved_upload(session, file_id)
+            session.add(
+                MultipartUpload(
+                    file_id=file_id,
+                    upload_id=upload_id,
+                    chunk_bytes=chunk_bytes,
+                    source_size=source_size,
+                    source_mtime_ns=source_mtime_ns,
+                    instance_name=instance_name,
+                    database_name=database_name,
+                    file_extension=file_extension,
+                )
+            )
+
+    def record_upload_part(self, *, file_id: int, part_number: int, etag: str) -> None:
+        with Session(self._engine) as session, session.begin():
+            session.merge(MultipartUploadPart(file_id=file_id, part_number=part_number, etag=etag))
+
+    def clear_saved_upload(self, *, file_id: int) -> None:
+        with Session(self._engine) as session, session.begin():
+            _delete_saved_upload(session, file_id)
 
     def refresh_claims(self, *, worker_id: str) -> int:
         with Session(self._engine) as session, session.begin():
@@ -920,3 +992,7 @@ def _scrub_last_error(fields: dict[str, object]) -> dict[str, object]:
     if isinstance(value, str):
         return {**fields, "last_error": scrub_credentials(value)}
     return fields
+
+def _delete_saved_upload(session: Session, file_id: int) -> None:
+    session.execute(delete(MultipartUploadPart).where(MultipartUploadPart.file_id == file_id))
+    session.execute(delete(MultipartUpload).where(MultipartUpload.file_id == file_id))

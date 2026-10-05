@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -19,12 +21,18 @@ from migration_hub.adapters.databridge.errors import (
     MissingUploadUriError,
     RateLimitedError,
     RequestInterruptedError,
+    RequestRejectedError,
     ServerError,
     UnknownJobStatusError,
 )
 from migration_hub.adapters.storage import databridge_uploader
+from migration_hub.adapters.storage.s3_uploader import multipart_chunksize
+from migration_hub.core.registry import Registry, SavedUpload
 from migration_hub.core.retry import retry_call
+from migration_hub.observability import audit
 from migration_hub.observability.audit import audited_call
+
+_log = logging.getLogger(__name__)
 
 LARGE_FILE_THRESHOLD_BYTES = 5 * 1024**3
 
@@ -205,9 +213,149 @@ class DatabridgeAdapter:
             f"/databridge/v1/sql-instances/{instance_name}/databases/"
             f"{database_name}/{file_extension}"
         )
+        stat = source.stat()
+        chunk = multipart_chunksize(stat.st_size)
+        file_id = self._current_file_id
+        registry = (
+            Registry(self._engine) if self._engine is not None and file_id is not None else None
+        )
+
+        saved = self._resumable(
+            registry, stat=stat, chunk=chunk, target=(instance_name, database_name, file_extension)
+        )
+        if saved is not None and registry is not None:
+            self._record_resume(registry, base, saved, size=stat.st_size, chunk=chunk)
+            try:
+                self._send_multipart(
+                    saved.upload_id,
+                    registry,
+                    base=base,
+                    source=source,
+                    chunk=chunk,
+                    done=saved.etags,
+                    on_progress=on_progress,
+                )
+                return
+            except RequestRejectedError as exc:
+                _log.warning(
+                    "file %s saved uploadId refused (%d) -- starting a fresh upload",
+                    file_id,
+                    exc.status_code,
+                )
 
         init_response = self._request("POST", f"{base}/init-upload")
         upload_id = init_response.json()["uploadId"]
+        if registry is not None and file_id is not None:
+            _quietly(
+                "save the upload for resume",
+                lambda: registry.save_upload(
+                    file_id=file_id,
+                    upload_id=upload_id,
+                    chunk_bytes=chunk,
+                    source_size=stat.st_size,
+                    source_mtime_ns=stat.st_mtime_ns,
+                    instance_name=instance_name,
+                    database_name=database_name,
+                    file_extension=file_extension,
+                ),
+            )
+        self._send_multipart(
+            upload_id,
+            registry,
+            base=base,
+            source=source,
+            chunk=chunk,
+            done=None,
+            on_progress=on_progress,
+        )
+
+    def _resumable(
+        self,
+        registry: Registry | None,
+        *,
+        stat: os.stat_result,
+        chunk: int,
+        target: tuple[str, str, str],
+    ) -> SavedUpload | None:
+        file_id = self._current_file_id
+        if registry is None or file_id is None:
+            return None
+        saved = _quietly("read the saved upload", lambda: registry.saved_upload(file_id=file_id))
+        if saved is None:
+            return None
+        then = (saved.instance_name, saved.database_name, saved.file_extension)
+        changed = [
+            what
+            for what, now, before in (
+                ("target", target, then),
+                ("size", stat.st_size, saved.source_size),
+                ("mtime", stat.st_mtime_ns, saved.source_mtime_ns),
+                ("chunk size", chunk, saved.chunk_bytes),
+            )
+            if now != before
+        ]
+        if not changed:
+            return saved
+        _log.info(
+            "file %s saved upload not resumed (%s changed) -- starting a fresh upload",
+            file_id,
+            ", ".join(changed),
+        )
+        _quietly("clear the saved upload", lambda: registry.clear_saved_upload(file_id=file_id))
+        return None
+
+    def _record_resume(
+        self, registry: Registry, base: str, saved: SavedUpload, *, size: int, chunk: int
+    ) -> None:
+        parts = max(1, -(-size // chunk))
+        held = len(databridge_uploader.held_prefix(saved.etags, parts))
+        skipped = min(held * chunk, size)
+        _log.info(
+            "file %s resuming upload from part %d/%d, %s MB already on Data Bridge",
+            self._current_file_id,
+            held + 1,
+            parts,
+            f"{skipped / 1024**2:,.0f}",
+        )
+        file_id = self._current_file_id
+        if file_id is not None:
+            _quietly(
+                "restart the progress figures",
+                lambda: registry.record_upload_progress(
+                    file_id=file_id, bytes_sent=skipped, start=True
+                ),
+            )
+        engine = self._engine
+        if engine is None:
+            return
+        _quietly(
+            "record the resume",
+            lambda: audit.record_call(
+                engine=engine,
+                file_id=self._current_file_id,
+                method="RESUME",
+                url=str(self._client.base_url.join(f"{base}/resume-upload")),
+                request_body={
+                    "upload_id": saved.upload_id,
+                    "from_part": held + 1,
+                    "parts": parts,
+                    "bytes_skipped": skipped,
+                },
+            ),
+        )
+
+    def _send_multipart(
+        self,
+        upload_id: str,
+        registry: Registry | None,
+        *,
+        base: str,
+        source: Path,
+        chunk: int,
+        done: dict[int, str] | None,
+        on_progress: Callable[[int], None] | None,
+    ) -> None:
+        file_id = self._current_file_id
 
         def get_part_url(part_number: int) -> str:
             part_response = self._request("GET", f"{base}/upload-part/{upload_id}/{part_number}")
@@ -216,25 +364,41 @@ class DatabridgeAdapter:
             except ValueError:
                 return part_response.text.strip()
 
-        etags = databridge_uploader.upload_multipart(
-            source=source,
-            get_part_url=get_part_url,
-            engine=self._engine,
-            file_id=self._current_file_id,
-            on_progress=on_progress,
-            retry_attempts=self._inline_retry_attempts,
-            retry_base_seconds=self._inline_retry_base_seconds,
-            retry_max_seconds=self._inline_retry_max_seconds,
-            part_url_refresh_attempts=self._part_url_refresh_attempts,
-            sleep=self._sleep,
-            read_ahead=self._read_ahead,
-        )
+        def save_part(part_number: int, etag: str) -> None:
+            if registry is not None and file_id is not None:
+                registry.record_upload_part(file_id=file_id, part_number=part_number, etag=etag)
 
-        self._request(
-            "POST",
-            f"{base}/complete-upload",
-            json={"uploadId": upload_id, "etags": {str(k): v for k, v in etags.items()}},
-        )
+        try:
+            etags = databridge_uploader.upload_multipart(
+                source=source,
+                get_part_url=get_part_url,
+                chunk_size=chunk,
+                engine=self._engine,
+                file_id=file_id,
+                on_progress=on_progress,
+                retry_attempts=self._inline_retry_attempts,
+                retry_base_seconds=self._inline_retry_base_seconds,
+                retry_max_seconds=self._inline_retry_max_seconds,
+                part_url_refresh_attempts=self._part_url_refresh_attempts,
+                sleep=self._sleep,
+                read_ahead=self._read_ahead,
+                done=done,
+                on_part_done=save_part,
+            )
+            self._request(
+                "POST",
+                f"{base}/complete-upload",
+                json={"uploadId": upload_id, "etags": {str(n): etags[n] for n in sorted(etags)}},
+            )
+        except RequestRejectedError:
+            self._forget_upload(registry)
+            raise
+        self._forget_upload(registry)
+
+    def _forget_upload(self, registry: Registry | None) -> None:
+        file_id = self._current_file_id
+        if registry is not None and file_id is not None:
+            _quietly("clear the saved upload", lambda: registry.clear_saved_upload(file_id=file_id))
 
     def _trigger_import(
         self, *, instance_name: str, database_name: str, format_code: int, group_ids: list[str]
@@ -395,6 +559,13 @@ class DatabridgeAdapter:
         _raise_for_status(response)
         return response
 
+def _quietly[T](what: str, action: Callable[[], T]) -> T | None:
+    try:
+        return action()
+    except Exception as exc:
+        _log.warning("could not %s: %s", what, exc)
+        return None
+
 def _safe_json(response: httpx.Response) -> object:
     try:
         return response.json()
@@ -458,6 +629,7 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code >= 500:
         raise ServerError(f"{response.status_code} from {response.request.url}")
     if response.status_code >= 400:
-        raise DatabridgeError(
-            f"{response.status_code} from {response.request.url}: {response.text}"
+        raise RequestRejectedError(
+            f"{response.status_code} from {response.request.url}: {response.text}",
+            status_code=response.status_code,
         )

@@ -83,6 +83,7 @@ class MigrationFile(Base):
     archive_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
 
     bytes_sent: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    bytes_at_start: Mapped[int | None] = mapped_column(BigInteger, default=None)
     upload_started_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     bytes_sent_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
 
@@ -176,3 +177,28 @@ class BatchRun(Base):
     signed_off_by: Mapped[str | None] = mapped_column(String(128), default=None)
     signed_off_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     notes: Mapped[str | None] = mapped_column(String(None), default=None)
+
+class MultipartUpload(Base):
+
+    __tablename__ = "multipart_upload"
+
+    file_id: Mapped[int] = mapped_column(ForeignKey("migration_file.file_id"), primary_key=True)
+    upload_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    chunk_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_mtime_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    instance_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    database_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    file_extension: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, server_default=UTC_NOW)
+
+class MultipartUploadPart(Base):
+
+    __tablename__ = "multipart_upload_part"
+
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("multipart_upload.file_id", ondelete="CASCADE"), primary_key=True
+    )
+    part_number: Mapped[int] = mapped_column(primary_key=True)
+    etag: Mapped[str] = mapped_column(String(256), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, server_default=UTC_NOW)

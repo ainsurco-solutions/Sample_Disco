@@ -1,3 +1,3 @@
-source commit : d83ee7ce99e5907824b075fe1bd122a5cb2c0db0
-               chore: publish the multipart-resume probe to the VM (TASK-0128)
-files         : 95
+source commit : 87f288a4391f0c65599d9c685612085979e50591
+               chore: scaffold the multipart-resume migration on the VM (TASK-0128)
+files         : 96

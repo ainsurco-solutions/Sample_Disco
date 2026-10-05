@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,6 +46,16 @@ def _report(on_progress: ProgressCallback | None, sent: int) -> None:
         on_progress(sent)
     except Exception as exc:
         _log.warning("upload progress not recorded: %s", exc)
+
+def _part_done(
+    on_part_done: Callable[[int, str], None] | None, part_number: int, etag: str
+) -> None:
+    if on_part_done is None:
+        return
+    try:
+        on_part_done(part_number, etag)
+    except Exception as exc:
+        _log.warning("part %d not saved for resume: %s", part_number, exc)
 
 class _ProgressReader:
 
@@ -154,53 +164,80 @@ def upload_multipart(
     part_url_refresh_attempts: int = 1,
     sleep: Callable[[float], None] = time.sleep,
     read_ahead: bool = False,
+    done: Mapping[int, str] | None = None,
+    on_part_done: Callable[[int, str], None] | None = None,
 ) -> dict[int, str]:
     size = source.stat().st_size
     chunk = chunk_size if chunk_size is not None else multipart_chunksize(size)
     parts = max(1, -(-size // chunk))
+    etags = held_prefix(done or {}, parts)
+    first = len(etags) + 1
+    if first > parts:
+        return etags
+    skipped = (first - 1) * chunk
     started = clock()
-    sent = 0
+    sent = skipped
+    if skipped:
+        _report(on_progress, sent)
 
     debug_timing = debug_timing_enabled()
-    etags: dict[int, str] = {}
-    with (
-        source.open("rb") as handle,
-        _chunk_reader(handle, chunk, read_ahead=read_ahead, timed=debug_timing) as next_chunk,
-    ):
-        part_number = 1
-        while True:
-            data, read_ms, wait_ms = next_chunk()
-            if not data:
-                break
-            etag = _put_part_with_url_refresh(
-                get_part_url,
-                data,
-                source=source,
-                part_number=part_number,
-                engine=engine,
-                file_id=file_id,
-                retry_attempts=retry_attempts,
-                retry_base_seconds=retry_base_seconds,
-                retry_max_seconds=retry_max_seconds,
-                part_url_refresh_attempts=part_url_refresh_attempts,
-                sleep=sleep,
-            )
-            etags[part_number] = etag
-            sent += len(data)
-            del data
-            if debug_timing:
-                _log.info(
-                    "file %s part %d read_ms=%.0f%s",
-                    file_id if file_id is not None else "-",
-                    part_number,
-                    read_ms,
-                    f" wait_ms={wait_ms:.0f}" if wait_ms is not None else "",
+    with source.open("rb") as handle:
+        if skipped:
+            handle.seek(skipped)
+        with _chunk_reader(handle, chunk, read_ahead=read_ahead, timed=debug_timing) as next_chunk:
+            part_number = first
+            while True:
+                data, read_ms, wait_ms = next_chunk()
+                if not data:
+                    break
+                etag = _put_part_with_url_refresh(
+                    get_part_url,
+                    data,
+                    source=source,
+                    part_number=part_number,
+                    engine=engine,
+                    file_id=file_id,
+                    retry_attempts=retry_attempts,
+                    retry_base_seconds=retry_base_seconds,
+                    retry_max_seconds=retry_max_seconds,
+                    part_url_refresh_attempts=part_url_refresh_attempts,
+                    sleep=sleep,
                 )
-            _log_part(file_id, source.name, part_number, parts, sent, size, clock() - started)
-            _report(on_progress, sent)
-            part_number += 1
+                etags[part_number] = etag
+                _part_done(on_part_done, part_number, etag)
+                sent += len(data)
+                del data
+                if debug_timing:
+                    _log.info(
+                        "file %s part %d read_ms=%.0f%s",
+                        file_id if file_id is not None else "-",
+                        part_number,
+                        read_ms,
+                        f" wait_ms={wait_ms:.0f}" if wait_ms is not None else "",
+                    )
+                _log_part(
+                    file_id,
+                    source.name,
+                    part_number,
+                    parts,
+                    sent,
+                    size,
+                    clock() - started,
+                    first=first,
+                    skipped=skipped,
+                )
+                _report(on_progress, sent)
+                part_number += 1
 
     return etags
+
+def held_prefix(done: Mapping[int, str], parts: int) -> dict[int, str]:
+    held: dict[int, str] = {}
+    part = 1
+    while part <= parts and done.get(part):
+        held[part] = done[part]
+        part += 1
+    return held
 
 _Chunk = tuple[bytes, float | None, float | None]
 
@@ -303,11 +340,14 @@ def _log_part(
     sent: int,
     size: int,
     elapsed: float,
+    *,
+    first: int = 1,
+    skipped: int = 0,
 ) -> None:
     mb = 1024 * 1024
     left = ""
-    if part >= 2 and part < parts and sent:
-        remaining = elapsed * (size - sent) / sent
+    if part >= first + 1 and part < parts and sent > skipped:
+        remaining = elapsed * (size - sent) / (sent - skipped)
         left = (
             f"  ~{remaining / 60:.0f} min left"
             if remaining >= 60
