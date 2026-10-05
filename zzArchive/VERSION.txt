@@ -1,3 +1,3 @@
-source commit : 38613aa1e1cc0612adf40588d8301ba337a72862
-               feat: build a batch from a list of databases already on Data Bridge (TASK-0133)
-files         : 94
+source commit : d83ee7ce99e5907824b075fe1bd122a5cb2c0db0
+               chore: publish the multipart-resume probe to the VM (TASK-0128)
+files         : 95

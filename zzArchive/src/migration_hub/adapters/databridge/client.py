@@ -332,11 +332,25 @@ class DatabridgeAdapter:
         return isinstance(rows, list) and len(rows) > 0
 
     def probe_get(self, path: str, *, params: dict[str, str] | None = None) -> httpx.Response:
+        return self.probe_request("GET", path, params=params)
+
+    def probe_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str] | dict[str, int] | None = None,
+        json: object = None,
+    ) -> httpx.Response:
         url = str(self._client.base_url.join(path))
+        kwargs: dict[str, object] = {"params": params}
+        if json is not None:
+            kwargs["json"] = json
         if self._engine is None:
-            return self._client.get(path, params=params)
-        with audited_call(engine=self._engine, file_id=None, method="GET", url=url) as call:
-            response = self._client.get(path, params=params)
+            return self._client.request(method, path, **kwargs)
+        with audited_call(engine=self._engine, file_id=None, method=method, url=url) as call:
+            call.request_body = json
+            response = self._client.request(method, path, **kwargs)
             call.status_code = response.status_code
             call.response_body = _safe_json(response)
         return response
