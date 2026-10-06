@@ -31,7 +31,9 @@ from migration_hub.core.scrub import scrub_credentials
 
 _FORMAT_CODES = {"bak": 1, "mdf": 0, "dacpac": 2}
 
-_IMPORT_FAILED_PREFIX = "Import job "
+_IMPORT_FAILED_MARK = "Import job "
+
+_PROBE_STATES = frozenset({"FAILED", "ABANDONED"})
 
 _EXCERPT_CHARS = 500
 DEFAULT_POLL_SECONDS = 30.0
@@ -52,9 +54,9 @@ def extension_of(source_path: str) -> str:
 def refusal(file: MigrationFile | None) -> str | None:
     if file is None:
         return "no such file in this registry -- run on the machine that uploaded it"
-    if file.state != "FAILED":
-        return f"file is {file.state}, not FAILED -- leaving it alone"
-    if not (file.last_error or "").startswith(_IMPORT_FAILED_PREFIX):
+    if file.state not in _PROBE_STATES:
+        return f"file is {file.state}, not FAILED or ABANDONED -- leaving it alone"
+    if _IMPORT_FAILED_MARK not in (file.last_error or ""):
         return f"its last failure was not the import job: {file.last_error or '(none recorded)'}"
     if not file.instance_name:
         return "no instance_name recorded -- the file never started uploading"
@@ -185,9 +187,11 @@ _NEXT = {
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Re-import a FAILED file without uploading it again (TASK-0136)"
+        description="Re-import a failed file without uploading it again (TASK-0136)"
     )
-    parser.add_argument("--file-id", required=True, type=int, help="the FAILED file's id")
+    parser.add_argument(
+        "--file-id", required=True, type=int, help="the FAILED or ABANDONED file's id"
+    )
     parser.add_argument(
         "--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS, help="between job polls"
     )
