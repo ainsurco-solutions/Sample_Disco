@@ -51,12 +51,12 @@ def extension_of(source_path: str) -> str:
     name = source_path.replace("\\", "/").rsplit("/", 1)[-1]
     return name.rsplit(".", 1)[-1].lower() if "." in name else ""
 
-def refusal(file: MigrationFile | None) -> str | None:
+def refusal(file: MigrationFile | None, *, check_error: bool = True) -> str | None:
     if file is None:
         return "no such file in this registry -- run on the machine that uploaded it"
     if file.state not in _PROBE_STATES:
         return f"file is {file.state}, not FAILED or ABANDONED -- leaving it alone"
-    if _IMPORT_FAILED_MARK not in (file.last_error or ""):
+    if check_error and _IMPORT_FAILED_MARK not in (file.last_error or ""):
         return f"its last failure was not the import job: {file.last_error or '(none recorded)'}"
     if not file.instance_name:
         return "no instance_name recorded -- the file never started uploading"
@@ -198,12 +198,17 @@ def main() -> int:
     parser.add_argument(
         "--max-minutes", type=float, default=DEFAULT_MAX_MINUTES, help="stop polling after"
     )
+    parser.add_argument(
+        "--skip-error-check",
+        action="store_true",
+        help="do not require last_error to be the import job (state and location still checked)",
+    )
     args = parser.parse_args()
 
     settings = _load_settings()
     engine = create_registry_engine(settings.database_url)
     file = Registry(engine).get(args.file_id)
-    reason = refusal(file)
+    reason = refusal(file, check_error=not args.skip_error_check)
     if reason is not None:
         raise SystemExit(f"file {args.file_id}: {reason}")
     assert file is not None
