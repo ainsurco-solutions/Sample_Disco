@@ -1,3 +1,3 @@
-source commit : df5f5f05ae31233e46273f2c86fa2bbff54809e2
-               test: skip the re-import probe's tests in the published copy (TASK-0136)
-files         : 98
+source commit : 6a3a36ac367ad48caac7b7f2141f5cab3bdb22c5
+               feat: publish the re-import probe with the runtime (TASK-0136)
+files         : 99
