@@ -35,6 +35,7 @@
 
   "max_attempts": 3,
   "max_archive_attempts": 9,
+  "max_reimport_attempts": 1,
   "claim_stale_minutes": 10,
 
   "inline_retry_attempts": 3,

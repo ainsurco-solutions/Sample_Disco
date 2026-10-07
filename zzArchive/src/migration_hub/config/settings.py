@@ -50,6 +50,7 @@ class Settings(BaseModel):
 
     max_attempts: int = 3
     max_archive_attempts: int = Field(default=9, ge=1)
+    max_reimport_attempts: int = Field(default=1, ge=0)
     claim_heartbeat_seconds: float = Field(default=60.0, gt=0)
     claim_stale_minutes: int = Field(default=10, ge=2)
 

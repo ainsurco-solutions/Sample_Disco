@@ -1835,7 +1835,9 @@ def _render_retry_action(
             st.write(
                 "Each file is checked in Data Vault, then Data Bridge: already in "
                 "Data Vault -> COMPLETED; on Data Bridge -> archive only; on "
-                "neither -> uploaded again. The retry then starts the pipeline "
+                "neither -> re-imported without uploading if its upload once "
+                "completed (up to max_reimport_attempts), otherwise uploaded "
+                "again. The retry then starts the pipeline "
                 "for this batch itself -- nothing else to run. If files in the "
                 "batch are still in flight it starts nothing, and says so in "
                 "the log."

@@ -365,6 +365,7 @@ def place_by_location(
     actor: str,
     detail: str,
     reset_attempts: bool,
+    max_reimport_attempts: int,
 ) -> FileState:
     if location is Location.DATA_VAULT:
         registry.transition(
@@ -385,11 +386,25 @@ def place_by_location(
         )
         return FileState.BRIDGED
     fields: dict[str, object] = {"attempts": 0, "archive_attempts": 0} if reset_attempts else {}
+    file = registry.get(file_id)
+    uploaded = file is not None and file.uploaded_at is not None
+    spent = (file.reimport_attempts or 0) if file is not None else 0
+    reimport = uploaded and spent < max_reimport_attempts
+    if reimport:
+        outcome = (
+            "re-importing the uploaded file without uploading "
+            f"(re-import {spent + 1}/{max_reimport_attempts})"
+        )
+    elif uploaded and max_reimport_attempts > 0:
+        outcome = "re-import limit reached, uploading again"
+    else:
+        outcome = "uploading again"
     registry.transition(
         file_id=file_id,
         to_state=FileState.VALIDATED,
         actor=actor,
-        detail=f"{detail}: on neither Data Bridge nor Data Vault, uploading again",
+        detail=f"{detail}: on neither Data Bridge nor Data Vault, {outcome}",
+        reimport_pending=reimport,
         **fields,
     )
     return FileState.VALIDATED
@@ -409,6 +424,7 @@ class RetryOutcome:
     archive_retry_file_ids: list[int] = field(default_factory=list)
     completed_file_ids: list[int] = field(default_factory=list)
     bridged_file_ids: list[int] = field(default_factory=list)
+    reimport_file_ids: list[int] = field(default_factory=list)
     unchecked: dict[int, str] = field(default_factory=dict)
     pipeline_started: bool = False
     not_started_reason: str | None = None
@@ -424,6 +440,7 @@ def retry_files(
     worker_count: int = 1,
     max_files_per_worker: int | None = 1,
     environment: str | None = None,
+    max_reimport_attempts: int = 0,
 ) -> RetryOutcome:
     for file_id in file_ids:
         file = registry.get(file_id)
@@ -436,6 +453,7 @@ def retry_files(
     archive_retry: list[int] = []
     completed: list[int] = []
     bridged: list[int] = []
+    reimport: list[int] = []
     unchecked: dict[int, str] = {}
     for file_id in file_ids:
         file = registry.get(file_id)
@@ -455,17 +473,22 @@ def retry_files(
             actor=actor,
             detail=f"retry ({detail})" if detail else "retry",
             reset_attempts=True,
+            max_reimport_attempts=max_reimport_attempts,
         )
-        {
-            FileState.COMPLETED: completed,
-            FileState.BRIDGED: bridged,
-            FileState.VALIDATED: requeue,
-        }[placed].append(file_id)
+        if placed is FileState.VALIDATED:
+            placed_file = registry.get(file_id)
+            if placed_file is not None and placed_file.reimport_pending:
+                reimport.append(file_id)
+            else:
+                requeue.append(file_id)
+            continue
+        {FileState.COMPLETED: completed, FileState.BRIDGED: bridged}[placed].append(file_id)
 
     workers: list[WorkerHandle] = []
     pipeline_started = False
     not_started_reason: str | None = None
-    if requeue or bridged or archive_retry:
+    needs_pipeline = requeue + reimport
+    if needs_pipeline or bridged or archive_retry:
         in_flight = registry.files_in_states(states=sorted(IN_FLIGHT_STATES), batch_id=batch_id)
         if in_flight:
             not_started_reason = (
@@ -473,7 +496,7 @@ def retry_files(
                 "not starting a second pipeline or archiver over them. Once that work "
                 f"finishes, run `migration-hub migrate --batch {batch_id}`."
             )
-        elif requeue and registry.batch_destination(batch_id) is BatchDestination.BRIDGE:
+        elif needs_pipeline and registry.batch_destination(batch_id) is BatchDestination.BRIDGE:
             workers.extend(
                 start_run_subprocesses(
                     registry=registry,
@@ -482,7 +505,7 @@ def retry_files(
                     environment=environment,
                 )
             )
-        elif requeue:
+        elif needs_pipeline:
             workers.append(start_migrate_subprocess(batch_id=batch_id, environment=environment))
             pipeline_started = True
         elif archive_retry or registry.batch_destination(batch_id) is BatchDestination.VAULT:
@@ -494,6 +517,7 @@ def retry_files(
         archive_retry_file_ids=archive_retry,
         completed_file_ids=completed,
         bridged_file_ids=bridged,
+        reimport_file_ids=reimport,
         unchecked=unchecked,
         pipeline_started=pipeline_started,
         not_started_reason=not_started_reason,

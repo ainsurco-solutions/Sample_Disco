@@ -122,12 +122,15 @@ class MigrationWorker:
                 self._session = self._adapter.open_session()
             session = self._session
 
-            job_id = self._upload_and_import(
-                file.file_id,
-                source_path=file.source_path,
-                database_name=file.source_database,
-                expected_size_bytes=file.size_bytes,
-            )
+            if file.reimport_pending:
+                job_id = self._reimport(file)
+            else:
+                job_id = self._upload_and_import(
+                    file.file_id,
+                    source_path=file.source_path,
+                    database_name=file.source_database,
+                    expected_size_bytes=file.size_bytes,
+                )
             self._poll(file.file_id, job_id=job_id)
             self._verify(
                 file.file_id,
@@ -137,6 +140,8 @@ class MigrationWorker:
         except BaseException as exc:
             return self._handle_failure(file.file_id, exc)
 
+        if file.reimport_pending:
+            self._forget_unfinished_upload(file.file_id)
         if self._archive is None:
             return FileState.BRIDGED
         with self._adapter.bound_to_file(file.file_id):
@@ -156,12 +161,9 @@ class MigrationWorker:
         self, file_id: int, *, source_path: str, database_name: str, expected_size_bytes: int
     ) -> str:
         instance_name = self._resolve_instance(source_path)
-
-        current_size = Path(source_path).stat().st_size
-        if current_size != expected_size_bytes:
-            raise SourceChangedSinceDiscoveryError(
-                file_id=file_id, expected=expected_size_bytes, actual=current_size
-            )
+        self._check_source_unchanged(
+            file_id, source_path=source_path, expected_size_bytes=expected_size_bytes
+        )
 
         self._registry.record_identifiers(
             file_id=file_id,
@@ -186,11 +188,81 @@ class MigrationWorker:
             to_state=FileState.UPLOADED,
             actor=self._worker_id,
             uploaded_at=datetime.now(UTC).replace(tzinfo=None),
+            reimport_attempts=0,
         )
         self._registry.transition(
             file_id=file_id, to_state=FileState.IMPORTING, actor=self._worker_id, job_id=job_id
         )
         return job_id
+
+    def _check_source_unchanged(
+        self, file_id: int, *, source_path: str, expected_size_bytes: int
+    ) -> None:
+        current_size = Path(source_path).stat().st_size
+        if current_size != expected_size_bytes:
+            raise SourceChangedSinceDiscoveryError(
+                file_id=file_id, expected=expected_size_bytes, actual=current_size
+            )
+
+    def _reimport(self, file: MigrationFile) -> str:
+        reimport = False
+        try:
+            instance_name = self._resolve_instance(file.source_path)
+            self._check_source_unchanged(
+                file.file_id, source_path=file.source_path, expected_size_bytes=file.size_bytes
+            )
+            reimport = file.instance_name == instance_name
+        finally:
+            spent = {"reimport_attempts": (file.reimport_attempts or 0) + 1} if reimport else {}
+            self._registry.record_identifiers(
+                file_id=file.file_id, actor=self._worker_id, reimport_pending=False, **spent
+            )
+
+        if not reimport:
+            _log.warning(
+                "file %s: uploaded to %s but now routed to %s -- uploading again "
+                "instead of re-importing",
+                file.file_id,
+                file.instance_name,
+                instance_name,
+            )
+            return self._upload_and_import(
+                file.file_id,
+                source_path=file.source_path,
+                database_name=file.source_database,
+                expected_size_bytes=file.size_bytes,
+            )
+
+        database_name = file.database_name or file.source_database
+        with self._adapter.bound_to_file(file.file_id):
+            job_id = self._adapter.import_uploaded(
+                instance_name=instance_name,
+                database_name=database_name,
+                file_extension="bak",
+                group_ids=self._group_ids,
+            )
+
+        self._registry.transition(
+            file_id=file.file_id,
+            to_state=FileState.UPLOADED,
+            actor=self._worker_id,
+            detail=f"re-import: nothing uploaded, the .bak uploaded at {file.uploaded_at} "
+            "is imported again",
+        )
+        self._registry.transition(
+            file_id=file.file_id,
+            to_state=FileState.IMPORTING,
+            actor=self._worker_id,
+            detail=f"re-import job {job_id}",
+            job_id=job_id,
+        )
+        return job_id
+
+    def _forget_unfinished_upload(self, file_id: int) -> None:
+        try:
+            self._registry.clear_saved_upload(file_id=file_id)
+        except Exception as exc:
+            _log.warning("file %s: saved upload not cleared: %s", file_id, exc)
 
     def _progress(self, file_id: int, sent: int, *, start: bool = False) -> None:
         try:

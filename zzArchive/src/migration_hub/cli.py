@@ -243,6 +243,7 @@ def _migrate(
         instances=settings.databridge_instances,
         group_ids=settings.databridge_group_ids,
         max_archive_attempts=settings.max_archive_attempts,
+        max_reimport_attempts=settings.max_reimport_attempts,
         compute_checksum=settings.compute_checksums,
         on_progress=lambda message: typer.echo(message),
     )
@@ -418,6 +419,7 @@ def retry(
             locate=batches.platform_locator(adapter),
             detail="manual retry via CLI",
             environment=settings.environment,
+            max_reimport_attempts=settings.max_reimport_attempts,
         )
     finally:
         adapter.close()
@@ -455,6 +457,11 @@ def _echo_retry(outcome: batches.RetryOutcome) -> None:
         typer.echo(
             f"{len(outcome.requeued_file_ids)} file(s) on neither -- requeued to VALIDATED "
             "from the start"
+        )
+    if outcome.reimport_file_ids:
+        typer.echo(
+            f"{len(outcome.reimport_file_ids)} file(s) on neither -- uploaded before, "
+            "re-importing without upload"
         )
     if outcome.archive_retry_file_ids:
         typer.echo(

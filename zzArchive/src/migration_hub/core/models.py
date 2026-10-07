@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Uuid,
+    false,
     func,
     text,
 )
@@ -98,6 +99,9 @@ class MigrationFile(Base):
     archived_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     archive_expiration_date: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP, default=None)
     archive_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+
+    reimport_pending: Mapped[bool] = mapped_column(default=False, server_default=false())
+    reimport_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
 
     bytes_sent: Mapped[int | None] = mapped_column(BigInteger, default=None)
     bytes_at_start: Mapped[int | None] = mapped_column(BigInteger, default=None)

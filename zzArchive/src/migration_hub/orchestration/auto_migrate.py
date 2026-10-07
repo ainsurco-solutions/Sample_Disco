@@ -80,6 +80,7 @@ def run_automated_migration(
     instances: dict[str, str] | None = None,
     group_ids: list[str] | None = None,
     max_archive_attempts: int | None = None,
+    max_reimport_attempts: int = 0,
     compute_checksum: bool = False,
     on_progress: Callable[[str], None] | None = None,
     initial_workers: int | None = None,
@@ -154,7 +155,7 @@ def run_automated_migration(
             break
         _requeue_failed_checked(
             registry=registry, failed=failed_now, adapter_factory=adapter_factory,
-            dry_run=dry_run, log=_log,
+            dry_run=dry_run, log=_log, max_reimport_attempts=max_reimport_attempts,
         )
 
     if _is_paused(registry, batch_id):
@@ -257,6 +258,7 @@ def _requeue_failed_checked(
     adapter_factory: Callable[[], DatabridgeAdapter],
     dry_run: bool,
     log: Callable[[str], None],
+    max_reimport_attempts: int,
 ) -> None:
     if dry_run:
         for file in failed:
@@ -266,6 +268,7 @@ def _requeue_failed_checked(
         return
 
     placed: dict[FileState, int] = {}
+    reimports = 0
     adapter = adapter_factory()
     try:
         locate = platform_locator(adapter)
@@ -291,7 +294,12 @@ def _requeue_failed_checked(
                 actor="auto-retry",
                 detail="auto-retry",
                 reset_attempts=False,
+                max_reimport_attempts=max_reimport_attempts,
             )
+            if state is FileState.VALIDATED:
+                again = registry.get(file.file_id)
+                if again is not None and again.reimport_pending:
+                    reimports += 1
             placed[state] = placed.get(state, 0) + 1
     finally:
         adapter.close()
@@ -301,6 +309,7 @@ def _requeue_failed_checked(
         f"{placed.get(FileState.COMPLETED, 0)} already in Data Vault, "
         f"{placed.get(FileState.BRIDGED, 0)} already on Data Bridge (archive only), "
         f"{placed.get(FileState.VALIDATED, 0)} requeued for another pass"
+        + (f" ({reimports} to be re-imported without uploading)" if reimports else "")
     )
 
 def _final_states(registry: Registry, batch_id: str) -> dict[FileState, int]:

@@ -170,6 +170,23 @@ class DatabridgeAdapter:
             group_ids=group_ids if group_ids is not None else [],
         )
 
+    def import_uploaded(
+        self,
+        *,
+        instance_name: str,
+        database_name: str,
+        file_extension: str,
+        group_ids: list[str] | None = None,
+    ) -> str:
+        if file_extension not in _FORMAT_CODES:
+            raise ValueError(f"unsupported file_extension: {file_extension!r}")
+        return self._trigger_import(
+            instance_name=instance_name,
+            database_name=database_name,
+            format_code=_FORMAT_CODES[file_extension],
+            group_ids=group_ids if group_ids is not None else [],
+        )
+
     def _upload_small(
         self,
         *,
