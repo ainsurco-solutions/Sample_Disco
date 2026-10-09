@@ -1,3 +1,3 @@
-source commit : 8e5d23d66ead5473a276f56ed309ba45723237d6
-               docs: TASK-0138 slices 4-7 verified; stage list typed for mypy (TASK-0138)
+source commit : 238d5fb2883be2dbc6306c4febb98ad5ce090ace
+               fix: workers archive waiting BRIDGED files in parallel, by the dial (TASK-0139)
 files         : 99

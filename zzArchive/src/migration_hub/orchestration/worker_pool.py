@@ -104,7 +104,7 @@ def run_worker_pool(
                 if index < current():
                     break
                 continue
-            if not _claimable(registry, batch_id):
+            if not _claimable(registry, batch_id, archives=archive_after_bridge and not dry_run):
                 break
             sleep(idle_seconds)
         return total
@@ -126,5 +126,7 @@ def run_worker_pool(
             merged[state] = merged.get(state, 0) + count
     return merged
 
-def _claimable(registry: Registry, batch_id: str) -> bool:
-    return registry.counts_by_state(batch_id=batch_id)[FileState.VALIDATED] > 0
+def _claimable(registry: Registry, batch_id: str, *, archives: bool = False) -> bool:
+    if registry.counts_by_state(batch_id=batch_id)[FileState.VALIDATED] > 0:
+        return True
+    return archives and batches.has_archive_to_claim(registry, batch_id)

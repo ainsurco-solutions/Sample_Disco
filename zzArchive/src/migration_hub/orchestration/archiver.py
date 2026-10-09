@@ -78,6 +78,7 @@ def archive_one_file(
     max_archive_attempts: int | None = None,
     max_wait_minutes: float = 0.0,
     poll_interval_seconds: float = 60.0,
+    claimed: bool = False,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(UTC).replace(tzinfo=None),
@@ -94,6 +95,7 @@ def archive_one_file(
         limit=max_archive_attempts,
         max_wait_minutes=max_wait_minutes,
         poll_interval_seconds=poll_interval_seconds,
+        first_attempt=claimed,
         sleep=sleep,
         clock=clock,
         now=now,
@@ -115,6 +117,7 @@ def _archive_guarded(
     sleep: Callable[[float], None],
     clock: Callable[[], float],
     now: Callable[[], datetime],
+    first_attempt: bool = False,
 ) -> bool:
     try:
         return _archive_one(
@@ -129,6 +132,7 @@ def _archive_guarded(
             sleep=sleep,
             clock=clock,
             now=now,
+            first_attempt=first_attempt,
         )
     except HaltError:
         raise
@@ -153,6 +157,7 @@ def _archive_one(
     sleep: Callable[[float], None],
     clock: Callable[[], float],
     now: Callable[[], datetime],
+    first_attempt: bool = False,
 ) -> bool:
     assert file.instance_name is not None
     assert file.database_name is not None
@@ -194,7 +199,7 @@ def _archive_one(
         with adapter.bound_to_file(file.file_id):
             return adapter.archive_exists(database_name=database_name)
 
-    retrying = file.state != str(FileState.BRIDGED)
+    retrying = file.state != str(FileState.BRIDGED) and not first_attempt
 
     if (
         limit is not None

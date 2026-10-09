@@ -140,6 +140,17 @@ def run_worker_loop(
         if may_claim is not None and not may_claim():
             break
         outcome = worker.run_once(batch_id=batch_id)
+        if outcome is None and archive_after_bridge and not dry_run:
+            outcome = _archive_next_bridged(
+                registry=registry,
+                adapter=adapter,
+                worker=worker,
+                batch_id=batch_id,
+                worker_id=worker_id,
+                max_archive_attempts=max_archive_attempts,
+                max_wait_minutes=max_poll_minutes,
+                poll_interval_seconds=poll_interval_seconds,
+            )
         if outcome is None:
             break
         outcomes[outcome] = outcomes.get(outcome, 0) + 1
@@ -157,6 +168,7 @@ def _archive_bridged_file(
     max_archive_attempts: int | None,
     max_wait_minutes: float,
     poll_interval_seconds: float,
+    claimed: bool = False,
 ) -> FileState:
     return archiver.archive_one_file(
         registry=registry,
@@ -167,7 +179,44 @@ def _archive_bridged_file(
         max_archive_attempts=max_archive_attempts,
         max_wait_minutes=max_wait_minutes,
         poll_interval_seconds=poll_interval_seconds,
+        claimed=claimed,
     )
+
+def has_archive_to_claim(registry: Registry, batch_id: str) -> bool:
+    return any(
+        f.state == str(FileState.BRIDGED)
+        for f in registry.pending_archives(batch_id=batch_id, include_failed=False)
+    )
+
+def _archive_next_bridged(
+    *,
+    registry: Registry,
+    adapter: DatabridgeAdapter,
+    worker: MigrationWorker,
+    batch_id: str,
+    worker_id: str,
+    max_archive_attempts: int | None,
+    max_wait_minutes: float,
+    poll_interval_seconds: float,
+) -> FileState | None:
+    if not has_archive_to_claim(registry, batch_id):
+        return None
+    resource_group_id = worker.platform_session().resource_group_id
+    file = registry.claim_next_archive(batch_id=batch_id, worker_id=worker_id)
+    if file is None:
+        return None
+    with adapter.bound_to_file(file.file_id):
+        return _archive_bridged_file(
+            file.file_id,
+            resource_group_id,
+            registry=registry,
+            adapter=adapter,
+            actor=worker_id,
+            max_archive_attempts=max_archive_attempts,
+            max_wait_minutes=max_wait_minutes,
+            poll_interval_seconds=poll_interval_seconds,
+            claimed=True,
+        )
 
 def split_pending_archives(
     files: Sequence[MigrationFile], *, now: datetime, in_hand_minutes: float

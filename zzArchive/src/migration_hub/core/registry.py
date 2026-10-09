@@ -419,6 +419,102 @@ class Registry:
                 session.expunge(claimed)
             return claimed
 
+    def claim_next_archive(self, *, batch_id: str, worker_id: str) -> MigrationFile | None:
+        from_state, to_state = FileState.BRIDGED, FileState.ARCHIVING
+        assert_transition(from_state, to_state)
+        params: dict[str, object] = {
+            "to_state": str(to_state),
+            "worker_id": worker_id,
+            "from_state": str(from_state),
+            "batch_id": batch_id,
+        }
+
+        if self._engine.dialect.name == "sqlite":
+            now = datetime.now(UTC).replace(tzinfo=None)
+            with Session(self._engine) as session:
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                try:
+                    row = session.execute(
+                        text(
+                            "SELECT file_id FROM migration_file "
+                            "WHERE state = :from_state AND batch_id = :batch_id "
+                            "AND instance_name IS NOT NULL AND database_name IS NOT NULL "
+                            "ORDER BY file_id LIMIT 1"
+                        ),
+                        params,
+                    ).first()
+                    if row is None:
+                        session.rollback()
+                        return None
+                    file_id = int(row[0])
+                    session.execute(
+                        text(
+                            "UPDATE migration_file "
+                            "SET state = :to_state, claimed_by = :worker_id, "
+                            "    claimed_at = :now, updated_at = :now, "
+                            "    archive_attempts = archive_attempts + 1 "
+                            "WHERE file_id = :file_id"
+                        ),
+                        {**params, "now": now, "file_id": file_id},
+                    )
+                    session.add(
+                        MigrationEvent(
+                            file_id=file_id,
+                            from_state=str(from_state),
+                            to_state=str(to_state),
+                            actor=worker_id,
+                            detail="claimed to archive",
+                        )
+                    )
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+            with Session(self._engine) as session:
+                claimed = session.get(MigrationFile, file_id)
+                if claimed is not None:
+                    session.expunge(claimed)
+            return _log_claim(claimed, from_state=from_state, to_state=to_state)
+
+        claim_sql = text(
+            """
+            UPDATE TOP (1) migration_file
+               SET state            = :to_state,
+                   claimed_by       = :worker_id,
+                   claimed_at       = SYSUTCDATETIME(),
+                   updated_at       = SYSUTCDATETIME(),
+                   archive_attempts = archive_attempts + 1
+            OUTPUT inserted.*
+             WHERE file_id = (
+                    SELECT TOP (1) file_id
+                      FROM migration_file WITH (UPDLOCK, READPAST)
+                     WHERE state    = :from_state
+                       AND batch_id = :batch_id
+                       AND instance_name IS NOT NULL
+                       AND database_name IS NOT NULL
+                     ORDER BY file_id
+                 );
+            """
+        )
+        with Session(self._engine) as session, session.begin():
+            claimed_row = session.execute(claim_sql, params).mappings().first()
+            if claimed_row is None:
+                return None
+            file_id = claimed_row["file_id"]
+            session.add(
+                MigrationEvent(
+                    file_id=file_id,
+                    from_state=str(from_state),
+                    to_state=str(to_state),
+                    actor=worker_id,
+                    detail="claimed to archive",
+                )
+            )
+            claimed = session.get(MigrationFile, file_id)
+            session.flush()
+            session.expunge(claimed)
+        return _log_claim(claimed, from_state=from_state, to_state=to_state)
+
     def stale_claims(self, *, timeout_minutes: int) -> Sequence[MigrationFile]:
         cutoff = datetime.now(UTC) - timedelta(minutes=timeout_minutes)
 

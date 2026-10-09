@@ -92,6 +92,11 @@ class MigrationWorker:
         self._dry_run_seen: set[int] = set()
         self._session: PlatformSession | None = None
 
+    def platform_session(self) -> PlatformSession:
+        if self._session is None:
+            self._session = self._adapter.open_session()
+        return self._session
+
     def run_once(self, *, batch_id: str) -> FileState | None:
         file = self._registry.claim_next(
             batch_id=batch_id,
