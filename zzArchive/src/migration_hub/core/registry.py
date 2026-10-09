@@ -75,6 +75,23 @@ class SavedUpload:
     file_extension: str
     etags: dict[int, str]
 
+@dataclass(frozen=True)
+class BatchSummary:
+
+    batch_id: str
+    state: str
+    destination: str
+    created_at: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    counts: dict[FileState, int]
+    bytes_by_state: dict[str, int]
+    earliest_file_created_at: datetime | None
+
+    @property
+    def file_count(self) -> int:
+        return sum(self.counts.values())
+
 class Registry:
 
     def __init__(self, engine: Engine) -> None:
@@ -719,6 +736,59 @@ class Registry:
             session.expunge_all()
             return results
 
+    def batch_summaries(self) -> list[BatchSummary]:
+        stmt = select(
+            MigrationFile.batch_id,
+            MigrationFile.state,
+            func.count(),
+            func.coalesce(func.sum(MigrationFile.size_bytes), 0),
+            func.min(MigrationFile.created_at),
+        ).group_by(MigrationFile.batch_id, MigrationFile.state)
+        counts: dict[str, dict[FileState, int]] = {}
+        sizes: dict[str, dict[str, int]] = {}
+        earliest: dict[str, datetime] = {}
+        with Session(self._engine) as session:
+            batches = list(session.scalars(select(Batch).order_by(Batch.created_at.desc())))
+            for batch_id, state, count, size, first in session.execute(stmt):
+                sizes.setdefault(batch_id, {})[str(state)] = int(size)
+                if first is not None and (batch_id not in earliest or first < earliest[batch_id]):
+                    earliest[batch_id] = first
+                by_state = counts.setdefault(batch_id, dict.fromkeys(FileState, 0))
+                try:
+                    by_state[FileState(state)] = count
+                except ValueError:
+                    continue
+            return [
+                BatchSummary(
+                    batch_id=b.batch_id,
+                    state=b.state,
+                    destination=b.destination,
+                    created_at=b.created_at,
+                    started_at=b.started_at,
+                    finished_at=b.finished_at,
+                    counts=counts.get(b.batch_id) or dict.fromkeys(FileState, 0),
+                    bytes_by_state=sizes.get(b.batch_id, {}),
+                    earliest_file_created_at=earliest.get(b.batch_id),
+                )
+                for b in batches
+            ]
+
+    def batch_ended_at(self, *, batch_ids: Sequence[str]) -> dict[str, datetime]:
+        if not batch_ids:
+            return {}
+        stmt = (
+            select(MigrationFile.batch_id, func.max(MigrationEvent.occurred_at))
+            .select_from(MigrationEvent)
+            .join(MigrationFile)
+            .where(
+                MigrationFile.batch_id.in_(list(batch_ids)),
+                MigrationEvent.to_state.in_([str(s) for s in TERMINAL_STATES]),
+            )
+            .group_by(MigrationFile.batch_id)
+        )
+        with Session(self._engine) as session:
+            return {batch_id: ended for batch_id, ended in session.execute(stmt) if ended}
+
     def files_in_states(
         self, *, states: Sequence[FileState], batch_id: str | None = None
     ) -> Sequence[MigrationFile]:
@@ -775,6 +845,15 @@ class Registry:
             results = list(session.scalars(stmt))
             session.expunge_all()
             return results
+
+    def transaction_counts_since(self, *, since: datetime) -> tuple[int, int]:
+        stmt = select(
+            func.count(),
+            func.coalesce(func.sum(case((ApiTransaction.status_code >= 400, 1), else_=0)), 0),
+        ).where(ApiTransaction.occurred_at >= since)
+        with Session(self._engine) as session:
+            calls, errors = session.execute(stmt).one()
+        return int(calls), int(errors)
 
     def batch_files(self, *, batch_id: str) -> Sequence[MigrationFile]:
         stmt = (

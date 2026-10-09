@@ -171,7 +171,11 @@ def render() -> None:
         )
         if settings.dry_run:
             st.badge("Dry run", color="gray", icon=":material/science:")
-        if st.button("Refresh now", icon=":material/refresh:"):
+        if st.button(
+            "Refresh visible",
+            icon=":material/refresh:",
+            help="Redraw what is shown. Closed diagnostic cards stay unread.",
+        ):
             st.rerun()
         _live_health_strip(registry, settings)
     if st.session_state.get("add_batch_open"):
@@ -210,13 +214,135 @@ def _live_batch_action_bar(registry: Registry, settings: Settings, batch: str) -
 def _live_batch_tabs(registry: Registry, settings: Settings, batch: str) -> None:
     _render_tabs(registry, settings, batch)
 
-@st.fragment(run_every="8s")
+_OVERVIEW_KPI_REFRESH = "15s"
+_DIAGNOSTICS_REFRESH = "15s"
+
 def _render_overview(registry: Registry, settings: Settings) -> None:
+    _live_overview_kpis(registry)
+    _live_batch_log(registry)
+    _live_diagnostics(registry, settings)
+
+@st.fragment(run_every=_OVERVIEW_KPI_REFRESH)
+def _live_overview_kpis(registry: Registry) -> None:
     _render_unknown_states(registry)
     _kpi_strip_global(registry)
-    _render_queue_panel(settings)
-    _render_operational_observability(registry, batch_id=None, settings=settings)
+
+@st.fragment(run_every=_BATCH_REFRESH)
+def _live_batch_log(registry: Registry) -> None:
     _render_batch_log(registry)
+
+@st.fragment(run_every=_DIAGNOSTICS_REFRESH)
+def _live_diagnostics(registry: Registry, settings: Settings) -> None:
+    _render_diagnostics(registry, settings)
+
+def _diagnostic_open(name: str, *, default: bool = False) -> bool:
+    return bool(st.session_state.get(f"diag_open_{name}", default))
+
+def _set_diagnostic_open(name: str, value: bool) -> None:
+    st.session_state[f"diag_open_{name}"] = value
+
+def _diagnostic_header(
+    name: str,
+    title: str,
+    *,
+    is_open: bool,
+    badge: tuple[str, _BadgeColor] | None = None,
+    caption: str | None = None,
+) -> None:
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.button(
+            f"**{title}**",
+            key=f"diag_toggle_{name}",
+            type="tertiary",
+            icon=":material/expand_less:" if is_open else ":material/expand_more:",
+            on_click=_set_diagnostic_open,
+            args=(name, not is_open),
+            help="Hide" if is_open else "Show -- its detail is only read while open",
+        )
+        if badge is not None:
+            st.badge(badge[0], color=badge[1])
+        if caption:
+            st.caption(caption)
+
+def _render_diagnostics(registry: Registry, settings: Settings) -> None:
+    rows = _needs_action_rows(registry, settings)
+    with st.container(border=True, key="mh-diag-needs_action"):
+        is_open = _diagnostic_open(
+            "needs_action", default=any(int(row["priority"]) <= 2 for row in rows)
+        )
+        _diagnostic_header(
+            "needs_action",
+            "Needs action",
+            is_open=is_open,
+            badge=(str(len(rows)), "orange" if rows else "green"),
+        )
+        if is_open:
+            _render_needs_action_list(rows)
+
+    with st.container(border=True, key="mh-diag-queue"):
+        snapshot = queue_check.read_snapshot(settings.queue_snapshot_path)
+        headline, _rows = _queue_view(snapshot, now=datetime.now(UTC))
+        is_open = _diagnostic_open("queue")
+        _diagnostic_header("queue", "Data Bridge queue", is_open=is_open, caption=headline)
+        if is_open:
+            _render_queue_panel(settings, heading=False)
+
+    with st.container(border=True, key="mh-diag-throughput"):
+        is_open = _diagnostic_open("throughput")
+        last = st.session_state.get("diag_headline_throughput")
+        _diagnostic_header(
+            "throughput",
+            "Throughput / ETA",
+            is_open=is_open,
+            caption=None if is_open else (f"{last} when last open" if last else None),
+        )
+        if is_open:
+            st.session_state["diag_headline_throughput"] = _render_throughput_panel(
+                registry, batch_id=None, heading=False
+            )
+
+    with st.container(border=True, key="mh-diag-api_calls"):
+        risk, calls = _api_call_risk(registry)
+        is_open = _diagnostic_open("api_calls", default=risk != "normal")
+        _diagnostic_header(
+            "api_calls",
+            "API calls",
+            is_open=is_open,
+            badge=(f"Runaway risk: {risk}", _API_RISK_COLOR[risk])
+            if calls
+            else ("No recent calls", "gray"),
+            caption=f"{calls} in the last {_API_WINDOW_MINUTES} min" if calls else None,
+        )
+        if is_open:
+            _render_api_call_panel(registry, batch_id=None, heading=False)
+
+_API_WINDOW_MINUTES = 15
+
+_API_RISK_COLOR: dict[str, _BadgeColor] = {
+    "normal": "green",
+    "watch": "orange",
+    "investigate": "red",
+}
+
+def _api_call_risk(registry: Registry) -> tuple[str, int]:
+    since = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=_API_WINDOW_MINUTES)
+    calls, errors = registry.transaction_counts_since(since=since)
+    if errors >= 10:
+        summary = metrics.api_call_summary(
+            registry=registry, batch_id=None, window_minutes=_API_WINDOW_MINUTES
+        )
+        return summary.risk, summary.calls
+    totals = metrics.ApiCallSummary(
+        calls=calls,
+        errors=errors,
+        slow_calls=0,
+        window=timedelta(minutes=_API_WINDOW_MINUTES),
+        slow_threshold_ms=0,
+        status_families={},
+        top_endpoints=(),
+        repeated_error_endpoints=(),
+    )
+    return totals.risk, calls
 
 _HealthPart = tuple[str, _BadgeColor, str]
 
@@ -402,15 +528,16 @@ def _queue_view(
         rows.append((q.instance, recommendation, detail))
     return headline, rows
 
-def _render_queue_panel(settings: Settings) -> None:
+def _render_queue_panel(settings: Settings, *, heading: bool = True) -> None:
     now = datetime.now(UTC)
     snapshot = queue_check.read_snapshot(settings.queue_snapshot_path)
     headline, rows = _queue_view(snapshot, now=now)
 
-    with st.container(border=True):
+    with st.container(border=heading):
         with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("Data Bridge queue")
-            st.caption(headline)
+            if heading:
+                st.subheader("Data Bridge queue")
+                st.caption(headline)
             launched = st.session_state.get("queue_check_launched_at")
             recently = (
                 launched is not None
@@ -532,18 +659,16 @@ def _kpi_strip_global(registry: Registry) -> None:
         unsafe_allow_html=True,
     )
 
-def _render_operational_observability(
-    registry: Registry, *, batch_id: str | None, settings: Settings | None = None
-) -> None:
+def _render_operational_observability(registry: Registry, *, batch_id: str | None) -> None:
     left, right = st.columns(2)
     with left:
         _render_throughput_panel(registry, batch_id=batch_id)
-        if batch_id is None:
-            _render_needs_action_queue(registry, settings)
     with right:
         _render_api_call_panel(registry, batch_id=batch_id)
 
-def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> None:
+def _render_throughput_panel(
+    registry: Registry, *, batch_id: str | None, heading: bool = True
+) -> str:
     snapshot = metrics.throughput(registry=registry, batch_id=batch_id, window_hours=24)
     file_metrics = registry.file_metrics(batch_id=batch_id)
     work = registry.remaining_work_metrics(batch_id=batch_id)
@@ -559,9 +684,10 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
     failure_rate = metrics.failure_rate(registry=registry, batch_id=batch_id)
 
     with st.container(border=False):
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("Throughput / ETA")
-            st.badge("Registry measured", color="green", icon=":material/speed:")
+        if heading:
+            with st.container(horizontal=True, vertical_alignment="center"):
+                st.subheader("Throughput / ETA")
+                st.badge("Registry measured", color="green", icon=":material/speed:")
         cols = st.columns(4)
         with cols[0]:
             st.metric("Speed", f"{_format_bytes(snapshot.bytes_per_second)}/s")
@@ -605,26 +731,27 @@ def _render_throughput_panel(registry: Registry, *, batch_id: str | None) -> Non
             )
         else:
             st.caption(f"ETA is a projection. Failure rate: {failure_rate:.1%}.")
+    return f"{_format_bytes(snapshot.bytes_per_second)}/s, ETA {eta_text}"
 
-def _render_api_call_panel(registry: Registry, *, batch_id: str | None) -> None:
-    summary = metrics.api_call_summary(registry=registry, batch_id=batch_id, window_minutes=15)
-    risk_color: dict[str, _BadgeColor] = {
-        "normal": "green",
-        "watch": "orange",
-        "investigate": "red",
-    }
+def _render_api_call_panel(
+    registry: Registry, *, batch_id: str | None, heading: bool = True
+) -> None:
+    summary = metrics.api_call_summary(
+        registry=registry, batch_id=batch_id, window_minutes=_API_WINDOW_MINUTES
+    )
 
     with st.container(border=False):
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("API calls")
-            if summary.calls:
-                st.badge(
-                    f"Runaway risk: {summary.risk}",
-                    color=risk_color[summary.risk],
-                    icon=":material/network_check:",
-                )
-            else:
-                st.badge("No recent calls", color="gray", icon=":material/network_check:")
+        if heading:
+            with st.container(horizontal=True, vertical_alignment="center"):
+                st.subheader("API calls")
+                if summary.calls:
+                    st.badge(
+                        f"Runaway risk: {summary.risk}",
+                        color=_API_RISK_COLOR[summary.risk],
+                        icon=":material/network_check:",
+                    )
+                else:
+                    st.badge("No recent calls", color="gray", icon=":material/network_check:")
         cols = st.columns(4)
         with cols[0]:
             st.metric("Calls / min", f"{summary.calls_per_minute:.1f}")
@@ -683,7 +810,9 @@ def _render_api_summary_tables(summary: metrics.ApiCallSummary) -> None:
             height=min(180, 36 + 35 * len(status_rows)),
         )
 
-def _render_needs_action_queue(registry: Registry, settings: Settings | None = None) -> None:
+def _needs_action_rows(
+    registry: Registry, settings: Settings | None = None
+) -> list[dict[str, str | int]]:
     rows: list[dict[str, str | int]] = []
     for batch in registry.list_batches():
         if batch.state == BatchState.DONE:
@@ -750,19 +879,17 @@ def _render_needs_action_queue(registry: Registry, settings: Settings | None = N
                 }
             )
 
-    rows = sorted(rows, key=lambda r: (int(r["priority"]), str(r["batch"])))
-    with st.container(border=False):
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("Needs action")
-            st.badge(str(len(rows)), color="orange" if rows else "green")
-        if not rows:
-            st.caption("No batches need operator action right now.")
-        for i, row in enumerate(rows):
-            if i == 3:
-                with st.expander(f"Show {len(rows) - 3} more"):
-                    _render_needs_action_rows(rows[3:], offset=3)
-                break
-            _render_needs_action_rows([row], offset=i)
+    return sorted(rows, key=lambda r: (int(r["priority"]), str(r["batch"])))
+
+def _render_needs_action_list(rows: list[dict[str, str | int]]) -> None:
+    if not rows:
+        st.caption("No batches need operator action right now.")
+    for i, row in enumerate(rows):
+        if i == 3:
+            with st.expander(f"Show {len(rows) - 3} more"):
+                _render_needs_action_rows(rows[3:], offset=3)
+            break
+        _render_needs_action_rows([row], offset=i)
 
 def _is_already_on_target(file: MigrationFile) -> bool:
     error = file.last_error or ""
@@ -854,56 +981,61 @@ def _batch_volume(
             rate = f"{moved / gib / hours:,.1f} GB/h"
     return round(size / gib, 1), round(moved / gib, 1), rate
 
+_RECENT_BATCHES = 6
+
 def _render_batch_log(registry: Registry) -> None:
-    batches = registry.list_batches()
-    if not batches:
+    summaries = registry.batch_summaries()
+    if not summaries:
         st.caption("No batches yet -- click **Start migration** to start one.")
         return
 
-    rows = []
-    attention_batches: set[str] = set()
     archive_batches = {file.batch_id for file in registry.pending_archives(batch_id=None)}
-    for b in batches:
-        counts = registry.counts_by_state(batch_id=b.batch_id)
-        label, _color = _batch_display_state(
-            BatchState(b.state), counts, BatchDestination(b.destination)
-        )
-
-        total = sum(counts.values())
-        is_done = total > 0 and _outstanding(counts, BatchDestination(b.destination)) == 0
+    attention_batches: set[str] = set()
+    for b in summaries:
         failed = (
-            counts[FileState.FAILED]
-            + counts[FileState.ABANDONED]
-            + counts[FileState.ARCHIVE_FAILED]
+            b.counts[FileState.FAILED]
+            + b.counts[FileState.ABANDONED]
+            + b.counts[FileState.ARCHIVE_FAILED]
         )
         if b.state != BatchState.DONE and (
             failed
-            or counts[FileState.REJECTED]
+            or b.counts[FileState.REJECTED]
             or (b.destination == BatchDestination.VAULT and b.batch_id in archive_batches)
         ):
             attention_batches.add(b.batch_id)
 
-        started_at = registry.earliest_file_created_at(batch_id=b.batch_id)
-        ended_at = None
-        if is_done:
-            terminal_times = registry.file_terminal_times(batch_id=b.batch_id)
-            ended_at = max(terminal_times.values()) if terminal_times else None
-        size_gb, moved_gb, rate = _batch_volume(
-            registry.bytes_by_state(batch_id=b.batch_id),
-            BatchDestination(b.destination),
-            started_at,
-            ended_at,
-        )
+    recent = [
+        b
+        for index, b in enumerate(summaries)
+        if index < _RECENT_BATCHES or b.batch_id in attention_batches
+    ]
+    show_all = bool(st.session_state.get("batch_log_show_all"))
+    shown = summaries if show_all else recent
+    done_ids = [
+        b.batch_id
+        for b in shown
+        if b.file_count > 0 and _outstanding(b.counts, BatchDestination(b.destination)) == 0
+    ]
+    ended = registry.batch_ended_at(batch_ids=done_ids)
 
-        rows.append(
+    visible_rows = []
+    for b in shown:
+        destination = BatchDestination(b.destination)
+        label, _color = _batch_display_state(BatchState(b.state), b.counts, destination)
+        started_at = b.earliest_file_created_at
+        ended_at = ended.get(b.batch_id)
+        size_gb, moved_gb, rate = _batch_volume(b.bytes_by_state, destination, started_at, ended_at)
+        visible_rows.append(
             {
                 "batch_id": b.batch_id,
                 "state": label,
-                "files": total,
+                "files": b.file_count,
                 "size_gb": size_gb,
                 "moved_gb": moved_gb,
-                "completed": counts[FileState.COMPLETED],
-                "failed": failed,
+                "completed": b.counts[FileState.COMPLETED],
+                "failed": b.counts[FileState.FAILED]
+                + b.counts[FileState.ABANDONED]
+                + b.counts[FileState.ARCHIVE_FAILED],
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "duration": _format_duration(started_at, ended_at) if ended_at else None,
@@ -911,15 +1043,14 @@ def _render_batch_log(registry: Registry) -> None:
             }
         )
 
-    recent_rows = [
-        row for index, row in enumerate(rows) if index < 7 or row["batch_id"] in attention_batches
-    ]
-    st.caption("Recent batches and older batches needing attention. Select a row for details.")
-    if len(recent_rows) < len(rows):
+    st.caption(
+        f"Last {_RECENT_BATCHES} batches and older batches needing attention. "
+        "Select a row for details."
+    )
+    if len(recent) < len(summaries):
         st.toggle("Show all batches", key="batch_log_show_all")
-    visible_rows = rows if st.session_state.get("batch_log_show_all") else recent_rows
     batch_ids = [str(row["batch_id"]) for row in visible_rows]
-    mode = "all" if st.session_state.get("batch_log_show_all") else "recent"
+    mode = "all" if show_all else "recent"
     snapshot = sha256(json.dumps(batch_ids).encode()).hexdigest()[:16]
     table_key = f"batch_log_table_{mode}_{snapshot}"
     st.session_state["batch_log_active_table"] = table_key

@@ -1,3 +1,3 @@
-source commit : c5a1d9527f7203eda4e8a351051445dba3590b17
-               fix: one archiver per batch -- the archive command and buttons respect the batch lock (TASK-0137)
+source commit : 13cb2b5e8b6d2074c404cd94a2d73118f6b079d1
+               perf: overview diagnostic cards read nothing while closed (TASK-0138)
 files         : 99
