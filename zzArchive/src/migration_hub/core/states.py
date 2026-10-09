@@ -76,6 +76,14 @@ class IllegalTransitionError(RuntimeError):
         self.current = current
         self.target = target
 
+class StateChangedError(RuntimeError):
+
+    def __init__(self, file_id: int, expected: FileState, current: FileState) -> None:
+        super().__init__(f"file {file_id} is {current}, not {expected} -- another process moved it")
+        self.file_id = file_id
+        self.expected = expected
+        self.current = current
+
 def assert_transition(current: FileState, target: FileState) -> None:
     if target not in LEGAL_TRANSITIONS.get(current, frozenset()):
         raise IllegalTransitionError(current, target)

@@ -30,6 +30,7 @@ from migration_hub.core.states import (
     BatchDestination,
     BatchState,
     FileState,
+    StateChangedError,
     assert_transition,
 )
 
@@ -514,6 +515,7 @@ class Registry:
         to_state: FileState,
         actor: str,
         detail: str | None = None,
+        expected_state: FileState | None = None,
         **fields: object,
     ) -> None:
         with Session(self._engine) as session, session.begin():
@@ -522,6 +524,8 @@ class Registry:
                 raise ValueError(f"No migration_file with file_id={file_id}")
 
             from_state = FileState(file.state)
+            if expected_state is not None and from_state is not expected_state:
+                raise StateChangedError(file_id, expected_state, from_state)
             assert_transition(from_state, to_state)
             detail = scrub_optional(detail)
             fields = _scrub_last_error(fields)

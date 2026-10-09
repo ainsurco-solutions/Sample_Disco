@@ -18,7 +18,7 @@ from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.states import BatchDestination, BatchState, FileState
 from migration_hub.observability import controls
-from migration_hub.orchestration import archiver
+from migration_hub.orchestration import archiver, batch_lock
 from migration_hub.orchestration.batch_identity import derive_batch_id
 
 _WINDOWS_DETACH_FLAGS = (
@@ -377,15 +377,16 @@ def place_by_location(
         )
         return FileState.COMPLETED
     if location is Location.DATA_BRIDGE:
+        reset: dict[str, Any] = {"archive_attempts": 0} if reset_attempts else {}
         registry.transition(
             file_id=file_id,
             to_state=FileState.BRIDGED,
             actor=actor,
             detail=f"{detail}: already on Data Bridge, archive only",
-            **({"archive_attempts": 0} if reset_attempts else {}),
+            **reset,
         )
         return FileState.BRIDGED
-    fields: dict[str, object] = {"attempts": 0, "archive_attempts": 0} if reset_attempts else {}
+    fields: dict[str, Any] = {"attempts": 0, "archive_attempts": 0} if reset_attempts else {}
     file = registry.get(file_id)
     uploaded = file is not None and file.uploaded_at is not None
     spent = (file.reimport_attempts or 0) if file is not None else 0
@@ -490,7 +491,14 @@ def retry_files(
     needs_pipeline = requeue + reimport
     if needs_pipeline or bridged or archive_retry:
         in_flight = registry.files_in_states(states=sorted(IN_FLIGHT_STATES), batch_id=batch_id)
-        if in_flight:
+        holder = batch_lock.holder(batch_id)
+        if holder is not None:
+            not_started_reason = (
+                f"a pipeline (pid {holder}) is already working on batch {batch_id!r} -- "
+                "not starting a second pipeline or archiver beside it. Once it "
+                f"finishes, run `migration-hub migrate --batch {batch_id}`."
+            )
+        elif in_flight:
             not_started_reason = (
                 f"{len(in_flight)} file(s) in batch {batch_id!r} are already in flight -- "
                 "not starting a second pipeline or archiver over them. Once that work "

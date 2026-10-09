@@ -1871,10 +1871,17 @@ def _render_archive_action(
         + ". Data Bridge is the route in; the Vault is the destination. These "
         "are not migrated until they are archived."
     )
+    holder = batch_lock.holder(batch)
     if st.button(
         f"Archive {len(pending)} file(s) into Data Vault"
         + (" (retries the archive only)" if failed else ""),
         icon=":material/inventory_2:",
+        disabled=holder is not None,
+        help=(
+            f"A pipeline (pid {holder}) is working on this batch and archives these files itself."
+            if holder is not None
+            else None
+        ),
     ):
         with st.status("Archiving", expanded=True) as status:
             handle = batch_ops.start_archive_subprocess(
@@ -2108,9 +2115,12 @@ def _render_batch_action_bar(registry: Registry, settings: Settings, batch: str)
             if st.button(
                 archive_label,
                 icon=":material/inventory_2:",
-                disabled=not pending_archives,
+                disabled=not pending_archives or running_pid is not None,
                 help=(
-                    f"{len(archiving_now)} file(s) are being archived now and are not "
+                    f"A pipeline (pid {running_pid}) is working on this batch and "
+                    "archives these files itself."
+                    if running_pid is not None
+                    else f"{len(archiving_now)} file(s) are being archived now and are not "
                     "counted -- a second archive of the same file is never needed."
                     if archiving_now
                     else None

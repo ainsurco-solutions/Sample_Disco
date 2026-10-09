@@ -345,23 +345,45 @@ def reap() -> None:
 def archive(batch: str | None = typer.Option(None, "--batch")) -> None:
     settings = _load_settings()
     registry = _registry(settings)
+    batch_ids = (
+        [batch] if batch is not None else sorted({f.batch_id for f in registry.pending_archives()})
+    )
 
     adapter = _adapter(settings)
+    archived = 0
+    skipped: list[str] = []
     try:
-        session = adapter.open_session()
-        archived = archiver.archive_pending(
-            registry=registry,
-            adapter=adapter,
-            batch_id=batch,
-            resource_group_id=session.resource_group_id,
-            max_wait_minutes=settings.max_poll_minutes,
-            poll_interval_seconds=settings.poll_interval_seconds,
-            max_archive_attempts=settings.max_archive_attempts,
-        )
+        session = None
+        for batch_id in batch_ids:
+            try:
+                with batch_lock.hold(batch_id):
+                    session = session or adapter.open_session()
+                    archived += archiver.archive_pending(
+                        registry=registry,
+                        adapter=adapter,
+                        batch_id=batch_id,
+                        resource_group_id=session.resource_group_id,
+                        max_wait_minutes=settings.max_poll_minutes,
+                        poll_interval_seconds=settings.poll_interval_seconds,
+                        max_archive_attempts=settings.max_archive_attempts,
+                    )
+            except batch_lock.BatchBusyError as exc:
+                if batch is not None:
+                    typer.secho(
+                        f"{exc} -- it archives the batch's files itself; not starting "
+                        "a second archiver beside it. If it has stopped, run this again.",
+                        fg=typer.colors.YELLOW,
+                        err=True,
+                    )
+                    raise typer.Exit(1) from exc
+                typer.echo(f"skipped batch {batch_id!r}: {exc}")
+                skipped.append(batch_id)
     finally:
         adapter.close()
 
     typer.echo(f"archived {archived} file(s)" + (f" in batch {batch!r}" if batch else ""))
+    if skipped:
+        typer.echo(f"{len(skipped)} batch(es) skipped, held by a pipeline: {', '.join(skipped)}")
 
 @app.command()
 def schedule() -> None:

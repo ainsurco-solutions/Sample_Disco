@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -10,10 +11,15 @@ from migration_hub.adapters.databridge.client import DatabridgeAdapter, Databrid
 from migration_hub.core.models import MigrationFile
 from migration_hub.core.registry import Registry
 from migration_hub.core.retry import HaltError, RetryableError
-from migration_hub.core.states import FileState
+from migration_hub.core.states import FileState, StateChangedError
 from migration_hub.observability.logging import Heartbeat, get_logger
 
 RETENTION_YEARS = 5
+
+_log = get_logger(__name__)
+
+def default_actor() -> str:
+    return f"archiver-{os.getpid()}"
 
 def archive_pending(
     *,
@@ -21,7 +27,7 @@ def archive_pending(
     adapter: DatabridgeAdapter,
     batch_id: str | None = None,
     resource_group_id: str | None = None,
-    actor: str = "archiver",
+    actor: str | None = None,
     include_failed: bool = True,
     only: Callable[[MigrationFile], bool] | None = None,
     max_archive_attempts: int | None = None,
@@ -31,9 +37,19 @@ def archive_pending(
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(UTC).replace(tzinfo=None),
 ) -> int:
+    actor = actor or default_actor()
     pending = registry.pending_archives(batch_id=batch_id, include_failed=include_failed)
     archived = 0
-    for file in pending:
+    for listed in pending:
+        file = registry.get(listed.file_id)
+        if file is None or file.state != listed.state:
+            _log.warning(
+                "file %s: %s when listed, %s now -- moved by another process; skipped",
+                listed.file_id,
+                listed.state,
+                file.state if file is not None else "gone",
+            )
+            continue
         if only is not None and not only(file):
             continue
         if _archive_guarded(
@@ -116,6 +132,9 @@ def _archive_guarded(
         )
     except HaltError:
         raise
+    except StateChangedError as exc:
+        _log.warning("%s; left to that process", exc)
+        return False
     except Exception as exc:
         reason = f"archive failed: {type(exc).__name__}: {exc}"
         _fail(registry, file.file_id, actor, reason, limit=limit)
@@ -186,6 +205,7 @@ def _archive_one(
             file_id=file.file_id,
             to_state=FileState.ABANDONED,
             actor=actor,
+            expected_state=FileState.ARCHIVE_FAILED,
             detail=(
                 f"archive attempts exhausted ({file.archive_attempts}/{limit}): "
                 f"{file.last_error or 'no reason recorded'}"
@@ -198,6 +218,7 @@ def _archive_one(
             file_id=file.file_id,
             to_state=FileState.ARCHIVING,
             actor=actor,
+            expected_state=FileState(file.state),
             archive_attempts=file.archive_attempts + 1,
         )
 
@@ -253,6 +274,7 @@ def _complete(registry: Registry, file_id: int, actor: str) -> bool:
         file_id=file_id,
         to_state=FileState.COMPLETED,
         actor=actor,
+        expected_state=FileState.ARCHIVING,
         archived_at=datetime.now(UTC).replace(tzinfo=None),
     )
     return True
@@ -279,16 +301,24 @@ def _fail(registry: Registry, file_id: int, actor: str, reason: str, *, limit: i
     if current is None or current.state != str(FileState.ARCHIVING):
         registry.record_identifiers(file_id=file_id, actor=actor, last_error=reason)
         return
-    registry.transition(
-        file_id=file_id, to_state=FileState.ARCHIVE_FAILED, actor=actor, detail=reason
-    )
-    if limit is not None and current.archive_attempts >= limit:
+    try:
         registry.transition(
             file_id=file_id,
-            to_state=FileState.ABANDONED,
+            to_state=FileState.ARCHIVE_FAILED,
             actor=actor,
-            detail=f"archive attempts exhausted ({current.archive_attempts}/{limit}): {reason}",
+            detail=reason,
+            expected_state=FileState.ARCHIVING,
         )
+        if limit is not None and current.archive_attempts >= limit:
+            registry.transition(
+                file_id=file_id,
+                to_state=FileState.ABANDONED,
+                actor=actor,
+                detail=f"archive attempts exhausted ({current.archive_attempts}/{limit}): {reason}",
+                expected_state=FileState.ARCHIVE_FAILED,
+            )
+    except StateChangedError as exc:
+        _log.warning("%s; not recording %r on it", exc, reason)
 
 def _poll_until[T](
     check: Callable[[], T | None],
