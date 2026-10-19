@@ -1,0 +1,39 @@
+Project Scope Structure
+
+[Project Name]
+Business Approval: Approach and Plan
+
+1. Executive Summary
+A concise explanation of the business problem, urgency, scope,
+recommended solution and expected outcome.
+
+2. Proposed Approach
+The recommended delivery approach, how it will operate, why it has
+been selected and the controls or benefits it provides.
+
+3. Solution Architecture
+A visual representation of the end-to-end solution, covering source,
+processing, integration, target and assurance controls.
+
+4. Delivery Phases and Contingency
+The gated delivery path from discovery through proof of concept,
+pilot, full implementation and closure, including fallback arrangements.
+
+5. Project Execution
+The practical delivery journey, showing responsibilities, inputs,
+outputs, stakeholder engagement and sign-off points.
+
+6. Plan on a Page
+An integrated timeline showing workstreams, key activities,
+dependencies, milestones, decisions and project status.
+
+7. Key Risks
+The principal risks, their potential impacts, mitigations and owners.
+
+8. Key Assumptions
+The conditions on which the plan depends, together with ownership
+and actions required to validate each assumption.
+
+9. Approvals and Next Steps
+The specific decisions required from stakeholders and the actions,
+governance stages and 
